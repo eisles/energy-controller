@@ -8,6 +8,7 @@ Phase 1 では実機 API 連携と EcoFlow への書き込み制御は実装し�
 MOCK_MODE=true
 SIMULATION_MODE=true
 ENABLE_REAL_CONTROL=false
+AUTO_CONTROL_ENABLED=false
 ```
 
 EcoFlow の実制御は最終フェーズまで有効化しないでください。家庭配線や分電盤に関わる改造は電気工事士に依頼してください。
@@ -76,6 +77,35 @@ backend をローカル実行する場合:
 cd backend
 FRONTEND_DIR=../frontend/out DB_PATH=./data/energy.db go run ./cmd/server
 ```
+
+## Phase 7 dry-run 検証
+
+EcoFlow への実 API 書き込みはまだ実装していません。Phase 7 の現時点では、write 条件が揃った場合でも mock write adapter が would-send として記録するだけです。
+
+dry-run で確認する場合:
+
+```bash
+cd backend
+HTTP_PORT=18081 \
+FRONTEND_DIR=../frontend/out \
+DB_PATH=./data/energy-dry-run.db \
+MOCK_MODE=false \
+SIMULATION_MODE=false \
+ENABLE_REAL_CONTROL=true \
+AUTO_CONTROL_ENABLED=true \
+NATURE_MODE=local \
+POLL_INTERVAL_SEC=5 \
+go run ./cmd/server
+```
+
+確認ポイント:
+
+- `/api/logs?limit=10` の `decisionReason` に `would-send` が残る
+- dry-run のため `commandSent` は `false`
+- dry-run のため `actualCommandW` は `null`
+- interval / diff 抑制時は `decisionReason` に `command suppressed` が残る
+
+実機 write を入れる前に、EcoFlow Developer docs と DELTA Pro 3 実機で正式な write payload を確認してください。確認が終わるまでは real `PUT` 実装を追加しないでください。
 
 ## Phase 1 の実装範囲
 
