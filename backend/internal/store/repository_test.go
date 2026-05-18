@@ -101,6 +101,53 @@ func TestLogRepositoryInsertsAndListsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestLogRepositoryListsSinceTimestamp(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewLogRepository(db)
+	firstAt := time.Date(2026, 5, 18, 8, 0, 0, 0, time.UTC)
+	secondAt := firstAt.Add(2 * time.Hour)
+
+	for _, log := range []domain.PowerLog{
+		{
+			MeasuredAt:     firstAt,
+			GridW:          200,
+			ImportW:        200,
+			ExportW:        0,
+			TargetChargeW:  0,
+			DecisionReason: "importing from grid, do not charge",
+			Mode:           "mock",
+			CommandSent:    false,
+			CreatedAt:      firstAt,
+		},
+		{
+			MeasuredAt:     secondAt,
+			GridW:          -900,
+			ImportW:        0,
+			ExportW:        900,
+			TargetChargeW:  700,
+			DecisionReason: "export power is above start threshold",
+			Mode:           "mock",
+			CommandSent:    false,
+			CreatedAt:      secondAt,
+		},
+	} {
+		if err := repo.InsertPowerLog(context.Background(), log); err != nil {
+			t.Fatalf("InsertPowerLog failed: %v", err)
+		}
+	}
+
+	logs, err := repo.ListPowerLogsSince(context.Background(), firstAt.Add(time.Hour), 0)
+	if err != nil {
+		t.Fatalf("ListPowerLogsSince failed: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("len(logs) = %d, want 1", len(logs))
+	}
+	if logs[0].MeasuredAt != secondAt {
+		t.Fatalf("MeasuredAt = %s, want %s", logs[0].MeasuredAt, secondAt)
+	}
+}
+
 func openTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")

@@ -63,7 +63,38 @@ func (r *LogRepository) ListPowerLogs(ctx context.Context, limit int) ([]domain.
 	}
 	defer rows.Close()
 
-	logs := make([]domain.PowerLog, 0, limit)
+	return scanPowerLogs(rows, limit)
+}
+
+func (r *LogRepository) ListPowerLogsSince(ctx context.Context, since time.Time, limit int) ([]domain.PowerLog, error) {
+	var rows *sql.Rows
+	var err error
+	args := []any{since.Format(time.RFC3339Nano)}
+	limitClause := ""
+	if limit > 0 {
+		limit = normalizeLimit(limit)
+		limitClause = " LIMIT ?"
+		args = append(args, limit)
+	}
+
+	rows, err = r.db.QueryContext(ctx, `SELECT
+		id, measured_at, grid_w, import_w, export_w, battery_soc,
+		battery_input_w, battery_output_w, ac_charge_limit_w, target_charge_w,
+		actual_command_w, decision_reason, mode, command_sent,
+		error_message, created_at
+		FROM power_logs
+		WHERE julianday(measured_at) >= julianday(?)
+		ORDER BY measured_at DESC, id DESC`+limitClause, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanPowerLogs(rows, normalizeLogCapacity(limit))
+}
+
+func scanPowerLogs(rows *sql.Rows, capacity int) ([]domain.PowerLog, error) {
+	logs := make([]domain.PowerLog, 0, capacity)
 	for rows.Next() {
 		var log domain.PowerLog
 		var measuredAt, createdAt string
@@ -115,6 +146,13 @@ func (r *LogRepository) ListPowerLogs(ctx context.Context, limit int) ([]domain.
 		return nil, err
 	}
 	return logs, nil
+}
+
+func normalizeLogCapacity(limit int) int {
+	if limit <= 0 {
+		return defaultLogLimit
+	}
+	return normalizeLimit(limit)
 }
 
 func normalizeLimit(limit int) int {
