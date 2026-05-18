@@ -206,6 +206,27 @@ params.cfgPlugInInfoAcInChgPowMax=<watts>
 
 この builder は公式 document の payload 形に基づく。ただし実機送信に進む前に、対象アカウント / 対象 device / physical charge speed switch / firmware state で 1 command 限定の実機検証が必要である。
 
+## 追加確認: PUT signing request builder
+
+2026-05-18 時点で、実送信しない範囲で `PUT /iot-open/sign/device/quota` の request builder と signing params flatten を追加した。
+
+実装した範囲:
+
+- command payload を JSON body に marshal する
+- body fields を署名用 params に flatten する
+- nested params は `params.cfgPlugInInfoAcInChgPowMax=1000` のような dotted key にする
+- `accessKey` / `nonce` / `timestamp` / `sign` header を request に設定する
+- unit test で署名対象 params、JSON body、HTTP method、headers を固定する
+
+まだ実装していない範囲:
+
+- `httpClient.Do` による real PUT 送信
+- `WriteClient.SetACChargePower` から signed PUT request builder への接続
+- real response parsing
+- command_sent=true の実機ログ
+
+この段階でも EcoFlow への実 API 書き込みは発生しない。
+
 ## 参考 URL
 
 - EcoFlow Developer DELTA Pro 3 document: https://developer-eu.ecoflow.com/us/document/deltaPro3

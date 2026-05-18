@@ -1,6 +1,7 @@
 package ecoflow
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -136,6 +137,34 @@ func (c *SignedClient) getJSON(ctx context.Context, path string, params map[stri
 	return nil
 }
 
+func (c *SignedClient) newSignedPUTRequest(ctx context.Context, path string, payload any) (*http.Request, error) {
+	endpoint, err := url.JoinPath(c.baseURL, path)
+	if err != nil {
+		return nil, err
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	nonce := c.nonce()
+	timestamp := strconv.FormatInt(c.now().UnixMilli(), 10)
+	signingParams, err := flattenSigningParams(payload)
+	if err != nil {
+		return nil, err
+	}
+	signature := sign(signingParams, c.accessKey, c.secretKey, nonce, timestamp)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("accessKey", c.accessKey)
+	req.Header.Set("nonce", nonce)
+	req.Header.Set("timestamp", timestamp)
+	req.Header.Set("sign", signature)
+	return req, nil
+}
+
 func sign(params map[string]string, accessKey, secretKey, nonce, timestamp string) string {
 	pairs := make([]string, 0, len(params)+3)
 	for key, value := range params {
@@ -146,6 +175,50 @@ func sign(params map[string]string, accessKey, secretKey, nonce, timestamp strin
 	mac := hmac.New(sha256.New, []byte(secretKey))
 	_, _ = mac.Write([]byte(strings.Join(pairs, "&")))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func flattenSigningParams(value any) (map[string]string, error) {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var decoded any
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, err
+	}
+	params := make(map[string]string)
+	flattenSigningValue(params, "", decoded)
+	return params, nil
+}
+
+func flattenSigningValue(params map[string]string, prefix string, value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			nextKey := key
+			if prefix != "" {
+				nextKey = prefix + "." + key
+			}
+			flattenSigningValue(params, nextKey, child)
+		}
+	case []any:
+		for index, child := range typed {
+			nextKey := prefix + "." + strconv.Itoa(index)
+			flattenSigningValue(params, nextKey, child)
+		}
+	case json.Number:
+		params[prefix] = typed.String()
+	case bool:
+		params[prefix] = strconv.FormatBool(typed)
+	case string:
+		params[prefix] = typed
+	case nil:
+		params[prefix] = ""
+	default:
+		params[prefix] = fmt.Sprint(typed)
+	}
 }
 
 type quotaResponse struct {
