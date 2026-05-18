@@ -1,0 +1,11 @@
+.git
+.env
+backend/.gocache
+backend/.gomodcache
+backend/data/*.db
+backend/data/*.db-*
+frontend/.next
+frontend/.npm-cache
+frontend/node_modules
+frontend/out
+.DS_Store

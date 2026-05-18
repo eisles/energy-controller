@@ -1,0 +1,19 @@
+services:
+  energy-controller:
+    build: .
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      HTTP_PORT: "8080"
+      DB_PATH: /app/data/energy.db
+      FRONTEND_DIR: /app/frontend/out
+      MOCK_MODE: ${MOCK_MODE:-true}
+      SIMULATION_MODE: ${SIMULATION_MODE:-true}
+      ENABLE_REAL_CONTROL: ${ENABLE_REAL_CONTROL:-false}
+    volumes:
+      - energy-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  energy-data:
