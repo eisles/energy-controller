@@ -28,6 +28,7 @@ type Config struct {
 	MockMode           bool
 	SimulationMode     bool
 	EnableRealControl  bool
+	AutoControlEnabled bool
 	NatureMode         string
 	NatureAccessToken  string
 	NatureApplianceID  string
@@ -51,6 +52,7 @@ func Load() Config {
 		MockMode:           envBool("MOCK_MODE", true),
 		SimulationMode:     envBool("SIMULATION_MODE", true),
 		EnableRealControl:  envBool("ENABLE_REAL_CONTROL", false),
+		AutoControlEnabled: envBool("AUTO_CONTROL_ENABLED", false),
 		NatureMode:         env("NATURE_MODE", "cloud"),
 		NatureAccessToken:  env("NATURE_ACCESS_TOKEN", ""),
 		NatureApplianceID:  env("NATURE_APPLIANCE_ID", ""),

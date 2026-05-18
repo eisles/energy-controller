@@ -193,12 +193,59 @@ func TestEvaluateAllowsCommandAfterIntervalAndLargeDiff(t *testing.T) {
 			LastCommandTargetW: 800,
 		},
 		Now:               now,
+		AutoControl:       true,
 		SimulationMode:    false,
 		EnableRealControl: true,
 	}, DefaultSettings())
 
 	if !result.CommandAllowed {
 		t.Fatal("CommandAllowed = false, want true")
+	}
+}
+
+func TestEvaluateBlocksCommandUnlessAllRealControlGuardsPass(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       Input
+		blockReason string
+	}{
+		{
+			name:        "mock mode",
+			input:       Input{MockMode: true, SimulationMode: false, EnableRealControl: true, AutoControl: true},
+			blockReason: "mock mode, EcoFlow write disabled",
+		},
+		{
+			name:        "simulation mode",
+			input:       Input{MockMode: false, SimulationMode: true, EnableRealControl: true, AutoControl: true},
+			blockReason: "simulation mode, EcoFlow write disabled",
+		},
+		{
+			name:        "real control disabled",
+			input:       Input{MockMode: false, SimulationMode: false, EnableRealControl: false, AutoControl: true},
+			blockReason: "ENABLE_REAL_CONTROL=false, EcoFlow write disabled",
+		},
+		{
+			name:        "auto control disabled",
+			input:       Input{MockMode: false, SimulationMode: false, EnableRealControl: true, AutoControl: false},
+			blockReason: "auto control disabled, EcoFlow write disabled",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.input.GridW = -1600
+			tt.input.BatterySoc = 50
+			tt.input.Now = fixedTime()
+
+			result := Evaluate(tt.input, DefaultSettings())
+
+			if result.CommandAllowed {
+				t.Fatal("CommandAllowed = true, want false")
+			}
+			if result.CommandBlockReason != tt.blockReason {
+				t.Fatalf("CommandBlockReason = %q, want %q", result.CommandBlockReason, tt.blockReason)
+			}
+		})
 	}
 }
 

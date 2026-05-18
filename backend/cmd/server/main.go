@@ -85,9 +85,19 @@ type logWriter interface {
 	InsertPowerLog(ctx context.Context, log domain.PowerLog) error
 }
 
+type commandStatus struct {
+	ActualCommandW *int
+	CommandSent    bool
+}
+
+type commandStatusProvider interface {
+	LastCommandActualW() *int
+	LastCommandSent() bool
+}
+
 func newStatusProvider(cfg config.Config) api.StatusProvider {
 	if cfg.MockMode {
-		return mock.NewStatusProvider(cfg.Clock, cfg.ControlSettings, cfg.SimulationMode, cfg.EnableRealControl)
+		return mock.NewStatusProvider(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled)
 	}
 	ecoflowClient := ecoflow.NewSignedClient(ecoflow.Config{
 		AccessKey: cfg.EcoFlowAccessKey,
@@ -95,14 +105,15 @@ func newStatusProvider(cfg config.Config) api.StatusProvider {
 		DeviceSN:  cfg.EcoFlowDeviceSN,
 		BaseURL:   cfg.EcoFlowBaseURL,
 	})
+	ecoflowWriteClient := ecoflow.NewMockWriteClient()
 	if cfg.NatureMode == "cloud" {
 		natureClient := nature.NewCloudClient(nature.CloudConfig{
 			AccessToken: cfg.NatureAccessToken,
 			ApplianceID: cfg.NatureApplianceID,
 		})
-		return mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.SimulationMode, cfg.EnableRealControl, natureClient, ecoflowClient, "nature-cloud+ecoflow-read")
+		return mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled, natureClient, ecoflowClient, ecoflowWriteClient, "nature-cloud+ecoflow-read")
 	}
-	return mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.SimulationMode, cfg.EnableRealControl, nil, ecoflowClient, "ecoflow-read")
+	return mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled, nil, ecoflowClient, ecoflowWriteClient, "ecoflow-read")
 }
 
 func runControlLoop(ctx context.Context, interval time.Duration, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, logger *slog.Logger) {
@@ -127,7 +138,7 @@ func recordStatus(ctx context.Context, provider api.StatusProvider, statusReposi
 		logger.Error("failed to evaluate current status", "error", err)
 		return
 	}
-	if err := logRepository.InsertPowerLog(ctx, powerLogFromStatus(status)); err != nil {
+	if err := logRepository.InsertPowerLog(ctx, powerLogFromStatus(status, lastCommandStatus(provider))); err != nil {
 		logger.Error("failed to save power log", "error", err)
 		return
 	}
@@ -138,7 +149,18 @@ func recordStatus(ctx context.Context, provider api.StatusProvider, statusReposi
 	logger.Info("control decision saved", "mode", status.Mode, "state", status.State, "gridW", status.GridW, "targetChargeW", status.TargetChargeW, "reason", status.LastDecisionReason)
 }
 
-func powerLogFromStatus(status domain.Status) domain.PowerLog {
+func lastCommandStatus(provider api.StatusProvider) commandStatus {
+	commandProvider, ok := provider.(commandStatusProvider)
+	if !ok {
+		return commandStatus{}
+	}
+	return commandStatus{
+		ActualCommandW: commandProvider.LastCommandActualW(),
+		CommandSent:    commandProvider.LastCommandSent(),
+	}
+}
+
+func powerLogFromStatus(status domain.Status, command commandStatus) domain.PowerLog {
 	return domain.PowerLog{
 		MeasuredAt:     status.UpdatedAt,
 		GridW:          status.GridW,
@@ -149,10 +171,10 @@ func powerLogFromStatus(status domain.Status) domain.PowerLog {
 		BatteryOutputW: intPtr(status.BatteryOutputW),
 		ACChargeLimitW: intPtr(status.ACChargeLimitW),
 		TargetChargeW:  status.TargetChargeW,
-		ActualCommandW: nil,
+		ActualCommandW: command.ActualCommandW,
 		DecisionReason: status.LastDecisionReason,
 		Mode:           status.Mode,
-		CommandSent:    false,
+		CommandSent:    command.CommandSent,
 		ErrorMessage:   status.LastError,
 		CreatedAt:      status.UpdatedAt,
 	}

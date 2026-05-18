@@ -22,8 +22,10 @@ type Input struct {
 	BatterySoc        int
 	Previous          PreviousDecision
 	Now               time.Time
+	MockMode          bool
 	SimulationMode    bool
 	EnableRealControl bool
+	AutoControl       bool
 }
 
 type PreviousDecision struct {
@@ -34,10 +36,11 @@ type PreviousDecision struct {
 }
 
 type Result struct {
-	GridPower         domain.GridPower
-	Decision          domain.ControlDecision
-	CommandAllowed    bool
-	CommandSuppressed bool
+	GridPower          domain.GridPower
+	Decision           domain.ControlDecision
+	CommandAllowed     bool
+	CommandSuppressed  bool
+	CommandBlockReason string
 }
 
 func DefaultSettings() Settings {
@@ -85,15 +88,30 @@ func Evaluate(input Input, settings Settings) Result {
 	}
 
 	allowed, suppressed := commandGate(input, decision, settings)
-	if input.SimulationMode || !input.EnableRealControl {
+	blockReason := ""
+	switch {
+	case input.MockMode:
 		allowed = false
+		blockReason = "mock mode, EcoFlow write disabled"
+	case input.SimulationMode:
+		allowed = false
+		blockReason = "simulation mode, EcoFlow write disabled"
+	case !input.EnableRealControl:
+		allowed = false
+		blockReason = "ENABLE_REAL_CONTROL=false, EcoFlow write disabled"
+	case !input.AutoControl:
+		allowed = false
+		blockReason = "auto control disabled, EcoFlow write disabled"
+	case suppressed:
+		blockReason = "command suppressed by minimum interval or command diff"
 	}
 
 	return Result{
-		GridPower:         gridPower,
-		Decision:          decision,
-		CommandAllowed:    allowed,
-		CommandSuppressed: suppressed,
+		GridPower:          gridPower,
+		Decision:           decision,
+		CommandAllowed:     allowed,
+		CommandSuppressed:  suppressed,
+		CommandBlockReason: blockReason,
 	}
 }
 

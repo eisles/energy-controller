@@ -14,6 +14,7 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	t.Setenv("ECOFLOW_SECRET_KEY", "ecoflow-secret")
 	t.Setenv("ECOFLOW_DEVICE_SN", "ecoflow-device")
 	t.Setenv("ECOFLOW_BASE_URL", "https://api-e.ecoflow.test")
+	t.Setenv("AUTO_CONTROL_ENABLED", "true")
 	t.Setenv("POLL_INTERVAL_SEC", "45")
 	t.Setenv("START_EXPORT_THRESHOLD_W", "900")
 	t.Setenv("STOP_EXPORT_THRESHOLD_W", "450")
@@ -49,6 +50,9 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	}
 	if cfg.EcoFlowBaseURL != "https://api-e.ecoflow.test" {
 		t.Fatalf("EcoFlowBaseURL = %q, want https://api-e.ecoflow.test", cfg.EcoFlowBaseURL)
+	}
+	if !cfg.AutoControlEnabled {
+		t.Fatal("AutoControlEnabled = false, want true")
 	}
 	if cfg.PollInterval != 45*time.Second {
 		t.Fatalf("PollInterval = %s, want 45s", cfg.PollInterval)
