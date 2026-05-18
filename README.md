@@ -12,6 +12,20 @@ ENABLE_REAL_CONTROL=false
 
 EcoFlow の実制御は最終フェーズまで有効化しないでください。家庭配線や分電盤に関わる改造は電気工事士に依頼してください。
 
+## 環境設定
+
+`.env.example` には Phase 2 以降で使う制御設定も先に列挙しています。Phase 1 では見本値として保持し、実際の制御判断への反映は後続フェーズで実装します。
+
+主な制御設定:
+
+- `START_EXPORT_THRESHOLD_W`: 充電開始を検討する売電しきい値
+- `STOP_EXPORT_THRESHOLD_W`: 充電停止を検討する売電しきい値
+- `SAFETY_MARGIN_W`: 売電量から差し引く安全余白
+- `MIN_CHARGE_W` / `MAX_CHARGE_W`: 推奨充電 W の下限/上限
+- `TARGET_SOC`: 充電対象 SOC 上限
+- `MIN_COMMAND_INTERVAL_SEC`: コマンド送信の最小間隔
+- `MIN_COMMAND_DIFF_W`: コマンド差分の最小幅
+
 ## 構成
 
 - `backend`: Go API server
