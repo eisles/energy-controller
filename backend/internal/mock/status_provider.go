@@ -19,6 +19,7 @@ type StatusProvider struct {
 	realControl    bool
 	mode           string
 	gridReader     GridReader
+	batteryReader  BatteryReader
 	staleAfter     time.Duration
 	mu             sync.Mutex
 	previous       control.PreviousDecision
@@ -26,6 +27,10 @@ type StatusProvider struct {
 
 type GridReader interface {
 	CurrentGridPower(ctx context.Context) (domain.GridPower, time.Time, error)
+}
+
+type BatteryReader interface {
+	GetBatteryStatus(ctx context.Context) (domain.BatteryStatus, error)
 }
 
 func NewStatusProvider(clock config.Clock, settings control.Settings, simulationMode bool, realControl bool) *StatusProvider {
@@ -39,9 +44,10 @@ func NewStatusProvider(clock config.Clock, settings control.Settings, simulation
 	}
 }
 
-func NewStatusProviderWithGridReader(clock config.Clock, settings control.Settings, simulationMode bool, realControl bool, gridReader GridReader, mode string) *StatusProvider {
+func NewStatusProviderWithReaders(clock config.Clock, settings control.Settings, simulationMode bool, realControl bool, gridReader GridReader, batteryReader BatteryReader, mode string) *StatusProvider {
 	provider := NewStatusProvider(clock, settings, simulationMode, realControl)
 	provider.gridReader = gridReader
+	provider.batteryReader = batteryReader
 	provider.mode = mode
 	return provider
 }
@@ -49,12 +55,13 @@ func NewStatusProviderWithGridReader(clock config.Clock, settings control.Settin
 func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, error) {
 	now := p.clock.Now()
 	gridPower, lastError := p.currentGridPower(ctx, now)
-	batterySoc := sampleBatterySoc(now)
+	batteryStatus, batteryError := p.currentBatteryStatus(ctx, now)
+	lastError = combineErrors(lastError, batteryError)
 
 	p.mu.Lock()
 	result := control.Evaluate(control.Input{
 		GridW:             gridPower.GridW,
-		BatterySoc:        batterySoc,
+		BatterySoc:        batteryStatus.Soc,
 		Previous:          p.previous,
 		Now:               now,
 		SimulationMode:    p.simulationMode,
@@ -72,9 +79,10 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 		GridW:              result.GridPower.GridW,
 		ImportW:            result.GridPower.ImportW,
 		ExportW:            result.GridPower.ExportW,
-		BatterySoc:         batterySoc,
-		BatteryInputW:      result.Decision.TargetChargeW,
-		BatteryOutputW:     0,
+		BatterySoc:         batteryStatus.Soc,
+		BatteryInputW:      batteryStatus.InputW,
+		BatteryOutputW:     batteryStatus.OutputW,
+		ACChargeLimitW:     batteryStatus.ACChargeLimitW,
 		TargetChargeW:      result.Decision.TargetChargeW,
 		State:              "simulation",
 		Mode:               p.mode,
@@ -82,6 +90,42 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 		LastError:          lastError,
 		UpdatedAt:          now,
 	}, nil
+}
+
+func (p *StatusProvider) currentBatteryStatus(ctx context.Context, now time.Time) (domain.BatteryStatus, *string) {
+	if p.batteryReader == nil {
+		return domain.BatteryStatus{
+			Soc:            sampleBatterySoc(now),
+			InputW:         0,
+			OutputW:        0,
+			ACChargeLimitW: 0,
+			IsOnline:       true,
+		}, nil
+	}
+	batteryStatus, err := p.batteryReader.GetBatteryStatus(ctx)
+	if err != nil {
+		message := fmt.Sprintf("EcoFlow battery status read failed: %v", err)
+		return domain.BatteryStatus{
+			Soc:            sampleBatterySoc(now),
+			InputW:         0,
+			OutputW:        0,
+			ACChargeLimitW: 0,
+			IsOnline:       false,
+		}, &message
+	}
+	return batteryStatus, nil
+}
+
+func combineErrors(first *string, second *string) *string {
+	switch {
+	case first == nil:
+		return second
+	case second == nil:
+		return first
+	default:
+		combined := *first + "; " + *second
+		return &combined
+	}
 }
 
 func (p *StatusProvider) currentGridPower(ctx context.Context, now time.Time) (domain.GridPower, *string) {

@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 )
 
@@ -32,6 +33,7 @@ func migrate(db *sql.DB) error {
 			battery_soc INTEGER,
 			battery_input_w INTEGER,
 			battery_output_w INTEGER,
+			ac_charge_limit_w INTEGER,
 			target_charge_w INTEGER NOT NULL DEFAULT 0,
 			actual_command_w INTEGER,
 			decision_reason TEXT NOT NULL,
@@ -48,6 +50,7 @@ func migrate(db *sql.DB) error {
 			battery_soc INTEGER,
 			battery_input_w INTEGER,
 			battery_output_w INTEGER,
+			ac_charge_limit_w INTEGER,
 			target_charge_w INTEGER NOT NULL DEFAULT 0,
 			state TEXT NOT NULL,
 			mode TEXT NOT NULL,
@@ -61,7 +64,53 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
+	if err := addKnownColumnIfMissing(db, "power_logs", "ac_charge_limit_w"); err != nil {
+		return err
+	}
+	if err := addKnownColumnIfMissing(db, "current_status", "ac_charge_limit_w"); err != nil {
+		return err
+	}
 	return seedDefaults(db, time.Now())
+}
+
+func addKnownColumnIfMissing(db *sql.DB, table string, column string) error {
+	columnType, ok := knownMigrationColumns[table][column]
+	if !ok {
+		return fmt.Errorf("unsupported migration column: %s.%s", table, column)
+	}
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull int
+		var defaultValue any
+		var primaryKey int
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		if name == column {
+			return rows.Err()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + columnType)
+	return err
+}
+
+var knownMigrationColumns = map[string]map[string]string{
+	"power_logs": {
+		"ac_charge_limit_w": "INTEGER",
+	},
+	"current_status": {
+		"ac_charge_limit_w": "INTEGER",
+	},
 }
 
 func seedDefaults(db *sql.DB, now time.Time) error {
@@ -77,9 +126,9 @@ func seedDefaults(db *sql.DB, now time.Time) error {
 	_, err = db.Exec(
 		`INSERT INTO current_status (
 			id, grid_w, import_w, export_w, battery_soc, battery_input_w,
-			battery_output_w, target_charge_w, state, mode, last_decision_reason,
+			battery_output_w, ac_charge_limit_w, target_charge_w, state, mode, last_decision_reason,
 			last_error, updated_at
-		) VALUES (1, 0, 0, 0, 60, 0, 0, 0, 'simulation', 'mock', 'initialized in mock simulation mode', NULL, ?)
+		) VALUES (1, 0, 0, 0, 60, 0, 0, 0, 0, 'simulation', 'mock', 'initialized in mock simulation mode', NULL, ?)
 		ON CONFLICT(id) DO NOTHING`,
 		now.Format(time.RFC3339),
 	)

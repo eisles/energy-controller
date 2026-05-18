@@ -68,6 +68,7 @@ func TestRouterStatusReadsCurrentStatusFromDatabase(t *testing.T) {
 		BatterySoc:         63,
 		BatteryInputW:      400,
 		BatteryOutputW:     0,
+		ACChargeLimitW:     1500,
 		TargetChargeW:      400,
 		State:              "simulation",
 		Mode:               "mock",
@@ -88,7 +89,7 @@ func TestRouterStatusReadsCurrentStatusFromDatabase(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
 		t.Fatalf("invalid json response: %v", err)
 	}
-	if payload["gridW"] != float64(-640) || payload["lastDecisionReason"] != "database status" {
+	if payload["gridW"] != float64(-640) || payload["acChargeLimitW"] != float64(1500) || payload["lastDecisionReason"] != "database status" {
 		t.Fatalf("unexpected database status payload: %#v", payload)
 	}
 }

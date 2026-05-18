@@ -32,6 +32,10 @@ type Config struct {
 	NatureAccessToken  string
 	NatureApplianceID  string
 	NatureLocalBaseURL string
+	EcoFlowAccessKey   string
+	EcoFlowSecretKey   string
+	EcoFlowDeviceSN    string
+	EcoFlowBaseURL     string
 	PollInterval       time.Duration
 	ControlSettings    control.Settings
 	Clock              Clock
@@ -51,6 +55,10 @@ func Load() Config {
 		NatureAccessToken:  env("NATURE_ACCESS_TOKEN", ""),
 		NatureApplianceID:  env("NATURE_APPLIANCE_ID", ""),
 		NatureLocalBaseURL: env("NATURE_LOCAL_BASE_URL", "http://remo-e.local"),
+		EcoFlowAccessKey:   env("ECOFLOW_ACCESS_KEY", ""),
+		EcoFlowSecretKey:   env("ECOFLOW_SECRET_KEY", ""),
+		EcoFlowDeviceSN:    env("ECOFLOW_DEVICE_SN", ""),
+		EcoFlowBaseURL:     env("ECOFLOW_BASE_URL", "https://api-e.ecoflow.com"),
 		PollInterval:       time.Duration(envInt("POLL_INTERVAL_SEC", 30)) * time.Second,
 		ControlSettings: control.Settings{
 			StartExportThresholdW: envInt("START_EXPORT_THRESHOLD_W", 700),

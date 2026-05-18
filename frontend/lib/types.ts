@@ -5,6 +5,7 @@ export type EnergyStatus = {
   batterySoc: number;
   batteryInputW: number;
   batteryOutputW: number;
+  acChargeLimitW: number;
   targetChargeW: number;
   state: string;
   mode: string;

@@ -9,10 +9,11 @@ type GridPower struct {
 }
 
 type BatteryStatus struct {
-	Soc      int  `json:"batterySoc"`
-	InputW   int  `json:"batteryInputW"`
-	OutputW  int  `json:"batteryOutputW"`
-	IsOnline bool `json:"isOnline"`
+	Soc            int  `json:"batterySoc"`
+	InputW         int  `json:"batteryInputW"`
+	OutputW        int  `json:"batteryOutputW"`
+	ACChargeLimitW int  `json:"acChargeLimitW"`
+	IsOnline       bool `json:"isOnline"`
 }
 
 type ControlDecision struct {
@@ -28,6 +29,7 @@ type Status struct {
 	BatterySoc         int       `json:"batterySoc"`
 	BatteryInputW      int       `json:"batteryInputW"`
 	BatteryOutputW     int       `json:"batteryOutputW"`
+	ACChargeLimitW     int       `json:"acChargeLimitW"`
 	TargetChargeW      int       `json:"targetChargeW"`
 	State              string    `json:"state"`
 	Mode               string    `json:"mode"`
@@ -45,6 +47,7 @@ type PowerLog struct {
 	BatterySoc     *int      `json:"batterySoc"`
 	BatteryInputW  *int      `json:"batteryInputW"`
 	BatteryOutputW *int      `json:"batteryOutputW"`
+	ACChargeLimitW *int      `json:"acChargeLimitW"`
 	TargetChargeW  int       `json:"targetChargeW"`
 	ActualCommandW *int      `json:"actualCommandW"`
 	DecisionReason string    `json:"decisionReason"`

@@ -749,6 +749,65 @@ EcoFlowへの実制御を追加してください。
 - 実制御部分のユニットテストを追加する
 ```
 
+#### EcoFlow DELTA Pro 3 制御方針メモ
+
+Phase 5 の read-only API 確認では、DELTA Pro 3 の充電挙動に関係しそうな quota として以下を確認した。
+
+```text
+cmsBattSoc
+bmsBattSoc
+powInSumW
+powOutSumW
+plugInInfoAcInChgPowMax
+energyBackupStartSoc
+backupReverseSoc
+energyBackupEn
+energyStrategyOperateMode.operateTouModeOpen
+energyStrategyOperateMode.operateSelfPoweredOpen
+energyStrategyOperateMode.operateScheduledOpen
+energyStrategyOperateMode.operateIntelligentScheduleModeOpen
+```
+
+観測結果:
+
+- TOU mode のときは `energyStrategyOperateMode.operateTouModeOpen=true`
+- self-powered mode のときは `energyStrategyOperateMode.operateSelfPoweredOpen=true`
+- TOU / self-powered を OFF にすると、上記 mode flag はすべて `false`
+- backup reserve を 60% に設定すると `energyBackupStartSoc=60` / `backupReverseSoc=60` に反映される
+- self-powered mode では `energyBackupEn=true`、TOU / self-powered OFF では `energyBackupEn=false` になることを確認した
+- AC 充電上限 W は `plugInInfoAcInChgPowMax` に見える
+- 実入力 W は `powInSumW`、実出力 W は `powOutSumW` に見える
+
+現時点の仮説:
+
+```text
+充電したい:
+  - backup reserve % を現在 SOC より高め、または target SOC 付近へ上げる
+  - AC charge power W を売電余剰に合わせて設定する
+
+充電を弱めたい:
+  - AC charge power W を下げる
+
+充電しない / 放電寄りにしたい:
+  - backup reserve % を下げる
+  - 必要なら AC charge power W を最小化する
+```
+
+ただし、上記は read-only quota とアプリ操作後の観測に基づく仮説であり、書き込み API の command / quota name / params は Phase 7 で別途確定する。
+
+Phase 7 で実制御を入れる場合の優先制御軸:
+
+1. `plugInInfoAcInChgPowMax` 相当の AC 充電 W
+2. `energyBackupStartSoc` / `backupReverseSoc` 相当の backup reserve %
+
+安全境界:
+
+- Phase 5 / Phase 6 では EcoFlow 書き込み制御を実装しない
+- Phase 7 でも `ENABLE_REAL_CONTROL=true` かつ `SIMULATION_MODE=false` かつ `MOCK_MODE=false` のときだけ送信する
+- backup reserve % と AC charge power W は最後に送った値を保存し、差分が小さいときは送らない
+- 買電状態、売電不足、API 不確実、quota 不確実のときは送信せず `lastError` / log に残す
+- 最初の実制御は手動実行または短時間限定で確認し、自動連続制御は最後に有効化する
+
 ---
 
 ## 最初にCodexへ投げるプロンプト

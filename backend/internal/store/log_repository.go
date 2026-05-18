@@ -25,10 +25,10 @@ func (r *LogRepository) InsertPowerLog(ctx context.Context, log domain.PowerLog)
 	}
 	_, err := r.db.ExecContext(ctx, `INSERT INTO power_logs (
 		measured_at, grid_w, import_w, export_w, battery_soc,
-		battery_input_w, battery_output_w, target_charge_w,
+		battery_input_w, battery_output_w, ac_charge_limit_w, target_charge_w,
 		actual_command_w, decision_reason, mode, command_sent,
 		error_message, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		log.MeasuredAt.Format(time.RFC3339Nano),
 		log.GridW,
 		log.ImportW,
@@ -36,6 +36,7 @@ func (r *LogRepository) InsertPowerLog(ctx context.Context, log domain.PowerLog)
 		nullableInt(log.BatterySoc),
 		nullableInt(log.BatteryInputW),
 		nullableInt(log.BatteryOutputW),
+		nullableInt(log.ACChargeLimitW),
 		log.TargetChargeW,
 		nullableInt(log.ActualCommandW),
 		log.DecisionReason,
@@ -51,7 +52,7 @@ func (r *LogRepository) ListPowerLogs(ctx context.Context, limit int) ([]domain.
 	limit = normalizeLimit(limit)
 	rows, err := r.db.QueryContext(ctx, `SELECT
 		id, measured_at, grid_w, import_w, export_w, battery_soc,
-		battery_input_w, battery_output_w, target_charge_w,
+		battery_input_w, battery_output_w, ac_charge_limit_w, target_charge_w,
 		actual_command_w, decision_reason, mode, command_sent,
 		error_message, created_at
 		FROM power_logs
@@ -66,7 +67,7 @@ func (r *LogRepository) ListPowerLogs(ctx context.Context, limit int) ([]domain.
 	for rows.Next() {
 		var log domain.PowerLog
 		var measuredAt, createdAt string
-		var batterySoc, batteryInputW, batteryOutputW, actualCommandW sql.NullInt64
+		var batterySoc, batteryInputW, batteryOutputW, acChargeLimitW, actualCommandW sql.NullInt64
 		var commandSent int
 		var errorMessage sql.NullString
 		if err := rows.Scan(
@@ -78,6 +79,7 @@ func (r *LogRepository) ListPowerLogs(ctx context.Context, limit int) ([]domain.
 			&batterySoc,
 			&batteryInputW,
 			&batteryOutputW,
+			&acChargeLimitW,
 			&log.TargetChargeW,
 			&actualCommandW,
 			&log.DecisionReason,
@@ -101,6 +103,7 @@ func (r *LogRepository) ListPowerLogs(ctx context.Context, limit int) ([]domain.
 		log.BatterySoc = intPtrFromNull(batterySoc)
 		log.BatteryInputW = intPtrFromNull(batteryInputW)
 		log.BatteryOutputW = intPtrFromNull(batteryOutputW)
+		log.ACChargeLimitW = intPtrFromNull(acChargeLimitW)
 		log.ActualCommandW = intPtrFromNull(actualCommandW)
 		if errorMessage.Valid {
 			log.ErrorMessage = &errorMessage.String

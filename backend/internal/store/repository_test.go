@@ -24,6 +24,7 @@ func TestStatusRepositoryUpdatesAndReadsCurrentStatus(t *testing.T) {
 		BatterySoc:         62,
 		BatteryInputW:      500,
 		BatteryOutputW:     0,
+		ACChargeLimitW:     1500,
 		TargetChargeW:      700,
 		State:              "simulation",
 		Mode:               "mock",
@@ -40,7 +41,7 @@ func TestStatusRepositoryUpdatesAndReadsCurrentStatus(t *testing.T) {
 		t.Fatalf("CurrentStatus failed: %v", err)
 	}
 
-	if got.GridW != want.GridW || got.ExportW != want.ExportW || got.TargetChargeW != want.TargetChargeW {
+	if got.GridW != want.GridW || got.ExportW != want.ExportW || got.TargetChargeW != want.TargetChargeW || got.ACChargeLimitW != want.ACChargeLimitW {
 		t.Fatalf("status mismatch: got %+v want %+v", got, want)
 	}
 	if got.LastError == nil || *got.LastError != lastError {
@@ -57,6 +58,7 @@ func TestLogRepositoryInsertsAndListsNewestFirst(t *testing.T) {
 	firstAt := time.Date(2026, 5, 18, 8, 0, 0, 0, time.UTC)
 	secondAt := firstAt.Add(time.Minute)
 	soc := 61
+	acLimit := 1500
 
 	if err := repo.InsertPowerLog(context.Background(), domain.PowerLog{
 		MeasuredAt:     firstAt,
@@ -77,6 +79,7 @@ func TestLogRepositoryInsertsAndListsNewestFirst(t *testing.T) {
 		ImportW:        0,
 		ExportW:        900,
 		BatterySoc:     &soc,
+		ACChargeLimitW: &acLimit,
 		TargetChargeW:  700,
 		DecisionReason: "export power is above start threshold",
 		Mode:           "mock",
@@ -93,7 +96,7 @@ func TestLogRepositoryInsertsAndListsNewestFirst(t *testing.T) {
 	if len(logs) != 1 {
 		t.Fatalf("len(logs) = %d, want 1", len(logs))
 	}
-	if logs[0].GridW != -900 || logs[0].BatterySoc == nil || *logs[0].BatterySoc != soc {
+	if logs[0].GridW != -900 || logs[0].BatterySoc == nil || *logs[0].BatterySoc != soc || logs[0].ACChargeLimitW == nil || *logs[0].ACChargeLimitW != acLimit {
 		t.Fatalf("unexpected newest log: %+v", logs[0])
 	}
 }

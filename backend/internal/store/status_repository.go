@@ -19,12 +19,12 @@ func NewStatusRepository(db *sql.DB) *StatusRepository {
 func (r *StatusRepository) CurrentStatus(ctx context.Context) (domain.Status, error) {
 	var status domain.Status
 	var updatedAt string
-	var batterySoc, batteryInputW, batteryOutputW sql.NullInt64
+	var batterySoc, batteryInputW, batteryOutputW, acChargeLimitW sql.NullInt64
 	var lastError sql.NullString
 
 	err := r.db.QueryRowContext(ctx, `SELECT
 		grid_w, import_w, export_w, battery_soc, battery_input_w,
-		battery_output_w, target_charge_w, state, mode,
+		battery_output_w, ac_charge_limit_w, target_charge_w, state, mode,
 		last_decision_reason, last_error, updated_at
 		FROM current_status WHERE id = 1`,
 	).Scan(
@@ -34,6 +34,7 @@ func (r *StatusRepository) CurrentStatus(ctx context.Context) (domain.Status, er
 		&batterySoc,
 		&batteryInputW,
 		&batteryOutputW,
+		&acChargeLimitW,
 		&status.TargetChargeW,
 		&status.State,
 		&status.Mode,
@@ -48,6 +49,7 @@ func (r *StatusRepository) CurrentStatus(ctx context.Context) (domain.Status, er
 	status.BatterySoc = intFromNull(batterySoc)
 	status.BatteryInputW = intFromNull(batteryInputW)
 	status.BatteryOutputW = intFromNull(batteryOutputW)
+	status.ACChargeLimitW = intFromNull(acChargeLimitW)
 	if lastError.Valid {
 		status.LastError = &lastError.String
 	}
@@ -62,9 +64,9 @@ func (r *StatusRepository) CurrentStatus(ctx context.Context) (domain.Status, er
 func (r *StatusRepository) UpdateCurrentStatus(ctx context.Context, status domain.Status) error {
 	_, err := r.db.ExecContext(ctx, `INSERT INTO current_status (
 		id, grid_w, import_w, export_w, battery_soc, battery_input_w,
-		battery_output_w, target_charge_w, state, mode, last_decision_reason,
+		battery_output_w, ac_charge_limit_w, target_charge_w, state, mode, last_decision_reason,
 		last_error, updated_at
-	) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		grid_w = excluded.grid_w,
 		import_w = excluded.import_w,
@@ -72,6 +74,7 @@ func (r *StatusRepository) UpdateCurrentStatus(ctx context.Context, status domai
 		battery_soc = excluded.battery_soc,
 		battery_input_w = excluded.battery_input_w,
 		battery_output_w = excluded.battery_output_w,
+		ac_charge_limit_w = excluded.ac_charge_limit_w,
 		target_charge_w = excluded.target_charge_w,
 		state = excluded.state,
 		mode = excluded.mode,
@@ -84,6 +87,7 @@ func (r *StatusRepository) UpdateCurrentStatus(ctx context.Context, status domai
 		status.BatterySoc,
 		status.BatteryInputW,
 		status.BatteryOutputW,
+		status.ACChargeLimitW,
 		status.TargetChargeW,
 		status.State,
 		status.Mode,

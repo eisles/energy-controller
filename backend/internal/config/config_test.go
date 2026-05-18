@@ -10,6 +10,10 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	t.Setenv("NATURE_ACCESS_TOKEN", "nature-token")
 	t.Setenv("NATURE_APPLIANCE_ID", "nature-appliance")
 	t.Setenv("NATURE_LOCAL_BASE_URL", "http://remo-e.test")
+	t.Setenv("ECOFLOW_ACCESS_KEY", "ecoflow-access")
+	t.Setenv("ECOFLOW_SECRET_KEY", "ecoflow-secret")
+	t.Setenv("ECOFLOW_DEVICE_SN", "ecoflow-device")
+	t.Setenv("ECOFLOW_BASE_URL", "https://api-e.ecoflow.test")
 	t.Setenv("POLL_INTERVAL_SEC", "45")
 	t.Setenv("START_EXPORT_THRESHOLD_W", "900")
 	t.Setenv("STOP_EXPORT_THRESHOLD_W", "450")
@@ -33,6 +37,18 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	}
 	if cfg.NatureLocalBaseURL != "http://remo-e.test" {
 		t.Fatalf("NatureLocalBaseURL = %q, want http://remo-e.test", cfg.NatureLocalBaseURL)
+	}
+	if cfg.EcoFlowAccessKey != "ecoflow-access" {
+		t.Fatalf("EcoFlowAccessKey was not loaded")
+	}
+	if cfg.EcoFlowSecretKey != "ecoflow-secret" {
+		t.Fatalf("EcoFlowSecretKey was not loaded")
+	}
+	if cfg.EcoFlowDeviceSN != "ecoflow-device" {
+		t.Fatalf("EcoFlowDeviceSN = %q, want ecoflow-device", cfg.EcoFlowDeviceSN)
+	}
+	if cfg.EcoFlowBaseURL != "https://api-e.ecoflow.test" {
+		t.Fatalf("EcoFlowBaseURL = %q, want https://api-e.ecoflow.test", cfg.EcoFlowBaseURL)
 	}
 	if cfg.PollInterval != 45*time.Second {
 		t.Fatalf("PollInterval = %s, want 45s", cfg.PollInterval)

@@ -13,6 +13,7 @@ import (
 	"github.com/eisles/energy-controller/backend/internal/api"
 	"github.com/eisles/energy-controller/backend/internal/config"
 	"github.com/eisles/energy-controller/backend/internal/domain"
+	"github.com/eisles/energy-controller/backend/internal/ecoflow"
 	"github.com/eisles/energy-controller/backend/internal/mock"
 	"github.com/eisles/energy-controller/backend/internal/nature"
 	"github.com/eisles/energy-controller/backend/internal/store"
@@ -88,14 +89,20 @@ func newStatusProvider(cfg config.Config) api.StatusProvider {
 	if cfg.MockMode {
 		return mock.NewStatusProvider(cfg.Clock, cfg.ControlSettings, cfg.SimulationMode, cfg.EnableRealControl)
 	}
+	ecoflowClient := ecoflow.NewSignedClient(ecoflow.Config{
+		AccessKey: cfg.EcoFlowAccessKey,
+		SecretKey: cfg.EcoFlowSecretKey,
+		DeviceSN:  cfg.EcoFlowDeviceSN,
+		BaseURL:   cfg.EcoFlowBaseURL,
+	})
 	if cfg.NatureMode == "cloud" {
 		natureClient := nature.NewCloudClient(nature.CloudConfig{
 			AccessToken: cfg.NatureAccessToken,
 			ApplianceID: cfg.NatureApplianceID,
 		})
-		return mock.NewStatusProviderWithGridReader(cfg.Clock, cfg.ControlSettings, cfg.SimulationMode, cfg.EnableRealControl, natureClient, "nature-cloud")
+		return mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.SimulationMode, cfg.EnableRealControl, natureClient, ecoflowClient, "nature-cloud+ecoflow-read")
 	}
-	return mock.NewStatusProvider(cfg.Clock, cfg.ControlSettings, cfg.SimulationMode, cfg.EnableRealControl)
+	return mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.SimulationMode, cfg.EnableRealControl, nil, ecoflowClient, "ecoflow-read")
 }
 
 func runControlLoop(ctx context.Context, interval time.Duration, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, logger *slog.Logger) {
@@ -140,6 +147,7 @@ func powerLogFromStatus(status domain.Status) domain.PowerLog {
 		BatterySoc:     intPtr(status.BatterySoc),
 		BatteryInputW:  intPtr(status.BatteryInputW),
 		BatteryOutputW: intPtr(status.BatteryOutputW),
+		ACChargeLimitW: intPtr(status.ACChargeLimitW),
 		TargetChargeW:  status.TargetChargeW,
 		ActualCommandW: nil,
 		DecisionReason: status.LastDecisionReason,

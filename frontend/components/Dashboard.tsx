@@ -11,6 +11,7 @@ const initialStatus: EnergyStatus = {
   batterySoc: 0,
   batteryInputW: 0,
   batteryOutputW: 0,
+  acChargeLimitW: 0,
   targetChargeW: 0,
   state: "loading",
   mode: "mock",
@@ -66,6 +67,7 @@ export function Dashboard() {
         <Metric label="Battery SOC" value={status.batterySoc} unit="%" />
         <Metric label="Battery input" value={status.batteryInputW} unit="W" />
         <Metric label="Battery output" value={status.batteryOutputW} unit="W" />
+        <Metric label="AC charge limit" value={status.acChargeLimitW} unit="W" />
         <Metric label="Mode" value={status.mode} />
       </section>
 
