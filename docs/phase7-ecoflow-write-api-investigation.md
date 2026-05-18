@@ -50,21 +50,16 @@ Phase 7 の EcoFlow 実制御に入る前に、DELTA Pro 3 の write path を安
 
 ### 2. 公開 API / endpoint の確認
 
-EcoFlow Developer の公式 document page は確認できるが、ブラウザ検索上は JavaScript 必須で本文を直接取得できなかった。
+EcoFlow Developer の DELTA Pro 3 document は JavaScript app として配信される。通常の HTML 取得では `You need to enable JavaScript to run this app.` だけが返るが、配信 bundle 内の `assets/new_md/deltaPro3.md` chunk から本文を確認できた。
 
-- `https://developer.ecoflow.com/us/document/...`
-- `https://developer-eu.ecoflow.com/us/document/...`
-
-そのため、この調査では公式ページ本文を直接 source of truth として確定できていない。実装時は developer account で公式 docs を開き、該当 device document を人間が確認する必要がある。
-
-ただし、複数の公開実装・ドキュメントで以下の共通形が確認できる。
+公式 document では HTTP communication mode の Set & Get Quota として以下が示されている。
 
 ```text
-GET /iot-open/sign/device/quota/all?sn=<serial>
-PUT /iot-open/sign/device/quota
+PUT: /iot-open/sign/device/quota: SetCmdRequest
+POST: /iot-open/sign/device/quota: GetCmdRequest, GetCmdResponse
 ```
 
-Shelly knowledge base の EcoFlow 連携メモでは、write body の envelope として以下の形が示されている。
+SetCmdRequest の envelope は以下の形で、AC 充電 W 以外の複数 command でも共通している。
 
 ```json
 {
@@ -79,23 +74,23 @@ Shelly knowledge base の EcoFlow 連携メモでは、write body の envelope �
 }
 ```
 
-同じ記事では署名について、request parameters を flatten して sort し、`accessKey` / `nonce` / `timestamp` と合わせて HMAC-SHA256 する、と説明されている。
+Shelly knowledge base の EcoFlow 連携メモでも、write endpoint と envelope は同じ形で確認できる。同じ記事では署名について、request parameters を flatten して sort し、`accessKey` / `nonce` / `timestamp` と合わせて HMAC-SHA256 する、と説明されている。
 
 ### 3. DELTA Pro 3 に近い candidate payload
 
-Symcon community の DELTA Pro 3 事例では、以下の candidate params が言及されている。
+EcoFlow Developer の DELTA Pro 3 document では、Maximum AC input power for charging の SetCmdRequest として以下の params が示されている。
 
 ```json
 {
   "params": {
-    "cfgPlugInInfoAcInChgPowMax": 400
+    "cfgPlugInInfoAcInChgPowMax": 3000
   }
 }
 ```
 
-同 thread では `cmdId=17`、`cmdFunc=254`、`dirDest=1`、`dirSrc=1`、`dest=2`、`needAck=true` の envelope も DELTA Pro 3 向けとして言及されている。
+対応する Set Reply example では `cfgPlugInInfoAcInChgPowMax`、`configOk=true`、`actionId=54` が返る形になっている。
 
-ただし、thread 内では PHP 実装で signature error が出ており、同じ JSON が Java では動作したという報告に留まる。よって、この情報は「候補」であって「この repo で即実装してよい確定値」ではない。
+Symcon community の DELTA Pro 3 事例でも同じ params が言及されている。ただし community thread は signature error の話も含むため、公式 document の補助情報として扱う。
 
 ### 4. 既存 integration から見える制御軸
 
@@ -123,11 +118,10 @@ DELTA Pro 3 manual では、物理的な charge speed switch に `ADJ` と `FAST
 - write endpoint 候補は `PUT /iot-open/sign/device/quota`
 - write envelope 候補は `cmdId=17` / `cmdFunc=254` / `dirDest=1` / `dirSrc=1` / `dest=2` / `needAck=true`
 - AC charge power の read quota は `plugInInfoAcInChgPowMax`
-- AC charge power の write param 候補は `cfgPlugInInfoAcInChgPowMax`
+- AC charge power の write param は EcoFlow Developer DELTA Pro 3 document 上では `cfgPlugInInfoAcInChgPowMax`
 
 ### まだ不確実
 
-- DELTA Pro 3 で `cfgPlugInInfoAcInChgPowMax` が常に有効か
 - stop/minimize charging に使うべき正式 param
 - backup reserve の write param が DELTA Pro 3 で `cfgBackupReverseSoc` 相当か
 - request body を含む PUT signing の正確な flatten ルール
@@ -172,10 +166,9 @@ type WriteClient interface {
 
 ### まだ実装しない
 
-以下は公式 docs と実機確認なしに実装しない。
+以下は実機確認なしに実装しない。
 
 - real `PUT /iot-open/sign/device/quota` call
-- `cfgPlugInInfoAcInChgPowMax` の実送信
 - backup reserve write
 - stop/minimize の real payload
 - auto continuous real control
@@ -189,12 +182,36 @@ type WriteClient interface {
 - real write は 1 command 限定で開始する
 - 実行後、`ENABLE_REAL_CONTROL=false` に戻す
 
+## 追加確認: AC 充電 W payload builder
+
+2026-05-18 時点で `https://developer-eu.ecoflow.com/us/document/deltaPro3` の配信 bundle を確認し、DELTA Pro 3 の Maximum AC input power for charging が公式 document に載っていることを確認した。
+
+```text
+PUT /iot-open/sign/device/quota
+
+cmdId=17
+cmdFunc=254
+dirDest=1
+dirSrc=1
+dest=2
+needAck=true
+params.cfgPlugInInfoAcInChgPowMax=<watts>
+```
+
+このため、Phase 7 の次段階では以下だけを実装した。
+
+- `backend/internal/ecoflow` に AC charge power payload builder を追加
+- JSON envelope と `params.cfgPlugInInfoAcInChgPowMax` を unit test で固定
+- real `PUT` 呼び出し、署名付き body 送信、実機 write adapter への接続は未実装のまま維持
+
+この builder は公式 document の payload 形に基づく。ただし実機送信に進む前に、対象アカウント / 対象 device / physical charge speed switch / firmware state で 1 command 限定の実機検証が必要である。
+
 ## 参考 URL
 
-- EcoFlow Developer document: https://developer.ecoflow.com/us/document
-- EcoFlow Developer EU document: https://developer-eu.ecoflow.com/us/document
+- EcoFlow Developer DELTA Pro 3 document: https://developer-eu.ecoflow.com/us/document/deltaPro3
 - Shelly knowledge base EcoFlow integration: https://kb.shelly.cloud/knowledge-base/kbuca-ecoflow-works-with-shelly
 - openHAB EcoFlow binding: https://www.openhab.org/addons/bindings/ecoflow/
 - Symcon EcoFlow API thread: https://community.symcon.de/t/ecoflow-api/130047?page=2
+- FHEM EcoFlow API thread: https://forum.fhem.de/index.php?topic=140806.105
 - EcoFlow API SDK/schema repo: https://github.com/rustyy/ecoflow-api
 - EcoFlow DELTA Pro 3 manual mirror: https://www.manualslib.com/guide/3619472/ecoflow-delta-pro-3-manual.html
