@@ -227,6 +227,32 @@ params.cfgPlugInInfoAcInChgPowMax=<watts>
 
 この段階でも EcoFlow への実 API 書き込みは発生しない。
 
+## 追加確認: SignedWriteClient の単体実装
+
+2026-05-18 時点で、`SignedWriteClient` を `backend/internal/ecoflow` に追加した。
+
+実装した範囲:
+
+- `SetACChargePower(ctx, watts)` で AC 充電 W payload を組み立てる
+- `newSignedPUTRequest` を使って signed PUT request を作る
+- response body の `code` / `message` を parse し、`code != "0"` を error にする
+- adapter 内で二重 guard を行う
+  - `MOCK_MODE=false`
+  - `SIMULATION_MODE=false`
+  - `ENABLE_REAL_CONTROL=true`
+  - `AUTO_CONTROL_ENABLED=true`
+  - EcoFlow access key / secret key / device SN が空でない
+- `httptest` で guard NG 時は 0 request、guard OK 時は 1 request、API error 時は error になることを確認する
+
+まだ実装していない範囲:
+
+- `main.go` から `SignedWriteClient` を注入すること
+- 実機へ 1500W -> 1000W の変更 command を送ること
+- `StopOrMinimizeCharging` の real payload
+- 自動連続制御で real write adapter を使うこと
+
+実際の変更設定を送るタイミングは、この `SignedWriteClient` 差分のレビューと commit 後に、1 command 限定の実機手順を作成し、`ENABLE_REAL_CONTROL=true` にする直前確認を行った後とする。
+
 ## 参考 URL
 
 - EcoFlow Developer DELTA Pro 3 document: https://developer-eu.ecoflow.com/us/document/deltaPro3
