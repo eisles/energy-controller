@@ -751,6 +751,113 @@ EcoFlowへの実制御を追加してください。
 - 実制御部分のユニットテストを追加する
 ```
 
+#### Phase 7 詳細計画
+
+Phase 7 は EcoFlow への書き込み制御を初めて追加する段階なので、実装は以下の順で進める。実機 write path は最後まで既定 OFF とし、read-only / simulation の既存挙動を壊さない。
+
+##### 7-1. 実制御ガードを先に固定する
+
+EcoFlow への write command は、必ず以下をすべて満たす場合だけ送信する。
+
+```text
+ENABLE_REAL_CONTROL=true
+SIMULATION_MODE=false
+MOCK_MODE=false
+auto_control_enabled=true
+```
+
+上記のいずれかが false の場合は、実 API へ書き込まず、判断結果と送信しなかった理由を `power_logs` と current status に残す。
+
+実装条件:
+
+- `controller` / write adapter 境界の手前で guard する
+- adapter 側にも二重 guard を置き、呼び出しミスでも送信できないようにする
+- unit test で `ENABLE_REAL_CONTROL=false`、`SIMULATION_MODE=true`、`MOCK_MODE=true`、`auto_control_enabled=false` の各ケースを確認する
+- default `.env.example` は `MOCK_MODE=true` / `SIMULATION_MODE=true` / `ENABLE_REAL_CONTROL=false` のまま変更しない
+
+##### 7-2. EcoFlow write adapter を read model から分離する
+
+EcoFlow API の command / quota name / params は不確実性が高いため、domain や controller に直接漏らさない。
+
+実装条件:
+
+- `backend/internal/ecoflow` に write 専用 adapter を置く
+- domain / control 層は `SetACChargePower(ctx, watts)` と `StopOrMinimizeCharging(ctx)` の抽象だけを見る
+- EcoFlow 固有の endpoint、署名、payload、quota name は adapter 内に閉じる
+- 不明な API 値や推定値は TODO comment と structured log に残す
+- 実 API 失敗時はアプリを落とさず、`lastError` と `power_logs.error_message` に残す
+
+##### 7-3. command 抑制を write path で必ず適用する
+
+実制御では頻繁なコマンド送信を避ける。判断エンジンが target を出しても、write path は以下を満たすときだけ送信する。
+
+```text
+abs(targetW - lastCommandW) >= MIN_COMMAND_DIFF_W
+now - lastCommandAt >= MIN_COMMAND_INTERVAL_SEC
+```
+
+実装条件:
+
+- 最後に送った command W / timestamp を保存する
+- 抑制された場合も `command_sent=false` と理由を log に残す
+- command 抑制は simulation mode でも同じ判断ログを出せるようにする
+- unit test で差分不足、interval 不足、両方満たすケースを確認する
+
+##### 7-4. StopOrMinimizeCharging の安全動作を先に実装する
+
+買電中、売電不足、SOC 上限到達、API 不確実の場合は、充電強化ではなく停止または最小化を優先する。
+
+実装条件:
+
+- `gridW > 0` の買電状態では charging command を送らない
+- `exportW < STOP_EXPORT_THRESHOLD_W` では充電を弱める
+- EcoFlow API の stop 相当が不確実な場合は、AC charge W を最小値へ下げる実装に留める
+- stop / minimize の実 API payload が確定するまで、adapter 内に TODO を残す
+- unit test で買電、売電不足、SOC 上限到達時に charge-up command が送られないことを確認する
+
+##### 7-5. 監査ログと UI 表示を先に使える状態にする
+
+実コマンドを送る前に、何を送る予定だったか、なぜ送ったか、またはなぜ送らなかったかを追跡できるようにする。
+
+実装条件:
+
+- `power_logs.actual_command_w` に送信した W を保存する
+- `power_logs.command_sent` を正しく保存する
+- `decision_reason` に guard / hysteresis / interval / API error の理由を含める
+- current status の `lastDecisionReason` / `lastError` に UI で判断できる情報を残す
+- Phase 6 dashboard には書き込み操作を追加しない。必要なら read-only 表示だけを拡張する
+
+##### 7-6. 実機確認は短時間・手動で開始する
+
+最初の実機確認では、自動連続制御をいきなり有効化しない。
+
+手順:
+
+1. `.env` を実機用に設定する。ただし `ENABLE_REAL_CONTROL=false` のまま起動する
+2. read-only で `batterySoc` / `batteryInputW` / `batteryOutputW` / `acChargeLimitW` が取れることを確認する
+3. `SIMULATION_MODE=false` にしても `ENABLE_REAL_CONTROL=false` の間は write されないことを log で確認する
+4. 短時間だけ `ENABLE_REAL_CONTROL=true` にして、1 command のみ送信される条件を作る
+5. `power_logs.command_sent=true`、`actual_command_w`、EcoFlow 側の状態変化を確認する
+6. 確認後は `ENABLE_REAL_CONTROL=false` に戻す
+
+ロールバック:
+
+- `.env` の `ENABLE_REAL_CONTROL=false` に戻す
+- 必要なら `SIMULATION_MODE=true` / `MOCK_MODE=true` に戻す
+- Docker Compose の場合は `docker compose down` 後に `.env` を確認して再起動する
+
+##### Phase 7 完了条件
+
+- default 起動では実コマンドが送信されない
+- guard 条件を満たさない全ケースの unit test がある
+- write adapter の実 API 呼び出しは adapter package 内に閉じている
+- command interval / diff 抑制の unit test がある
+- 実コマンド送信時は `power_logs` に `command_sent=true` と `actual_command_w` が残る
+- API 失敗時にアプリが落ちず、連続リトライしない
+- README に実制御の危険性、設定条件、ロールバック手順を追記する
+- `cd backend && go test ./...` が通る
+- `docker compose up -d --build` で default mock/simulation 起動できる
+
 #### EcoFlow DELTA Pro 3 制御方針メモ
 
 Phase 5 の read-only API 確認では、DELTA Pro 3 の充電挙動に関係しそうな quota として以下を確認した。
