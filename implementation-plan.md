@@ -728,7 +728,9 @@ Next.jsの管理画面を実装してください。
 注意:
 - Next.jsはStatic Export
 - APIはGo backendを呼ぶ
-- shadcn/ui風のシンプルなカードUIにする
+- UIキットは shadcn/ui を使う
+- shadcn/ui の Card / Button / Table / Badge / Alert / Form 系コンポーネントをベースにする
+- 書き込み API が未実装の操作は disabled または read-only 表示に留める
 ```
 
 ### Phase 7: EcoFlow実制御
