@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bufio"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/eisles/energy-controller/backend/internal/control"
@@ -19,26 +21,37 @@ func (realClock) Now() time.Time {
 }
 
 type Config struct {
-	AppEnv            string
-	HTTPPort          string
-	DBPath            string
-	FrontendDir       string
-	MockMode          bool
-	SimulationMode    bool
-	EnableRealControl bool
-	ControlSettings   control.Settings
-	Clock             Clock
+	AppEnv             string
+	HTTPPort           string
+	DBPath             string
+	FrontendDir        string
+	MockMode           bool
+	SimulationMode     bool
+	EnableRealControl  bool
+	NatureMode         string
+	NatureAccessToken  string
+	NatureApplianceID  string
+	NatureLocalBaseURL string
+	PollInterval       time.Duration
+	ControlSettings    control.Settings
+	Clock              Clock
 }
 
 func Load() Config {
+	loadDotEnv()
 	return Config{
-		AppEnv:            env("APP_ENV", "local"),
-		HTTPPort:          env("HTTP_PORT", "8080"),
-		DBPath:            env("DB_PATH", "./data/energy.db"),
-		FrontendDir:       env("FRONTEND_DIR", "../frontend/out"),
-		MockMode:          envBool("MOCK_MODE", true),
-		SimulationMode:    envBool("SIMULATION_MODE", true),
-		EnableRealControl: envBool("ENABLE_REAL_CONTROL", false),
+		AppEnv:             env("APP_ENV", "local"),
+		HTTPPort:           env("HTTP_PORT", "8080"),
+		DBPath:             env("DB_PATH", "./data/energy.db"),
+		FrontendDir:        env("FRONTEND_DIR", "../frontend/out"),
+		MockMode:           envBool("MOCK_MODE", true),
+		SimulationMode:     envBool("SIMULATION_MODE", true),
+		EnableRealControl:  envBool("ENABLE_REAL_CONTROL", false),
+		NatureMode:         env("NATURE_MODE", "cloud"),
+		NatureAccessToken:  env("NATURE_ACCESS_TOKEN", ""),
+		NatureApplianceID:  env("NATURE_APPLIANCE_ID", ""),
+		NatureLocalBaseURL: env("NATURE_LOCAL_BASE_URL", "http://remo-e.local"),
+		PollInterval:       time.Duration(envInt("POLL_INTERVAL_SEC", 30)) * time.Second,
 		ControlSettings: control.Settings{
 			StartExportThresholdW: envInt("START_EXPORT_THRESHOLD_W", 700),
 			StopExportThresholdW:  envInt("STOP_EXPORT_THRESHOLD_W", 300),
@@ -50,6 +63,37 @@ func Load() Config {
 			MinCommandDiffW:       envInt("MIN_COMMAND_DIFF_W", 100),
 		},
 		Clock: realClock{},
+	}
+}
+
+func loadDotEnv() {
+	for _, path := range []string{".env", "../.env"} {
+		file, err := os.Open(path)
+		if err != nil {
+			continue
+		}
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			key, value, ok := strings.Cut(line, "=")
+			if !ok {
+				continue
+			}
+			key = strings.TrimSpace(key)
+			value = strings.Trim(strings.TrimSpace(value), `"'`)
+			if key == "" {
+				continue
+			}
+			if _, exists := os.LookupEnv(key); !exists {
+				_ = os.Setenv(key, value)
+			}
+		}
+		return
 	}
 }
 

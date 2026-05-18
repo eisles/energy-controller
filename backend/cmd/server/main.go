@@ -14,6 +14,7 @@ import (
 	"github.com/eisles/energy-controller/backend/internal/config"
 	"github.com/eisles/energy-controller/backend/internal/domain"
 	"github.com/eisles/energy-controller/backend/internal/mock"
+	"github.com/eisles/energy-controller/backend/internal/nature"
 	"github.com/eisles/energy-controller/backend/internal/store"
 )
 
@@ -21,7 +22,7 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	cfg := config.Load()
-	if !cfg.MockMode || !cfg.SimulationMode || cfg.EnableRealControl {
+	if !cfg.SimulationMode || cfg.EnableRealControl {
 		logger.Warn("unsafe mode flags detected; real device control is not implemented in this phase",
 			"mockMode", cfg.MockMode,
 			"simulationMode", cfg.SimulationMode,
@@ -36,13 +37,13 @@ func main() {
 	}
 	defer db.Close()
 
-	statusProvider := mock.NewStatusProvider(cfg.Clock, cfg.ControlSettings, cfg.SimulationMode, cfg.EnableRealControl)
+	statusProvider := newStatusProvider(cfg)
 	statusRepository := store.NewStatusRepository(db)
 	logRepository := store.NewLogRepository(db)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	recordStatus(ctx, statusProvider, statusRepository, logRepository, logger)
-	go runMockControlLoop(ctx, statusProvider, statusRepository, logRepository, logger)
+	go runControlLoop(ctx, cfg.PollInterval, statusProvider, statusRepository, logRepository, logger)
 
 	router := api.NewRouter(api.Dependencies{
 		Config:         cfg,
@@ -83,8 +84,25 @@ type logWriter interface {
 	InsertPowerLog(ctx context.Context, log domain.PowerLog) error
 }
 
-func runMockControlLoop(ctx context.Context, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, logger *slog.Logger) {
-	ticker := time.NewTicker(10 * time.Second)
+func newStatusProvider(cfg config.Config) api.StatusProvider {
+	if cfg.MockMode {
+		return mock.NewStatusProvider(cfg.Clock, cfg.ControlSettings, cfg.SimulationMode, cfg.EnableRealControl)
+	}
+	if cfg.NatureMode == "cloud" {
+		natureClient := nature.NewCloudClient(nature.CloudConfig{
+			AccessToken: cfg.NatureAccessToken,
+			ApplianceID: cfg.NatureApplianceID,
+		})
+		return mock.NewStatusProviderWithGridReader(cfg.Clock, cfg.ControlSettings, cfg.SimulationMode, cfg.EnableRealControl, natureClient, "nature-cloud")
+	}
+	return mock.NewStatusProvider(cfg.Clock, cfg.ControlSettings, cfg.SimulationMode, cfg.EnableRealControl)
+}
+
+func runControlLoop(ctx context.Context, interval time.Duration, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, logger *slog.Logger) {
+	if interval <= 0 {
+		interval = 30 * time.Second
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -99,7 +117,7 @@ func runMockControlLoop(ctx context.Context, provider api.StatusProvider, status
 func recordStatus(ctx context.Context, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, logger *slog.Logger) {
 	status, err := provider.CurrentStatus(ctx)
 	if err != nil {
-		logger.Error("failed to evaluate mock status", "error", err)
+		logger.Error("failed to evaluate current status", "error", err)
 		return
 	}
 	if err := logRepository.InsertPowerLog(ctx, powerLogFromStatus(status)); err != nil {

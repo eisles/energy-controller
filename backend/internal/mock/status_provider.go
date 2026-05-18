@@ -2,6 +2,7 @@ package mock
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -16,8 +17,15 @@ type StatusProvider struct {
 	settings       control.Settings
 	simulationMode bool
 	realControl    bool
+	mode           string
+	gridReader     GridReader
+	staleAfter     time.Duration
 	mu             sync.Mutex
 	previous       control.PreviousDecision
+}
+
+type GridReader interface {
+	CurrentGridPower(ctx context.Context) (domain.GridPower, time.Time, error)
 }
 
 func NewStatusProvider(clock config.Clock, settings control.Settings, simulationMode bool, realControl bool) *StatusProvider {
@@ -26,17 +34,26 @@ func NewStatusProvider(clock config.Clock, settings control.Settings, simulation
 		settings:       settings,
 		simulationMode: simulationMode,
 		realControl:    realControl,
+		mode:           "mock",
+		staleAfter:     5 * time.Minute,
 	}
 }
 
-func (p *StatusProvider) CurrentStatus(_ context.Context) (domain.Status, error) {
+func NewStatusProviderWithGridReader(clock config.Clock, settings control.Settings, simulationMode bool, realControl bool, gridReader GridReader, mode string) *StatusProvider {
+	provider := NewStatusProvider(clock, settings, simulationMode, realControl)
+	provider.gridReader = gridReader
+	provider.mode = mode
+	return provider
+}
+
+func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, error) {
 	now := p.clock.Now()
-	gridW := sampleGridW(now)
+	gridPower, lastError := p.currentGridPower(ctx, now)
 	batterySoc := sampleBatterySoc(now)
 
 	p.mu.Lock()
 	result := control.Evaluate(control.Input{
-		GridW:             gridW,
+		GridW:             gridPower.GridW,
 		BatterySoc:        batterySoc,
 		Previous:          p.previous,
 		Now:               now,
@@ -60,11 +77,27 @@ func (p *StatusProvider) CurrentStatus(_ context.Context) (domain.Status, error)
 		BatteryOutputW:     0,
 		TargetChargeW:      result.Decision.TargetChargeW,
 		State:              "simulation",
-		Mode:               "mock",
+		Mode:               p.mode,
 		LastDecisionReason: result.Decision.Reason,
-		LastError:          nil,
+		LastError:          lastError,
 		UpdatedAt:          now,
 	}, nil
+}
+
+func (p *StatusProvider) currentGridPower(ctx context.Context, now time.Time) (domain.GridPower, *string) {
+	if p.gridReader == nil {
+		return control.CalculateGridPower(sampleGridW(now)), nil
+	}
+	gridPower, updatedAt, err := p.gridReader.CurrentGridPower(ctx)
+	if err != nil {
+		message := fmt.Sprintf("Nature Remo grid power read failed: %v", err)
+		return control.CalculateGridPower(0), &message
+	}
+	if !updatedAt.IsZero() && now.Sub(updatedAt) > p.staleAfter {
+		message := fmt.Sprintf("Nature Remo grid power is stale: updatedAt=%s", updatedAt.Format(time.RFC3339))
+		return gridPower, &message
+	}
+	return gridPower, nil
 }
 
 func sampleGridW(now time.Time) int {
