@@ -35,7 +35,7 @@ func main() {
 	}
 	defer db.Close()
 
-	statusProvider := mock.NewStatusProvider(cfg.Clock)
+	statusProvider := mock.NewStatusProvider(cfg.Clock, cfg.ControlSettings, cfg.SimulationMode, cfg.EnableRealControl)
 	router := api.NewRouter(api.Dependencies{
 		Config:         cfg,
 		DB:             db,

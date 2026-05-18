@@ -15,6 +15,12 @@ type BatteryStatus struct {
 	IsOnline bool `json:"isOnline"`
 }
 
+type ControlDecision struct {
+	ShouldCharge  bool
+	TargetChargeW int
+	Reason        string
+}
+
 type Status struct {
 	GridW              int       `json:"gridW"`
 	ImportW            int       `json:"importW"`
