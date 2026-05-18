@@ -10,6 +10,7 @@ import (
 
 	"github.com/eisles/energy-controller/backend/internal/config"
 	"github.com/eisles/energy-controller/backend/internal/domain"
+	"github.com/eisles/energy-controller/backend/internal/store"
 )
 
 type StatusProvider interface {
@@ -25,7 +26,16 @@ type Dependencies struct {
 
 func NewRouter(deps Dependencies) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/status", statusHandler(deps.StatusProvider, deps.Logger))
+	statusProvider := deps.StatusProvider
+	logProvider := LogProvider(nil)
+	if deps.DB != nil {
+		statusProvider = store.NewStatusRepository(deps.DB)
+		logProvider = store.NewLogRepository(deps.DB)
+	}
+	mux.HandleFunc("GET /api/status", statusHandler(statusProvider, deps.Logger))
+	if logProvider != nil {
+		mux.HandleFunc("GET /api/logs", logsHandler(logProvider, deps.Logger))
+	}
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})

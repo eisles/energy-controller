@@ -14,7 +14,7 @@ func statusHandler(provider StatusProvider, logger *slog.Logger) http.HandlerFun
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get current status"})
 			return
 		}
-		logger.Info("control decision", "mode", status.Mode, "state", status.State, "gridW", status.GridW, "targetChargeW", status.TargetChargeW, "reason", status.LastDecisionReason)
+		logger.Info("current status read", "mode", status.Mode, "state", status.State, "gridW", status.GridW, "targetChargeW", status.TargetChargeW, "reason", status.LastDecisionReason)
 		writeJSON(w, http.StatusOK, status)
 	}
 }
