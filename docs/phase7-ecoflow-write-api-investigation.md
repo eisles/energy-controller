@@ -251,9 +251,44 @@ params.cfgPlugInInfoAcInChgPowMax=<watts>
 - server `cmd/server` への real write adapter 注入
 - frontend / backend API からの実機書き込み
 - 自動連続制御での real write
-- 実機へ 1500W -> 1000W の変更 command を送ること
 
 実際の変更設定を送るタイミングは、この CLI 差分のレビューと commit 後に、直前の状態確認と明示承認を行った後とする。
+
+## 実機確認: AC 充電上限 1500W -> 1000W one-shot
+
+2026-05-18 に、one-shot CLI を使って DELTA Pro 3 の AC 充電上限を 1500W から 1000W へ 1 回だけ変更した。
+
+実行前確認:
+
+- 実機 read-only status で `ACChargeLimitW=1500` を確認した
+- 確認時の状態は `mode=ecoflow-read` / `state=simulation`
+- `ENABLE_REAL_CONTROL=false` の read-only server で確認し、server / UI / backend API からの write は使っていない
+
+実行:
+
+```bash
+cd backend
+MOCK_MODE=false \
+SIMULATION_MODE=false \
+ENABLE_REAL_CONTROL=true \
+AUTO_CONTROL_ENABLED=false \
+CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND \
+go run ./cmd/ecoflow-write-test --execute --watts 1000 --expected-current-limit 1500
+```
+
+結果:
+
+- CLI は write 前に現在値 `1500W` を確認し、`1000W` の command を 1 回だけ送信した
+- CLI 出力は `sent one EcoFlow AC charge power command: 1000W (previous limit confirmed: 1500W)`
+- 実行後の read-only status で `ACChargeLimitW=1000` を確認した
+- 実行後確認時の `lastError` は空だった
+
+この検証後も、以下は未接続のまま維持する。
+
+- server `cmd/server` への real write adapter 注入
+- frontend / backend API からの実機書き込み
+- 自動連続制御での real write
+- `StopOrMinimizeCharging` の real payload
 
 ## 追加確認: SignedWriteClient の単体実装
 
@@ -275,11 +310,10 @@ params.cfgPlugInInfoAcInChgPowMax=<watts>
 まだ実装していない範囲:
 
 - `main.go` から `SignedWriteClient` を注入すること
-- 実機へ 1500W -> 1000W の変更 command を送ること
 - `StopOrMinimizeCharging` の real payload
 - 自動連続制御で real write adapter を使うこと
 
-実際の変更設定を送るタイミングは、この `SignedWriteClient` 差分のレビューと commit 後に、1 command 限定の実機手順を作成し、`ENABLE_REAL_CONTROL=true` にする直前確認を行った後とする。
+実機へ 1500W -> 1000W の変更 command は、one-shot CLI のレビューと commit 後に、直前の read-only 確認と明示承認を経て 1 回だけ実行済みである。
 
 ## 参考 URL
 
