@@ -11,6 +11,7 @@ type WriteGuards struct {
 	SimulationMode     bool
 	EnableRealControl  bool
 	AutoControlEnabled bool
+	ManualOneShot      bool
 }
 
 type SignedWriteClient struct {
@@ -48,8 +49,8 @@ func (c *SignedWriteClient) guard() error {
 		return fmt.Errorf("EcoFlow real write disabled: SIMULATION_MODE=true")
 	case !c.guards.EnableRealControl:
 		return fmt.Errorf("EcoFlow real write disabled: ENABLE_REAL_CONTROL=false")
-	case !c.guards.AutoControlEnabled:
-		return fmt.Errorf("EcoFlow real write disabled: AUTO_CONTROL_ENABLED=false")
+	case !c.guards.AutoControlEnabled && !c.guards.ManualOneShot:
+		return fmt.Errorf("EcoFlow real write disabled: AUTO_CONTROL_ENABLED=false and manual one-shot is not enabled")
 	case c.client.accessKey == "" || c.client.secretKey == "" || c.client.deviceSN == "":
 		return fmt.Errorf("EcoFlow real write disabled: access key, secret key, or device SN is empty")
 	default:

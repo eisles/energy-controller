@@ -36,7 +36,7 @@ func TestSignedWriteClientGuardBlocksWithoutRequest(t *testing.T) {
 		{
 			name:    "auto control disabled",
 			guards:  WriteGuards{MockMode: false, SimulationMode: false, EnableRealControl: true, AutoControlEnabled: false},
-			wantErr: "AUTO_CONTROL_ENABLED=false",
+			wantErr: "manual one-shot is not enabled",
 		},
 		{
 			name:    "access key empty",
@@ -86,6 +86,35 @@ func TestSignedWriteClientGuardBlocksWithoutRequest(t *testing.T) {
 				t.Fatalf("requests = %d, want 0", requests)
 			}
 		})
+	}
+}
+
+func TestSignedWriteClientAllowsManualOneShotWithAutoControlDisabled(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "0", "message": "Success"})
+	}))
+	defer server.Close()
+
+	client := NewSignedWriteClient(Config{
+		AccessKey: "access-key",
+		SecretKey: "secret-key",
+		DeviceSN:  "DP3-SN",
+		BaseURL:   server.URL,
+	}, WriteGuards{
+		MockMode:           false,
+		SimulationMode:     false,
+		EnableRealControl:  true,
+		AutoControlEnabled: false,
+		ManualOneShot:      true,
+	})
+
+	if err := client.SetACChargePower(context.Background(), 1000); err != nil {
+		t.Fatalf("SetACChargePower failed: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
 	}
 }
 

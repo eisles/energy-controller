@@ -80,7 +80,7 @@ FRONTEND_DIR=../frontend/out DB_PATH=./data/energy.db go run ./cmd/server
 
 ## Phase 7 dry-run 検証
 
-EcoFlow への実 API 書き込みはまだ実装していません。Phase 7 の現時点では、write 条件が揃った場合でも mock write adapter が would-send として記録するだけです。
+通常の server / 管理画面経由では、EcoFlow への実 API 書き込みは行いません。Phase 7 の現時点では、server は write 条件が揃った場合でも mock write adapter が would-send として記録するだけです。
 
 dry-run で確認する場合:
 
@@ -105,7 +105,34 @@ go run ./cmd/server
 - dry-run のため `actualCommandW` は `null`
 - interval / diff 抑制時は `decisionReason` に `command suppressed` が残る
 
-実機 write を入れる前に、EcoFlow Developer docs と DELTA Pro 3 実機で正式な write payload を確認してください。確認が終わるまでは real `PUT` 実装を追加しないでください。
+## Phase 7 one-shot 実機検証 CLI
+
+EcoFlow への実 API 書き込みは、管理画面や server API ではなく、手動 CLI で 1 command だけ実行します。通常は `--execute` を付けず dry-run してください。
+
+dry-run:
+
+```bash
+cd backend
+go run ./cmd/ecoflow-write-test --watts 1000 --expected-current-limit 1500
+```
+
+実行時は read-only API で現在の AC 充電上限が `--expected-current-limit` と一致することを確認してから、1 回だけ `--watts` の設定を送ります。以下の環境変数が全て揃わない場合は送信しません。
+
+```bash
+cd backend
+MOCK_MODE=false \
+SIMULATION_MODE=false \
+ENABLE_REAL_CONTROL=true \
+AUTO_CONTROL_ENABLED=false \
+CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND \
+ECOFLOW_ACCESS_KEY=... \
+ECOFLOW_SECRET_KEY=... \
+ECOFLOW_DEVICE_SN=... \
+ECOFLOW_BASE_URL=https://api-e.ecoflow.com \
+go run ./cmd/ecoflow-write-test --execute --watts 1000 --expected-current-limit 1500
+```
+
+実行後は EcoFlow app または read-only status で反映を確認し、`ENABLE_REAL_CONTROL` と `CONFIRM_ECOFLOW_WRITE` は継続運用用に残さないでください。自動連続制御、UI からの書き込み、server API からの書き込みはまだ有効化していません。
 
 ## Phase 1 の実装範囲
 
@@ -116,4 +143,4 @@ go run ./cmd/server
 - Next.js Static Export の最小管理画面
 - Docker Compose 起動
 
-実機連携、制御ループ、ログ保存 API、設定更新 API、EcoFlow 書き込み制御は未実装です。
+自動制御ループ、設定更新 API、server / 管理画面からの EcoFlow 書き込み制御は未実装です。EcoFlow への実 API 書き込みは Phase 7 の one-shot CLI に限定しています。

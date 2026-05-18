@@ -218,14 +218,42 @@ params.cfgPlugInInfoAcInChgPowMax=<watts>
 - `accessKey` / `nonce` / `timestamp` / `sign` header を request に設定する
 - unit test で署名対象 params、JSON body、HTTP method、headers を固定する
 
-まだ実装していない範囲:
+この段階でまだ実装していなかった範囲:
 
 - `httpClient.Do` による real PUT 送信
 - `WriteClient.SetACChargePower` から signed PUT request builder への接続
 - real response parsing
 - command_sent=true の実機ログ
 
-この段階でも EcoFlow への実 API 書き込みは発生しない。
+この段階では EcoFlow への実 API 書き込みは発生していない。その後、`SignedWriteClient` と one-shot CLI の範囲に限って real PUT 送信経路を追加した。server / 管理画面 / backend API からの実機書き込みは引き続き未接続である。
+
+## 追加確認: one-shot 実機検証 CLI
+
+2026-05-18 時点で、実機へ送る経路を server / 管理画面から分離し、手動 CLI の 1 command 限定に閉じる。
+
+実装した範囲:
+
+- `backend/cmd/ecoflow-write-test` を追加する
+- `--execute` なしでは dry-run message のみ出し、read / write request を送らない
+- `--execute` ありでも、以下の条件が全て揃わない限り request を送らない
+  - `MOCK_MODE=false`
+  - `SIMULATION_MODE=false`
+  - `ENABLE_REAL_CONTROL=true`
+  - `AUTO_CONTROL_ENABLED=false`
+  - `CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND`
+  - EcoFlow access key / secret key / device SN が空でない
+- write 前に read-only `GetBatteryStatus` を実行し、現在の `ACChargeLimitW` が `--expected-current-limit` と一致しない場合は write しない
+- 条件一致時にだけ `SetACChargePower(ctx, watts)` を 1 回呼ぶ
+- `SignedWriteClient` guard に manual one-shot フラグを追加し、自動制御 disabled のまま手動 1 回実行を許可する
+
+まだ実装していない範囲:
+
+- server `cmd/server` への real write adapter 注入
+- frontend / backend API からの実機書き込み
+- 自動連続制御での real write
+- 実機へ 1500W -> 1000W の変更 command を送ること
+
+実際の変更設定を送るタイミングは、この CLI 差分のレビューと commit 後に、直前の状態確認と明示承認を行った後とする。
 
 ## 追加確認: SignedWriteClient の単体実装
 
@@ -240,7 +268,7 @@ params.cfgPlugInInfoAcInChgPowMax=<watts>
   - `MOCK_MODE=false`
   - `SIMULATION_MODE=false`
   - `ENABLE_REAL_CONTROL=true`
-  - `AUTO_CONTROL_ENABLED=true`
+  - `AUTO_CONTROL_ENABLED=true` または manual one-shot が明示されている
   - EcoFlow access key / secret key / device SN が空でない
 - `httptest` で guard NG 時は 0 request、guard OK 時は 1 request、API error 時は error になることを確認する
 
