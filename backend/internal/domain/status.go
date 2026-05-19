@@ -61,6 +61,7 @@ type SurplusPlan struct {
 	ShouldAdjustACChargeLimit   bool   `json:"shouldAdjustAcChargeLimit"`
 	ShouldDisableEnergyModes    bool   `json:"shouldDisableEnergyModes"`
 	WouldWrite                  bool   `json:"wouldWrite"`
+	ActionSummary               string `json:"actionSummary"`
 	Reason                      string `json:"reason"`
 }
 

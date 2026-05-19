@@ -35,6 +35,11 @@ func TestPlanSurplusChargingRecommendsACAndReserve(t *testing.T) {
 	if !plan.ShouldDisableEnergyModes {
 		t.Fatal("ShouldDisableEnergyModes = false, want true")
 	}
+	for _, want := range []string{"バックアップリザーブを80%へ引き上げ", "AC充電上限を1000Wへ設定", "energy strategy modesを全OFF"} {
+		if !strings.Contains(plan.ActionSummary, want) {
+			t.Fatalf("ActionSummary = %q, want contains %q", plan.ActionSummary, want)
+		}
+	}
 	if plan.WouldWrite {
 		t.Fatal("WouldWrite = true in simulation mode")
 	}
@@ -65,6 +70,11 @@ func TestPlanSurplusChargingRestoresDefaultReserveWhenImporting(t *testing.T) {
 	}
 	if !plan.ShouldLowerBackupReserve {
 		t.Fatal("ShouldLowerBackupReserve = false, want true")
+	}
+	for _, want := range []string{"AC充電上限を0Wへ設定", "バックアップリザーブを30%へ戻す"} {
+		if !strings.Contains(plan.ActionSummary, want) {
+			t.Fatalf("ActionSummary = %q, want contains %q", plan.ActionSummary, want)
+		}
 	}
 	if plan.ShouldRaiseBackupReserve || plan.WouldWrite {
 		t.Fatalf("unexpected write recommendation: %+v", plan)
@@ -136,5 +146,8 @@ func TestPlanSurplusChargingDoesNotLowerReserveBelowDefaultWhenImporting(t *test
 	}
 	if plan.ShouldRaiseBackupReserve || plan.ShouldLowerBackupReserve || plan.ShouldAdjustACChargeLimit || plan.WouldWrite {
 		t.Fatalf("unexpected write recommendation: %+v", plan)
+	}
+	if plan.ActionSummary != "" {
+		t.Fatalf("ActionSummary = %q, want empty", plan.ActionSummary)
 	}
 }

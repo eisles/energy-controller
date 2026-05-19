@@ -30,6 +30,7 @@ export type SurplusPlan = {
   shouldAdjustAcChargeLimit: boolean;
   shouldDisableEnergyModes: boolean;
   wouldWrite: boolean;
+  actionSummary: string;
   reason: string;
 };
 

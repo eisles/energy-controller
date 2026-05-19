@@ -93,6 +93,12 @@ func TestStatusProviderRecordsWouldSendWithoutMarkingCommandSent(t *testing.T) {
 	if !strings.Contains(status.LastDecisionReason, "would-send") {
 		t.Fatalf("LastDecisionReason = %q, want would-send marker", status.LastDecisionReason)
 	}
+	if status.SurplusPlan == nil || !strings.Contains(status.SurplusPlan.ActionSummary, "AC充電上限を1400Wへ設定") {
+		t.Fatalf("SurplusPlan = %+v, want AC charge dry-run action", status.SurplusPlan)
+	}
+	if !strings.Contains(status.LastDecisionReason, "surplus dry-run plan: AC充電上限を1400Wへ設定") {
+		t.Fatalf("LastDecisionReason = %q, want surplus dry-run plan", status.LastDecisionReason)
+	}
 	commands := writer.Snapshot()
 	if len(commands) != 1 || commands[0].Name != "set_ac_charge_power" || commands[0].Watts != 1400 {
 		t.Fatalf("recorded commands = %+v, want one set_ac_charge_power 1400", commands)

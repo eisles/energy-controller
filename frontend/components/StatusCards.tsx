@@ -221,6 +221,9 @@ function chargeRecommendationDescription(exportW: number, targetChargeW: number)
 }
 
 function surplusActionLabel(plan: SurplusPlan) {
+  if (plan.actionSummary) {
+    return `Dry-run計画: ${plan.actionSummary} / read-onlyで未送信`;
+  }
   const reserveLabel =
     plan.recommendedBackupReserveSoc !== null && plan.recommendedBackupReserveSoc !== undefined
       ? `${plan.recommendedBackupReserveSoc}%`

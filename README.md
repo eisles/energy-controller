@@ -101,6 +101,7 @@ go run ./cmd/server
 確認ポイント:
 
 - `/api/logs?limit=10` の `decisionReason` に `would-send` が残る
+- `decisionReason` に `surplus dry-run plan: ...` が残り、買電時のAC充電停止/リザーブ戻し、売電時の充電開始条件を確認できる
 - dry-run のため `commandSent` は `false`
 - dry-run のため `actualCommandW` は `null`
 - interval / diff 抑制時は `decisionReason` に `command suppressed` が残る

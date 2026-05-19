@@ -101,15 +101,6 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 	lastError = combineErrors(lastError, commandError)
 	weatherForecast, solarSettings, weatherError := p.currentWeatherForecast(ctx, now)
 	lastError = combineErrors(lastError, weatherError)
-	if result.CommandBlockReason != "" {
-		result.Decision.Reason += "; " + result.CommandBlockReason
-	}
-	if commandSent {
-		result.Decision.Reason += "; EcoFlow write command sent"
-	}
-	if commandRecorded {
-		result.Decision.Reason += "; EcoFlow mock write adapter recorded would-send command"
-	}
 	p.setCommandStatus(commandSent, actualCommandW)
 	surplusPlan := control.PlanSurplusCharging(control.SurplusPlanInput{
 		GridW:              gridPower.GridW,
@@ -127,6 +118,18 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 		EnableRealControl:  p.realControl,
 		AutoControl:        p.autoControl,
 	}, p.settings)
+	if result.CommandBlockReason != "" {
+		result.Decision.Reason += "; " + result.CommandBlockReason
+	}
+	if surplusPlan.ActionSummary != "" {
+		result.Decision.Reason += "; surplus dry-run plan: " + surplusPlan.ActionSummary
+	}
+	if commandSent {
+		result.Decision.Reason += "; EcoFlow write command sent"
+	}
+	if commandRecorded {
+		result.Decision.Reason += "; EcoFlow mock write adapter recorded would-send command"
+	}
 	nightChargePlan := control.PlanNightCharging(control.NightChargePlanInput{
 		BatterySoc:          batteryStatus.Soc,
 		BackupReserveSoc:    batteryStatus.BackupReserveSoc,

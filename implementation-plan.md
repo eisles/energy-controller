@@ -824,6 +824,7 @@ now - lastCommandAt >= MIN_COMMAND_INTERVAL_SEC
 - `power_logs.actual_command_w` に送信した W を保存する
 - `power_logs.command_sent` を正しく保存する
 - `decision_reason` に guard / hysteresis / interval / API error の理由を含める
+- `decision_reason` と `surplusPlan.actionSummary` に dry-run の予定アクションを残し、実送信前に買電時の戻し/売電時の充電開始条件を確認できるようにする
 - current status の `lastDecisionReason` / `lastError` に UI で判断できる情報を残す
 - Phase 6 dashboard には書き込み操作を追加しない。必要なら read-only 表示だけを拡張する
 

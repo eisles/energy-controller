@@ -1,6 +1,11 @@
 package control
 
-import "github.com/eisles/energy-controller/backend/internal/domain"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/eisles/energy-controller/backend/internal/domain"
+)
 
 type SurplusPlanInput struct {
 	GridW              int
@@ -39,6 +44,7 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 			plan.RecommendedBackupReserveSoc = &recommendedReserve
 			plan.ShouldLowerBackupReserve = true
 		}
+		plan.ActionSummary = surplusActionSummary(plan)
 		plan.Reason = "importing from grid; restore charging controls toward default reserve"
 		plan.WouldWrite = writeAllowed(input) && (plan.ShouldAdjustACChargeLimit || plan.ShouldLowerBackupReserve)
 		return plan
@@ -62,6 +68,7 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 	if hasEnabledEnergyMode(input) {
 		plan.ShouldDisableEnergyModes = true
 	}
+	plan.ActionSummary = surplusActionSummary(plan)
 
 	switch {
 	case input.SimulationMode:
@@ -79,6 +86,23 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		plan.Reason += "; EcoFlow energy strategy mode blocks surplus charging until disabled"
 	}
 	return plan
+}
+
+func surplusActionSummary(plan domain.SurplusPlan) string {
+	actions := make([]string, 0, 3)
+	if plan.ShouldRaiseBackupReserve && plan.RecommendedBackupReserveSoc != nil {
+		actions = append(actions, fmt.Sprintf("バックアップリザーブを%d%%へ引き上げ", *plan.RecommendedBackupReserveSoc))
+	}
+	if plan.ShouldLowerBackupReserve && plan.RecommendedBackupReserveSoc != nil {
+		actions = append(actions, fmt.Sprintf("バックアップリザーブを%d%%へ戻す", *plan.RecommendedBackupReserveSoc))
+	}
+	if plan.ShouldAdjustACChargeLimit {
+		actions = append(actions, fmt.Sprintf("AC充電上限を%dWへ設定", plan.RecommendedACChargeLimitW))
+	}
+	if plan.ShouldDisableEnergyModes {
+		actions = append(actions, "energy strategy modesを全OFF")
+	}
+	return strings.Join(actions, "; ")
 }
 
 func hasEnabledEnergyMode(input SurplusPlanInput) bool {
