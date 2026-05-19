@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"math"
 	"testing"
 	"time"
 
@@ -16,21 +17,23 @@ func TestStatusRepositoryUpdatesAndReadsCurrentStatus(t *testing.T) {
 	repo := NewStatusRepository(db)
 	now := time.Date(2026, 5, 18, 8, 15, 0, 123, time.UTC)
 	lastError := "sample error"
+	fullEnergyWh := 12288
 
 	want := domain.Status{
-		GridW:              -850,
-		ImportW:            0,
-		ExportW:            850,
-		BatterySoc:         62,
-		BatteryInputW:      500,
-		BatteryOutputW:     0,
-		ACChargeLimitW:     1500,
-		TargetChargeW:      700,
-		State:              "simulation",
-		Mode:               "mock",
-		LastDecisionReason: "export power is above start threshold",
-		LastError:          &lastError,
-		UpdatedAt:          now,
+		GridW:               -850,
+		ImportW:             0,
+		ExportW:             850,
+		BatterySoc:          62,
+		BatteryInputW:       500,
+		BatteryOutputW:      0,
+		ACChargeLimitW:      1500,
+		BatteryFullEnergyWh: &fullEnergyWh,
+		TargetChargeW:       700,
+		State:               "simulation",
+		Mode:                "mock",
+		LastDecisionReason:  "export power is above start threshold",
+		LastError:           &lastError,
+		UpdatedAt:           now,
 	}
 
 	if err := repo.UpdateCurrentStatus(context.Background(), want); err != nil {
@@ -46,6 +49,9 @@ func TestStatusRepositoryUpdatesAndReadsCurrentStatus(t *testing.T) {
 	}
 	if got.LastError == nil || *got.LastError != lastError {
 		t.Fatalf("LastError = %#v, want %q", got.LastError, lastError)
+	}
+	if got.BatteryFullEnergyWh == nil || *got.BatteryFullEnergyWh != fullEnergyWh {
+		t.Fatalf("BatteryFullEnergyWh = %v, want %d", got.BatteryFullEnergyWh, fullEnergyWh)
 	}
 	if !got.UpdatedAt.Equal(now) {
 		t.Fatalf("UpdatedAt = %s, want %s", got.UpdatedAt, now)
@@ -101,6 +107,124 @@ func TestLogRepositoryInsertsAndListsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestLogRepositoryListsPowerLogsPage(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewLogRepository(db)
+	base := time.Date(2026, 5, 18, 8, 0, 0, 0, time.UTC)
+
+	for i := 0; i < 3; i++ {
+		if err := repo.InsertPowerLog(context.Background(), domain.PowerLog{
+			MeasuredAt:     base.Add(time.Duration(i) * time.Minute),
+			GridW:          100 + i,
+			ImportW:        100 + i,
+			ExportW:        0,
+			TargetChargeW:  0,
+			DecisionReason: "sample",
+			Mode:           "mock",
+			CommandSent:    false,
+			CreatedAt:      base.Add(time.Duration(i) * time.Minute),
+		}); err != nil {
+			t.Fatalf("InsertPowerLog failed: %v", err)
+		}
+	}
+
+	logs, total, err := repo.ListPowerLogsPage(context.Background(), 1, 1, LogPageFilter{})
+	if err != nil {
+		t.Fatalf("ListPowerLogsPage failed: %v", err)
+	}
+	if total != 3 {
+		t.Fatalf("total = %d, want 3", total)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("len(logs) = %d, want 1", len(logs))
+	}
+	if logs[0].GridW != 101 {
+		t.Fatalf("GridW = %d, want 101", logs[0].GridW)
+	}
+}
+
+func TestLogRepositorySearchesPowerLogsPage(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewLogRepository(db)
+	base := time.Date(2026, 5, 18, 8, 0, 0, 0, time.UTC)
+
+	for _, log := range []domain.PowerLog{
+		{
+			MeasuredAt:     base,
+			GridW:          100,
+			ImportW:        100,
+			ExportW:        0,
+			TargetChargeW:  0,
+			DecisionReason: "importing from grid",
+			Mode:           "mock",
+			CommandSent:    false,
+			CreatedAt:      base,
+		},
+		{
+			MeasuredAt:     base.Add(time.Minute),
+			GridW:          -900,
+			ImportW:        0,
+			ExportW:        900,
+			TargetChargeW:  700,
+			DecisionReason: "export power is above start threshold",
+			Mode:           "nature-cloud+ecoflow-read",
+			CommandSent:    false,
+			CreatedAt:      base.Add(time.Minute),
+		},
+	} {
+		if err := repo.InsertPowerLog(context.Background(), log); err != nil {
+			t.Fatalf("InsertPowerLog failed: %v", err)
+		}
+	}
+
+	logs, total, err := repo.ListPowerLogsPage(context.Background(), 25, 0, LogPageFilter{Query: "export"})
+	if err != nil {
+		t.Fatalf("ListPowerLogsPage failed: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("total = %d, want 1", total)
+	}
+	if len(logs) != 1 || logs[0].ExportW != 900 {
+		t.Fatalf("logs = %+v, want export log", logs)
+	}
+}
+
+func TestLogRepositoryFiltersPowerLogsPageByDateRange(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewLogRepository(db)
+	base := time.Date(2026, 5, 18, 8, 0, 0, 0, time.UTC)
+
+	for i := 0; i < 3; i++ {
+		at := base.Add(time.Duration(i) * time.Hour)
+		if err := repo.InsertPowerLog(context.Background(), domain.PowerLog{
+			MeasuredAt:     at,
+			GridW:          100 + i,
+			ImportW:        100 + i,
+			ExportW:        0,
+			TargetChargeW:  0,
+			DecisionReason: "sample",
+			Mode:           "mock",
+			CommandSent:    false,
+			CreatedAt:      at,
+		}); err != nil {
+			t.Fatalf("InsertPowerLog failed: %v", err)
+		}
+	}
+
+	from := base.Add(30 * time.Minute)
+	to := base.Add(90 * time.Minute)
+	logs, total, err := repo.ListPowerLogsPage(context.Background(), 25, 0, LogPageFilter{From: &from, To: &to})
+	if err != nil {
+		t.Fatalf("ListPowerLogsPage failed: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("total = %d, want 1", total)
+	}
+	if len(logs) != 1 || logs[0].GridW != 101 {
+		t.Fatalf("logs = %+v, want only middle log", logs)
+	}
+}
+
 func TestLogRepositoryListsSinceTimestamp(t *testing.T) {
 	db := openTestDB(t)
 	repo := NewLogRepository(db)
@@ -146,6 +270,504 @@ func TestLogRepositoryListsSinceTimestamp(t *testing.T) {
 	if logs[0].MeasuredAt != secondAt {
 		t.Fatalf("MeasuredAt = %s, want %s", logs[0].MeasuredAt, secondAt)
 	}
+}
+
+func TestEnergyMeterRepositoryInsertsDeltaFromPreviousReading(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewEnergyMeterRepository(db)
+	base := time.Date(2026, 5, 18, 8, 0, 0, 0, time.UTC)
+
+	readings := []domain.EnergyMeterReading{
+		{
+			MeasuredAt:           base,
+			ImportCumulativeKWh:  1000,
+			ExportCumulativeKWh:  500,
+			Coefficient:          1,
+			CumulativeUnit:       0.1,
+			RawImportCumulative:  "00002710",
+			RawExportCumulative:  "00001388",
+			ImportValueUpdatedAt: base,
+			ExportValueUpdatedAt: base,
+		},
+		{
+			MeasuredAt:           base.Add(time.Hour),
+			ImportCumulativeKWh:  1001.2,
+			ExportCumulativeKWh:  500.4,
+			Coefficient:          1,
+			CumulativeUnit:       0.1,
+			RawImportCumulative:  "0000271c",
+			RawExportCumulative:  "0000138c",
+			ImportValueUpdatedAt: base.Add(time.Hour),
+			ExportValueUpdatedAt: base.Add(time.Hour),
+		},
+	}
+	for _, reading := range readings {
+		if err := repo.InsertEnergyMeterReading(context.Background(), reading); err != nil {
+			t.Fatalf("InsertEnergyMeterReading failed: %v", err)
+		}
+	}
+
+	logs, err := repo.ListEnergyMeterLogs(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("ListEnergyMeterLogs failed: %v", err)
+	}
+	if len(logs) != 2 {
+		t.Fatalf("len(logs) = %d, want 2", len(logs))
+	}
+	if logs[0].ImportDeltaKWh == nil || !floatAlmostEqual(*logs[0].ImportDeltaKWh, 1.2) {
+		t.Fatalf("ImportDeltaKWh = %v, want 1.2", logs[0].ImportDeltaKWh)
+	}
+	if logs[0].ExportDeltaKWh == nil || !floatAlmostEqual(*logs[0].ExportDeltaKWh, 0.4) {
+		t.Fatalf("ExportDeltaKWh = %v, want 0.4", logs[0].ExportDeltaKWh)
+	}
+	if logs[1].ImportDeltaKWh != nil || logs[1].ExportDeltaKWh != nil {
+		t.Fatalf("first log delta = %v, %v; want nil deltas", logs[1].ImportDeltaKWh, logs[1].ExportDeltaKWh)
+	}
+}
+
+func TestEnergyMeterRepositoryIgnoresDuplicateReading(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewEnergyMeterRepository(db)
+	now := time.Date(2026, 5, 18, 8, 0, 0, 0, time.UTC)
+	reading := domain.EnergyMeterReading{
+		MeasuredAt:           now,
+		ImportCumulativeKWh:  1000,
+		ExportCumulativeKWh:  500,
+		Coefficient:          1,
+		CumulativeUnit:       0.1,
+		RawImportCumulative:  "00002710",
+		RawExportCumulative:  "00001388",
+		ImportValueUpdatedAt: now,
+		ExportValueUpdatedAt: now,
+	}
+
+	if err := repo.InsertEnergyMeterReading(context.Background(), reading); err != nil {
+		t.Fatalf("InsertEnergyMeterReading first failed: %v", err)
+	}
+	if err := repo.InsertEnergyMeterReading(context.Background(), reading); err != nil {
+		t.Fatalf("InsertEnergyMeterReading duplicate failed: %v", err)
+	}
+
+	logs, err := repo.ListEnergyMeterLogs(context.Background(), 10)
+	if err != nil {
+		t.Fatalf("ListEnergyMeterLogs failed: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("len(logs) = %d, want 1", len(logs))
+	}
+}
+
+func TestTariffRepositorySummarizesEnergyCost(t *testing.T) {
+	db := openTestDB(t)
+	meterRepo := NewEnergyMeterRepository(db)
+	tariffRepo := NewTariffRepository(db)
+	base := time.Date(2026, 5, 18, 8, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	readings := []domain.EnergyMeterReading{
+		{
+			MeasuredAt:           base,
+			ImportCumulativeKWh:  1000,
+			ExportCumulativeKWh:  500,
+			Coefficient:          1,
+			CumulativeUnit:       0.1,
+			RawImportCumulative:  "00002710",
+			RawExportCumulative:  "00001388",
+			ImportValueUpdatedAt: base,
+			ExportValueUpdatedAt: base,
+		},
+		{
+			MeasuredAt:           base.Add(2 * time.Hour),
+			ImportCumulativeKWh:  1001,
+			ExportCumulativeKWh:  500.2,
+			Coefficient:          1,
+			CumulativeUnit:       0.1,
+			RawImportCumulative:  "0000271a",
+			RawExportCumulative:  "0000138a",
+			ImportValueUpdatedAt: base.Add(2 * time.Hour),
+			ExportValueUpdatedAt: base.Add(2 * time.Hour),
+		},
+	}
+	for _, reading := range readings {
+		if err := meterRepo.InsertEnergyMeterReading(context.Background(), reading); err != nil {
+			t.Fatalf("InsertEnergyMeterReading failed: %v", err)
+		}
+	}
+
+	summary, err := tariffRepo.EnergyCostSummary(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("EnergyCostSummary failed: %v", err)
+	}
+	if summary.SampleCount != 1 {
+		t.Fatalf("SampleCount = %d, want 1", summary.SampleCount)
+	}
+	if !floatAlmostEqual(summary.TotalImportKWh, 1) || !floatAlmostEqual(summary.TotalExportKWh, 0.2) {
+		t.Fatalf("totals = import %v export %v, want 1 and 0.2", summary.TotalImportKWh, summary.TotalExportKWh)
+	}
+	if !floatAlmostEqual(summary.TotalImportCostYen, 34.06) {
+		t.Fatalf("TotalImportCostYen = %v, want 34.06", summary.TotalImportCostYen)
+	}
+	if !floatAlmostEqual(summary.TotalExportIncomeYen, 1.4) {
+		t.Fatalf("TotalExportIncomeYen = %v, want 1.4", summary.TotalExportIncomeYen)
+	}
+	if !floatAlmostEqual(summary.NetCostYen, 32.66) {
+		t.Fatalf("NetCostYen = %v, want 32.66", summary.NetCostYen)
+	}
+}
+
+func TestTariffRepositoryUsesHistoricalPlanAtMeasuredAt(t *testing.T) {
+	db := openTestDB(t)
+	meterRepo := NewEnergyMeterRepository(db)
+	tariffRepo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	base := time.Date(2026, 5, 18, 8, 0, 0, 0, jst)
+	if _, err := tariffRepo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "new rates",
+		DayRateYen:    40,
+		HomeRateYen:   30,
+		NightRateYen:  20,
+		ExportRateYen: 8,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: base.Add(3 * time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertTariffPlan failed: %v", err)
+	}
+	readings := []domain.EnergyMeterReading{
+		{
+			MeasuredAt:           base,
+			ImportCumulativeKWh:  1000,
+			ExportCumulativeKWh:  500,
+			Coefficient:          1,
+			CumulativeUnit:       0.1,
+			RawImportCumulative:  "00002710",
+			RawExportCumulative:  "00001388",
+			ImportValueUpdatedAt: base,
+			ExportValueUpdatedAt: base,
+		},
+		{
+			MeasuredAt:           base.Add(2 * time.Hour),
+			ImportCumulativeKWh:  1001,
+			ExportCumulativeKWh:  500,
+			Coefficient:          1,
+			CumulativeUnit:       0.1,
+			RawImportCumulative:  "0000271a",
+			RawExportCumulative:  "00001388",
+			ImportValueUpdatedAt: base.Add(2 * time.Hour),
+			ExportValueUpdatedAt: base.Add(2 * time.Hour),
+		},
+		{
+			MeasuredAt:           base.Add(4 * time.Hour),
+			ImportCumulativeKWh:  1002,
+			ExportCumulativeKWh:  500,
+			Coefficient:          1,
+			CumulativeUnit:       0.1,
+			RawImportCumulative:  "00002724",
+			RawExportCumulative:  "00001388",
+			ImportValueUpdatedAt: base.Add(4 * time.Hour),
+			ExportValueUpdatedAt: base.Add(4 * time.Hour),
+		},
+	}
+	for _, reading := range readings {
+		if err := meterRepo.InsertEnergyMeterReading(context.Background(), reading); err != nil {
+			t.Fatalf("InsertEnergyMeterReading failed: %v", err)
+		}
+	}
+
+	summary, err := tariffRepo.EnergyCostSummary(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("EnergyCostSummary failed: %v", err)
+	}
+	if summary.SampleCount != 2 {
+		t.Fatalf("SampleCount = %d, want 2", summary.SampleCount)
+	}
+	if !floatAlmostEqual(summary.TotalImportCostYen, 74.06) {
+		t.Fatalf("TotalImportCostYen = %v, want 74.06", summary.TotalImportCostYen)
+	}
+	if len(summary.Periods) != 2 {
+		t.Fatalf("len(Periods) = %d, want 2: %#v", len(summary.Periods), summary.Periods)
+	}
+}
+
+func TestTariffRepositoryDeletesPlanAndRecalculatesEffectiveTo(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	firstStart := time.Date(2026, 6, 1, 0, 0, 0, 0, jst)
+	secondStart := time.Date(2026, 7, 1, 0, 0, 0, 0, jst)
+	first, err := repo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "first",
+		DayRateYen:    35,
+		HomeRateYen:   27,
+		NightRateYen:  17,
+		ExportRateYen: 7,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: firstStart,
+	})
+	if err != nil {
+		t.Fatalf("UpsertTariffPlan first failed: %v", err)
+	}
+	if _, err := repo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "second",
+		DayRateYen:    36,
+		HomeRateYen:   28,
+		NightRateYen:  18,
+		ExportRateYen: 8,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: secondStart,
+	}); err != nil {
+		t.Fatalf("UpsertTariffPlan second failed: %v", err)
+	}
+
+	if err := repo.DeleteTariffPlan(context.Background(), first.ID); err != nil {
+		t.Fatalf("DeleteTariffPlan failed: %v", err)
+	}
+	plans, err := repo.ListTariffPlans(context.Background())
+	if err != nil {
+		t.Fatalf("ListTariffPlans failed: %v", err)
+	}
+	if len(plans) != 2 {
+		t.Fatalf("len(plans) = %d, want 2: %#v", len(plans), plans)
+	}
+	if plans[0].PlanName != "second" || plans[0].EffectiveTo != nil {
+		t.Fatalf("newest plan = %#v, want open-ended second", plans[0])
+	}
+	if plans[1].EffectiveTo == nil || !plans[1].EffectiveTo.Equal(plans[0].EffectiveFrom) {
+		t.Fatalf("baseline effectiveTo = %v, want %s", plans[1].EffectiveTo, plans[0].EffectiveFrom)
+	}
+}
+
+func TestTariffRepositoryDoesNotDeleteCurrentCoverage(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewTariffRepository(db)
+	plans, err := repo.ListTariffPlans(context.Background())
+	if err != nil {
+		t.Fatalf("ListTariffPlans failed: %v", err)
+	}
+	if len(plans) != 1 {
+		t.Fatalf("len(plans) = %d, want seeded single plan", len(plans))
+	}
+	if _, err := repo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "future",
+		DayRateYen:    35,
+		HomeRateYen:   27,
+		NightRateYen:  17,
+		ExportRateYen: 7,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: time.Now().Add(24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertTariffPlan future failed: %v", err)
+	}
+
+	if err := repo.DeleteTariffPlan(context.Background(), plans[0].ID); err != ErrTariffPlanCoverageRequired {
+		t.Fatalf("DeleteTariffPlan error = %v, want ErrTariffPlanCoverageRequired", err)
+	}
+	after, err := repo.ListTariffPlans(context.Background())
+	if err != nil {
+		t.Fatalf("ListTariffPlans after failed: %v", err)
+	}
+	if len(after) != 2 {
+		t.Fatalf("len(after) = %d, want rollback to keep both plans", len(after))
+	}
+}
+
+func TestTariffRepositoryDoesNotDeleteLastPlan(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewTariffRepository(db)
+	plans, err := repo.ListTariffPlans(context.Background())
+	if err != nil {
+		t.Fatalf("ListTariffPlans failed: %v", err)
+	}
+	if len(plans) != 1 {
+		t.Fatalf("len(plans) = %d, want seeded single plan", len(plans))
+	}
+	if err := repo.DeleteTariffPlan(context.Background(), plans[0].ID); err != ErrCannotDeleteLastTariffPlan {
+		t.Fatalf("DeleteTariffPlan error = %v, want ErrCannotDeleteLastTariffPlan", err)
+	}
+}
+
+func TestWeatherSettingsRepositoryUpdatesAndReadsLocation(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewWeatherSettingsRepository(db)
+	want := domain.WeatherLocation{
+		Enabled:            true,
+		Latitude:           35.362502,
+		Longitude:          136.9253633,
+		Timezone:           "Asia/Tokyo",
+		PVCapacityKW:       5.5,
+		PVPerformanceRatio: 0.78,
+		DailyBaseLoadKWh:   8.2,
+		BatteryCapacityKWh: 4.096,
+		MinimumReserveSoc:  35,
+	}
+
+	if err := repo.UpdateWeatherLocation(context.Background(), want); err != nil {
+		t.Fatalf("UpdateWeatherLocation failed: %v", err)
+	}
+	got, err := repo.CurrentWeatherLocation(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentWeatherLocation failed: %v", err)
+	}
+	if got != want {
+		t.Fatalf("WeatherLocation = %+v, want %+v", got, want)
+	}
+}
+
+func TestDaytimeConsumptionRepositoryEstimatesFromLogs(t *testing.T) {
+	db := openTestDB(t)
+	logRepo := NewLogRepository(db)
+	estimateRepo := NewDaytimeConsumptionRepository(db)
+	base := time.Date(2026, 5, 18, 9, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	for i := 0; i <= 2; i++ {
+		at := base.Add(time.Duration(i) * time.Minute)
+		input := 200
+		output := 100
+		if err := logRepo.InsertPowerLog(context.Background(), domain.PowerLog{
+			MeasuredAt:     at,
+			GridW:          300,
+			ImportW:        300,
+			ExportW:        0,
+			BatteryInputW:  &input,
+			BatteryOutputW: &output,
+			DecisionReason: "sample",
+			Mode:           "test",
+			CreatedAt:      at,
+		}); err != nil {
+			t.Fatalf("InsertPowerLog failed: %v", err)
+		}
+	}
+
+	estimate, err := estimateRepo.EstimateDaytimeConsumption(context.Background(), base.Add(24*time.Hour), 7)
+	if err != nil {
+		t.Fatalf("EstimateDaytimeConsumption failed: %v", err)
+	}
+	if estimate.SampleCount != 2 {
+		t.Fatalf("SampleCount = %d, want 2", estimate.SampleCount)
+	}
+	if !floatAlmostEqual(estimate.SuggestedDailyBaseLoadKWh, 0.0066666667) {
+		t.Fatalf("SuggestedDailyBaseLoadKWh = %f, want about 0.006667", estimate.SuggestedDailyBaseLoadKWh)
+	}
+}
+
+func TestEcoFlowLoadRepositoryEstimatesSpecificCircuitOutput(t *testing.T) {
+	db := openTestDB(t)
+	logRepo := NewLogRepository(db)
+	estimateRepo := NewEcoFlowLoadRepository(db)
+	base := time.Date(2026, 5, 18, 9, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	for i := 0; i <= 2; i++ {
+		at := base.Add(time.Duration(i) * time.Minute)
+		input := 500
+		output := 300
+		if err := logRepo.InsertPowerLog(context.Background(), domain.PowerLog{
+			MeasuredAt:     at,
+			BatteryInputW:  &input,
+			BatteryOutputW: &output,
+			DecisionReason: "sample",
+			Mode:           "test",
+			CreatedAt:      at,
+		}); err != nil {
+			t.Fatalf("InsertPowerLog daytime failed: %v", err)
+		}
+	}
+	nightBase := time.Date(2026, 5, 18, 23, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	for i := 0; i <= 2; i++ {
+		at := nightBase.Add(time.Duration(i) * time.Minute)
+		output := 150
+		if err := logRepo.InsertPowerLog(context.Background(), domain.PowerLog{
+			MeasuredAt:     at,
+			BatteryOutputW: &output,
+			DecisionReason: "sample",
+			Mode:           "test",
+			CreatedAt:      at,
+		}); err != nil {
+			t.Fatalf("InsertPowerLog night failed: %v", err)
+		}
+	}
+	shoulderBase := time.Date(2026, 5, 18, 17, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	for i := 0; i <= 2; i++ {
+		at := shoulderBase.Add(time.Duration(i) * time.Minute)
+		output := 240
+		if err := logRepo.InsertPowerLog(context.Background(), domain.PowerLog{
+			MeasuredAt:     at,
+			BatteryOutputW: &output,
+			DecisionReason: "sample",
+			Mode:           "test",
+			CreatedAt:      at,
+		}); err != nil {
+			t.Fatalf("InsertPowerLog shoulder failed: %v", err)
+		}
+	}
+
+	estimate, err := estimateRepo.EstimateEcoFlowLoad(context.Background(), base.Add(24*time.Hour), 7)
+	if err != nil {
+		t.Fatalf("EstimateEcoFlowLoad failed: %v", err)
+	}
+	if estimate.SampleCount != 6 {
+		t.Fatalf("SampleCount = %d, want 6", estimate.SampleCount)
+	}
+	if !floatAlmostEqual(estimate.AverageDaytimeOutputKWh, 0.01) {
+		t.Fatalf("AverageDaytimeOutputKWh = %f, want 0.01", estimate.AverageDaytimeOutputKWh)
+	}
+	if !floatAlmostEqual(estimate.AverageNightOutputKWh, 0.005) {
+		t.Fatalf("AverageNightOutputKWh = %f, want 0.005", estimate.AverageNightOutputKWh)
+	}
+	if !floatAlmostEqual(estimate.AverageShoulderOutputKWh, 0.008) {
+		t.Fatalf("AverageShoulderOutputKWh = %f, want 0.008", estimate.AverageShoulderOutputKWh)
+	}
+	if !floatAlmostEqual(estimate.AverageDailyOutputKWh, 0.023) {
+		t.Fatalf("AverageDailyOutputKWh = %f, want 0.023", estimate.AverageDailyOutputKWh)
+	}
+	if !floatAlmostEqual(estimate.SuggestedDaytimeBaseLoadKWh, 0.01) {
+		t.Fatalf("SuggestedDaytimeBaseLoadKWh = %f, want 0.01", estimate.SuggestedDaytimeBaseLoadKWh)
+	}
+}
+
+func TestEcoFlowLoadRepositoryUsesConfiguredTimezoneForBuckets(t *testing.T) {
+	db := openTestDB(t)
+	logRepo := NewLogRepository(db)
+	estimateRepo := NewEcoFlowLoadRepositoryWithTimezone(db, "Asia/Tokyo")
+	base := time.Date(2026, 5, 18, 0, 0, 0, 0, time.UTC) // 09:00 JST
+	samples := []struct {
+		at     time.Time
+		output int
+	}{
+		{at: base, output: 300},
+		{at: base.Add(time.Minute), output: 300},
+		{at: time.Date(2026, 5, 18, 8, 0, 0, 0, time.UTC), output: 240}, // 17:00 JST
+		{at: time.Date(2026, 5, 18, 8, 1, 0, 0, time.UTC), output: 240},
+		{at: time.Date(2026, 5, 18, 14, 0, 0, 0, time.UTC), output: 150}, // 23:00 JST
+		{at: time.Date(2026, 5, 18, 14, 1, 0, 0, time.UTC), output: 150},
+	}
+	for _, sample := range samples {
+		output := sample.output
+		if err := logRepo.InsertPowerLog(context.Background(), domain.PowerLog{
+			MeasuredAt:     sample.at,
+			BatteryOutputW: &output,
+			DecisionReason: "sample",
+			Mode:           "test",
+			CreatedAt:      sample.at,
+		}); err != nil {
+			t.Fatalf("InsertPowerLog failed: %v", err)
+		}
+	}
+
+	estimate, err := estimateRepo.EstimateEcoFlowLoad(context.Background(), base.Add(24*time.Hour), 7)
+	if err != nil {
+		t.Fatalf("EstimateEcoFlowLoad failed: %v", err)
+	}
+	if estimate.SampleCount != 3 {
+		t.Fatalf("SampleCount = %d, want 3", estimate.SampleCount)
+	}
+	if !floatAlmostEqual(estimate.AverageDaytimeOutputKWh, 0.005) {
+		t.Fatalf("AverageDaytimeOutputKWh = %f, want 0.005", estimate.AverageDaytimeOutputKWh)
+	}
+	if !floatAlmostEqual(estimate.AverageShoulderOutputKWh, 0.004) {
+		t.Fatalf("AverageShoulderOutputKWh = %f, want 0.004", estimate.AverageShoulderOutputKWh)
+	}
+	if !floatAlmostEqual(estimate.AverageNightOutputKWh, 0.0025) {
+		t.Fatalf("AverageNightOutputKWh = %f, want 0.0025", estimate.AverageNightOutputKWh)
+	}
+}
+
+func floatAlmostEqual(got float64, want float64) bool {
+	return math.Abs(got-want) < 0.000001
 }
 
 func openTestDB(t *testing.T) *sql.DB {

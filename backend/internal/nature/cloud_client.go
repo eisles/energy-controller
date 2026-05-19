@@ -46,33 +46,49 @@ func NewCloudClient(cfg CloudConfig) *CloudClient {
 }
 
 func (c *CloudClient) CurrentGridPower(ctx context.Context) (domain.GridPower, time.Time, error) {
+	payload, err := c.fetchAppliances(ctx)
+	if err != nil {
+		return domain.GridPower{}, time.Time{}, err
+	}
+	return selectGridPower(payload.Appliances, c.applianceID)
+}
+
+func (c *CloudClient) CurrentEnergyMeterReading(ctx context.Context) (domain.EnergyMeterReading, error) {
+	payload, err := c.fetchAppliances(ctx)
+	if err != nil {
+		return domain.EnergyMeterReading{}, err
+	}
+	return selectEnergyMeterReading(payload.Appliances, c.applianceID)
+}
+
+func (c *CloudClient) fetchAppliances(ctx context.Context) (cloudAppliancesResponse, error) {
 	if c.accessToken == "" {
-		return domain.GridPower{}, time.Time{}, fmt.Errorf("nature access token is empty")
+		return cloudAppliancesResponse{}, fmt.Errorf("nature access token is empty")
 	}
 	endpoint, err := url.JoinPath(c.baseURL, "/1/echonetlite/appliances")
 	if err != nil {
-		return domain.GridPower{}, time.Time{}, err
+		return cloudAppliancesResponse{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return domain.GridPower{}, time.Time{}, err
+		return cloudAppliancesResponse{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.accessToken)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return domain.GridPower{}, time.Time{}, fmt.Errorf("nature cloud request failed: %w", err)
+		return cloudAppliancesResponse{}, fmt.Errorf("nature cloud request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return domain.GridPower{}, time.Time{}, fmt.Errorf("nature cloud returned HTTP %d", resp.StatusCode)
+		return cloudAppliancesResponse{}, fmt.Errorf("nature cloud returned HTTP %d", resp.StatusCode)
 	}
 
 	var payload cloudAppliancesResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return domain.GridPower{}, time.Time{}, fmt.Errorf("decode nature cloud response: %w", err)
+		return cloudAppliancesResponse{}, fmt.Errorf("decode nature cloud response: %w", err)
 	}
-	return selectGridPower(payload.Appliances, c.applianceID)
+	return payload, nil
 }
 
 type cloudAppliancesResponse struct {
@@ -111,6 +127,64 @@ func selectGridPower(appliances []cloudAppliance, applianceID string) (domain.Gr
 		}
 	}
 	return domain.GridPower{}, time.Time{}, fmt.Errorf("Nature Remo appliance %s does not include EPC e7", appliance.ID)
+}
+
+func selectEnergyMeterReading(appliances []cloudAppliance, applianceID string) (domain.EnergyMeterReading, error) {
+	appliance, err := selectSmartMeter(appliances, applianceID)
+	if err != nil {
+		return domain.EnergyMeterReading{}, err
+	}
+	properties := map[string]cloudProperty{}
+	for _, property := range appliance.Properties {
+		properties[strings.ToLower(property.EPC)] = property
+	}
+	coefficient, ok := properties["d3"]
+	if !ok {
+		return domain.EnergyMeterReading{}, fmt.Errorf("Nature Remo appliance %s does not include EPC d3", appliance.ID)
+	}
+	unit, ok := properties["e1"]
+	if !ok {
+		return domain.EnergyMeterReading{}, fmt.Errorf("Nature Remo appliance %s does not include EPC e1", appliance.ID)
+	}
+	importProperty, ok := properties["e0"]
+	if !ok {
+		return domain.EnergyMeterReading{}, fmt.Errorf("Nature Remo appliance %s does not include EPC e0", appliance.ID)
+	}
+	exportProperty, ok := properties["e3"]
+	if !ok {
+		return domain.EnergyMeterReading{}, fmt.Errorf("Nature Remo appliance %s does not include EPC e3", appliance.ID)
+	}
+	importKWh, parsedCoefficient, parsedUnit, err := ParseCumulativeEnergyKWh(importProperty.Value, coefficient.Value, unit.Value)
+	if err != nil {
+		return domain.EnergyMeterReading{}, err
+	}
+	exportKWh, _, _, err := ParseCumulativeEnergyKWh(exportProperty.Value, coefficient.Value, unit.Value)
+	if err != nil {
+		return domain.EnergyMeterReading{}, err
+	}
+	importUpdatedAt, err := time.Parse(time.RFC3339, importProperty.UpdatedAt)
+	if err != nil {
+		return domain.EnergyMeterReading{}, fmt.Errorf("parse Nature Remo E0 updated_at %q: %w", importProperty.UpdatedAt, err)
+	}
+	exportUpdatedAt, err := time.Parse(time.RFC3339, exportProperty.UpdatedAt)
+	if err != nil {
+		return domain.EnergyMeterReading{}, fmt.Errorf("parse Nature Remo E3 updated_at %q: %w", exportProperty.UpdatedAt, err)
+	}
+	measuredAt := importUpdatedAt
+	if exportUpdatedAt.After(measuredAt) {
+		measuredAt = exportUpdatedAt
+	}
+	return domain.EnergyMeterReading{
+		MeasuredAt:           measuredAt,
+		ImportCumulativeKWh:  importKWh,
+		ExportCumulativeKWh:  exportKWh,
+		Coefficient:          parsedCoefficient,
+		CumulativeUnit:       parsedUnit,
+		RawImportCumulative:  importProperty.Value,
+		RawExportCumulative:  exportProperty.Value,
+		ImportValueUpdatedAt: importUpdatedAt,
+		ExportValueUpdatedAt: exportUpdatedAt,
+	}, nil
 }
 
 func selectSmartMeter(appliances []cloudAppliance, applianceID string) (cloudAppliance, error) {

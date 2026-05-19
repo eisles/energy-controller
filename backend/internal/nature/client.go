@@ -10,3 +10,7 @@ import (
 type Client interface {
 	CurrentGridPower(ctx context.Context) (domain.GridPower, time.Time, error)
 }
+
+type EnergyMeterClient interface {
+	CurrentEnergyMeterReading(ctx context.Context) (domain.EnergyMeterReading, error)
+}

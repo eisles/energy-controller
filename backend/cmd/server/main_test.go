@@ -58,6 +58,8 @@ func TestRecordStatusPersistsWouldSendLogWithoutCommandSent(t *testing.T) {
 		provider,
 		store.NewStatusRepository(db),
 		store.NewLogRepository(db),
+		nil,
+		nil,
 		slog.Default(),
 	)
 

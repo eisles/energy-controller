@@ -22,6 +22,15 @@ func migrate(db *sql.DB) error {
 			min_command_diff_w INTEGER NOT NULL DEFAULT 100,
 			require_consecutive_export_count INTEGER NOT NULL DEFAULT 2,
 			require_consecutive_import_count INTEGER NOT NULL DEFAULT 2,
+			weather_forecast_enabled INTEGER NOT NULL DEFAULT 0,
+			weather_latitude REAL,
+			weather_longitude REAL,
+			weather_timezone TEXT NOT NULL DEFAULT 'Asia/Tokyo',
+			pv_capacity_kw REAL NOT NULL DEFAULT 0,
+			pv_performance_ratio REAL NOT NULL DEFAULT 0.75,
+			daily_base_load_kwh REAL NOT NULL DEFAULT 0,
+			battery_capacity_kwh REAL NOT NULL DEFAULT 4.096,
+			minimum_reserve_soc INTEGER NOT NULL DEFAULT 30,
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS power_logs (
@@ -41,6 +50,45 @@ func migrate(db *sql.DB) error {
 			command_sent INTEGER NOT NULL DEFAULT 0,
 			error_message TEXT,
 			created_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS energy_meter_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			measured_at TEXT NOT NULL,
+			import_cumulative_kwh REAL NOT NULL,
+			export_cumulative_kwh REAL NOT NULL,
+			import_delta_kwh REAL,
+			export_delta_kwh REAL,
+			coefficient INTEGER NOT NULL,
+			cumulative_unit REAL NOT NULL,
+			raw_import_cumulative TEXT NOT NULL,
+			raw_export_cumulative TEXT NOT NULL,
+			import_value_updated_at TEXT NOT NULL,
+			export_value_updated_at TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			UNIQUE(measured_at, raw_import_cumulative, raw_export_cumulative)
+		)`,
+		`CREATE TABLE IF NOT EXISTS tariff_settings (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			plan_name TEXT NOT NULL,
+			day_rate_yen REAL NOT NULL,
+			home_rate_yen REAL NOT NULL,
+			night_rate_yen REAL NOT NULL,
+			export_rate_yen REAL NOT NULL DEFAULT 7.0,
+			timezone TEXT NOT NULL DEFAULT 'Asia/Tokyo',
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS tariff_plans (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			plan_name TEXT NOT NULL,
+			day_rate_yen REAL NOT NULL,
+			home_rate_yen REAL NOT NULL,
+			night_rate_yen REAL NOT NULL,
+			timezone TEXT NOT NULL DEFAULT 'Asia/Tokyo',
+			effective_from TEXT NOT NULL,
+			effective_to TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(effective_from)
 		)`,
 		`CREATE TABLE IF NOT EXISTS current_status (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -68,6 +116,36 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	if err := addKnownColumnIfMissing(db, "current_status", "ac_charge_limit_w"); err != nil {
+		return err
+	}
+	for _, column := range []string{
+		"weather_forecast_enabled",
+		"weather_latitude",
+		"weather_longitude",
+		"weather_timezone",
+		"pv_capacity_kw",
+		"pv_performance_ratio",
+		"daily_base_load_kwh",
+		"battery_capacity_kwh",
+		"minimum_reserve_soc",
+	} {
+		if err := addKnownColumnIfMissing(db, "settings", column); err != nil {
+			return err
+		}
+	}
+	for _, column := range []string{
+		"backup_reserve_soc",
+		"energy_backup_enabled",
+		"tou_mode_enabled",
+		"battery_full_energy_wh",
+		"surplus_plan_json",
+		"night_charge_plan_json",
+	} {
+		if err := addKnownColumnIfMissing(db, "current_status", column); err != nil {
+			return err
+		}
+	}
+	if err := addKnownColumnIfMissing(db, "tariff_plans", "export_rate_yen"); err != nil {
 		return err
 	}
 	return seedDefaults(db, time.Now())
@@ -105,11 +183,31 @@ func addKnownColumnIfMissing(db *sql.DB, table string, column string) error {
 }
 
 var knownMigrationColumns = map[string]map[string]string{
+	"settings": {
+		"weather_forecast_enabled": "INTEGER NOT NULL DEFAULT 0",
+		"weather_latitude":         "REAL",
+		"weather_longitude":        "REAL",
+		"weather_timezone":         "TEXT NOT NULL DEFAULT 'Asia/Tokyo'",
+		"pv_capacity_kw":           "REAL NOT NULL DEFAULT 0",
+		"pv_performance_ratio":     "REAL NOT NULL DEFAULT 0.75",
+		"daily_base_load_kwh":      "REAL NOT NULL DEFAULT 0",
+		"battery_capacity_kwh":     "REAL NOT NULL DEFAULT 4.096",
+		"minimum_reserve_soc":      "INTEGER NOT NULL DEFAULT 30",
+	},
 	"power_logs": {
 		"ac_charge_limit_w": "INTEGER",
 	},
 	"current_status": {
-		"ac_charge_limit_w": "INTEGER",
+		"ac_charge_limit_w":      "INTEGER",
+		"backup_reserve_soc":     "INTEGER",
+		"energy_backup_enabled":  "INTEGER",
+		"tou_mode_enabled":       "INTEGER",
+		"battery_full_energy_wh": "INTEGER",
+		"surplus_plan_json":      "TEXT",
+		"night_charge_plan_json": "TEXT",
+	},
+	"tariff_plans": {
+		"export_rate_yen": "REAL NOT NULL DEFAULT 7.0",
 	},
 }
 
@@ -123,13 +221,40 @@ func seedDefaults(db *sql.DB, now time.Time) error {
 		return err
 	}
 
-	_, err = db.Exec(
+	if _, err := db.Exec(
 		`INSERT INTO current_status (
 			id, grid_w, import_w, export_w, battery_soc, battery_input_w,
 			battery_output_w, ac_charge_limit_w, target_charge_w, state, mode, last_decision_reason,
 			last_error, updated_at
 		) VALUES (1, 0, 0, 0, 60, 0, 0, 0, 0, 'simulation', 'mock', 'initialized in mock simulation mode', NULL, ?)
 		ON CONFLICT(id) DO NOTHING`,
+		now.Format(time.RFC3339),
+	); err != nil {
+		return err
+	}
+
+	_, err = db.Exec(
+		`INSERT INTO tariff_settings (
+			id, plan_name, day_rate_yen, home_rate_yen, night_rate_yen, timezone, updated_at
+		) VALUES (1, '中部電力 Eライフプラン（3時間帯別電灯）', 34.06, 26.00, 16.11, 'Asia/Tokyo', ?)
+		ON CONFLICT(id) DO NOTHING`,
+		now.Format(time.RFC3339),
+	)
+	if err != nil {
+		return err
+	}
+
+	_, err = db.Exec(
+		`INSERT INTO tariff_plans (
+			plan_name, day_rate_yen, home_rate_yen, night_rate_yen, export_rate_yen, timezone,
+			effective_from, effective_to, created_at, updated_at
+		)
+		SELECT
+			plan_name, day_rate_yen, home_rate_yen, night_rate_yen, 7.0, timezone,
+			'1970-01-01T00:00:00Z', NULL, ?, updated_at
+		FROM tariff_settings
+		WHERE id = 1
+			AND NOT EXISTS (SELECT 1 FROM tariff_plans)`,
 		now.Format(time.RFC3339),
 	)
 	return err

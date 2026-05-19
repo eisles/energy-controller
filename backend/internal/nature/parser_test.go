@@ -34,3 +34,19 @@ func TestParseInstantaneousPowerRejectsInvalidHex(t *testing.T) {
 		t.Fatal("ParseInstantaneousPower returned nil error for invalid hex")
 	}
 }
+
+func TestParseCumulativeEnergyKWh(t *testing.T) {
+	kwh, coefficient, unit, err := ParseCumulativeEnergyKWh("00002710", "00000002", "01")
+	if err != nil {
+		t.Fatalf("ParseCumulativeEnergyKWh failed: %v", err)
+	}
+	if kwh != 2000 || coefficient != 2 || unit != 0.1 {
+		t.Fatalf("kwh, coefficient, unit = %v, %d, %v; want 2000, 2, 0.1", kwh, coefficient, unit)
+	}
+}
+
+func TestParseCumulativeEnergyKWhRejectsUnsupportedUnit(t *testing.T) {
+	if _, _, _, err := ParseCumulativeEnergyKWh("00000001", "00000001", "09"); err == nil {
+		t.Fatal("ParseCumulativeEnergyKWh returned nil error for unsupported unit")
+	}
+}

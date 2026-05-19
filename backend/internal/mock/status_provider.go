@@ -23,6 +23,7 @@ type StatusProvider struct {
 	mode           string
 	gridReader     GridReader
 	batteryReader  BatteryReader
+	weatherReader  WeatherReader
 	writeClient    ecoflow.WriteClient
 	staleAfter     time.Duration
 	mu             sync.Mutex
@@ -39,6 +40,11 @@ type BatteryReader interface {
 	GetBatteryStatus(ctx context.Context) (domain.BatteryStatus, error)
 }
 
+type WeatherReader interface {
+	ForecastTargetDaytime(ctx context.Context, now time.Time) (domain.WeatherForecast, error)
+	CurrentWeatherLocation(ctx context.Context) (domain.WeatherLocation, error)
+}
+
 func NewStatusProvider(clock config.Clock, settings control.Settings, mockMode bool, simulationMode bool, realControl bool, autoControl bool) *StatusProvider {
 	return &StatusProvider{
 		clock:          clock,
@@ -52,12 +58,15 @@ func NewStatusProvider(clock config.Clock, settings control.Settings, mockMode b
 	}
 }
 
-func NewStatusProviderWithReaders(clock config.Clock, settings control.Settings, mockMode bool, simulationMode bool, realControl bool, autoControl bool, gridReader GridReader, batteryReader BatteryReader, writeClient ecoflow.WriteClient, mode string) *StatusProvider {
+func NewStatusProviderWithReaders(clock config.Clock, settings control.Settings, mockMode bool, simulationMode bool, realControl bool, autoControl bool, gridReader GridReader, batteryReader BatteryReader, writeClient ecoflow.WriteClient, mode string, weatherReader ...WeatherReader) *StatusProvider {
 	provider := NewStatusProvider(clock, settings, mockMode, simulationMode, realControl, autoControl)
 	provider.gridReader = gridReader
 	provider.batteryReader = batteryReader
 	provider.writeClient = writeClient
 	provider.mode = mode
+	if len(weatherReader) > 0 {
+		provider.weatherReader = weatherReader[0]
+	}
 	return provider
 }
 
@@ -90,6 +99,8 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 		p.mu.Unlock()
 	}
 	lastError = combineErrors(lastError, commandError)
+	weatherForecast, solarSettings, weatherError := p.currentWeatherForecast(ctx, now)
+	lastError = combineErrors(lastError, weatherError)
 	if result.CommandBlockReason != "" {
 		result.Decision.Reason += "; " + result.CommandBlockReason
 	}
@@ -100,21 +111,49 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 		result.Decision.Reason += "; EcoFlow mock write adapter recorded would-send command"
 	}
 	p.setCommandStatus(commandSent, actualCommandW)
+	surplusPlan := control.PlanSurplusCharging(control.SurplusPlanInput{
+		GridW:             gridPower.GridW,
+		BatterySoc:        batteryStatus.Soc,
+		BatteryInputW:     batteryStatus.InputW,
+		BatteryOutputW:    batteryStatus.OutputW,
+		ACChargeLimitW:    batteryStatus.ACChargeLimitW,
+		BackupReserveSoc:  batteryStatus.BackupReserveSoc,
+		TOUModeEnabled:    batteryStatus.TOUModeEnabled,
+		SimulationMode:    p.simulationMode,
+		EnableRealControl: p.realControl,
+		AutoControl:       p.autoControl,
+	}, p.settings)
+	nightChargePlan := control.PlanNightCharging(control.NightChargePlanInput{
+		BatterySoc:          batteryStatus.Soc,
+		BackupReserveSoc:    batteryStatus.BackupReserveSoc,
+		BatteryFullEnergyWh: batteryStatus.FullEnergyWh,
+		Forecast:            weatherForecast,
+		SolarSettings:       solarSettings,
+		SimulationMode:      p.simulationMode,
+		EnableRealControl:   p.realControl,
+		AutoControl:         p.autoControl,
+	}, p.settings)
 
 	return domain.Status{
-		GridW:              result.GridPower.GridW,
-		ImportW:            result.GridPower.ImportW,
-		ExportW:            result.GridPower.ExportW,
-		BatterySoc:         batteryStatus.Soc,
-		BatteryInputW:      batteryStatus.InputW,
-		BatteryOutputW:     batteryStatus.OutputW,
-		ACChargeLimitW:     batteryStatus.ACChargeLimitW,
-		TargetChargeW:      result.Decision.TargetChargeW,
-		State:              "simulation",
-		Mode:               p.mode,
-		LastDecisionReason: result.Decision.Reason,
-		LastError:          lastError,
-		UpdatedAt:          now,
+		GridW:               result.GridPower.GridW,
+		ImportW:             result.GridPower.ImportW,
+		ExportW:             result.GridPower.ExportW,
+		BatterySoc:          batteryStatus.Soc,
+		BatteryInputW:       batteryStatus.InputW,
+		BatteryOutputW:      batteryStatus.OutputW,
+		ACChargeLimitW:      batteryStatus.ACChargeLimitW,
+		BackupReserveSoc:    batteryStatus.BackupReserveSoc,
+		EnergyBackupEnabled: batteryStatus.EnergyBackupEnabled,
+		TOUModeEnabled:      batteryStatus.TOUModeEnabled,
+		BatteryFullEnergyWh: batteryStatus.FullEnergyWh,
+		SurplusPlan:         &surplusPlan,
+		NightChargePlan:     &nightChargePlan,
+		TargetChargeW:       result.Decision.TargetChargeW,
+		State:               "simulation",
+		Mode:                p.mode,
+		LastDecisionReason:  result.Decision.Reason,
+		LastError:           lastError,
+		UpdatedAt:           now,
 	}, nil
 }
 
@@ -207,6 +246,27 @@ func (p *StatusProvider) currentBatteryStatus(ctx context.Context, now time.Time
 		}, &message
 	}
 	return batteryStatus, nil
+}
+
+func (p *StatusProvider) currentWeatherForecast(ctx context.Context, now time.Time) (*domain.WeatherForecast, *domain.WeatherLocation, *string) {
+	if p.weatherReader == nil {
+		return nil, nil, nil
+	}
+	weatherLocation, settingsErr := p.weatherReader.CurrentWeatherLocation(ctx)
+	forecast, err := p.weatherReader.ForecastTargetDaytime(ctx, now)
+	if settingsErr != nil && err != nil {
+		message := fmt.Sprintf("weather settings read failed: %v; weather forecast read failed: %v", settingsErr, err)
+		return nil, nil, &message
+	}
+	if settingsErr != nil {
+		message := fmt.Sprintf("weather settings read failed: %v", settingsErr)
+		return &forecast, nil, &message
+	}
+	if err != nil {
+		message := fmt.Sprintf("weather forecast read failed: %v", err)
+		return nil, &weatherLocation, &message
+	}
+	return &forecast, &weatherLocation, nil
 }
 
 func combineErrors(first *string, second *string) *string {

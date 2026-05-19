@@ -3,11 +3,14 @@
 import { useEffect, useState } from "react";
 import { ControlPanel } from "@/components/ControlPanel";
 import { EnergyCharts } from "@/components/EnergyCharts";
+import { EnergyMeterLogTable } from "@/components/EnergyMeterLogTable";
 import { Header } from "@/components/Header";
 import { LogTable } from "@/components/LogTable";
+import { SolarForecastPanel } from "@/components/SolarForecastPanel";
 import { StatusCards } from "@/components/StatusCards";
-import { fetchLogs, fetchStatus } from "@/lib/api";
-import type { EnergyStatus, PowerLog } from "@/lib/types";
+import { TariffSummaryPanel } from "@/components/TariffSummaryPanel";
+import { fetchEnergyMeterLogsPage, fetchLogs, fetchLogsPage, fetchSolarForecast, fetchStatus, fetchTariffSummary } from "@/lib/api";
+import type { EnergyMeterLog, EnergyStatus, PowerLog, SolarForecastSummary, TariffSummary } from "@/lib/types";
 
 type LogRange = {
   label: string;
@@ -20,6 +23,15 @@ const logRanges: LogRange[] = [
   { label: "24時間", hours: 24 },
   { label: "最新500件", hours: null }
 ];
+
+const forecastRanges = [
+  { label: "3日", days: 3 },
+  { label: "7日", days: 7 },
+  { label: "16日", days: 16 }
+] as const;
+
+const logPageSize = 25;
+const energyMeterLogPageSize = 25;
 
 const initialStatus: EnergyStatus = {
   gridW: 0,
@@ -39,10 +51,38 @@ const initialStatus: EnergyStatus = {
 
 export function Dashboard() {
   const [status, setStatus] = useState<EnergyStatus>(initialStatus);
-  const [logs, setLogs] = useState<PowerLog[]>([]);
+  const [chartLogs, setChartLogs] = useState<PowerLog[]>([]);
+  const [tableLogs, setTableLogs] = useState<PowerLog[]>([]);
+  const [logPage, setLogPage] = useState(1);
+  const [logSearchInput, setLogSearchInput] = useState("");
+  const [logFromInput, setLogFromInput] = useState("");
+  const [logToInput, setLogToInput] = useState("");
+  const [appliedLogSearch, setAppliedLogSearch] = useState("");
+  const [appliedLogFrom, setAppliedLogFrom] = useState("");
+  const [appliedLogTo, setAppliedLogTo] = useState("");
+  const [logTotal, setLogTotal] = useState(0);
+  const [energyMeterLogs, setEnergyMeterLogs] = useState<EnergyMeterLog[]>([]);
+  const [energyMeterPage, setEnergyMeterPage] = useState(1);
+  const [energyMeterFromInput, setEnergyMeterFromInput] = useState("");
+  const [energyMeterToInput, setEnergyMeterToInput] = useState("");
+  const [appliedEnergyMeterFrom, setAppliedEnergyMeterFrom] = useState("");
+  const [appliedEnergyMeterTo, setAppliedEnergyMeterTo] = useState("");
+  const [energyMeterTotal, setEnergyMeterTotal] = useState(0);
+  const [tariffSummary, setTariffSummary] = useState<TariffSummary | null>(null);
+  const [solarForecast, setSolarForecast] = useState<SolarForecastSummary | null>(null);
+  const [forecastRange, setForecastRange] = useState<{ label: string; days: number }>(forecastRanges[0]);
+  const [tariffFromInput, setTariffFromInput] = useState("");
+  const [tariffToInput, setTariffToInput] = useState("");
+  const [appliedTariffFrom, setAppliedTariffFrom] = useState("");
+  const [appliedTariffTo, setAppliedTariffTo] = useState("");
+  const [tariffRefreshToken, setTariffRefreshToken] = useState(0);
   const [logRange, setLogRange] = useState<LogRange>(logRanges[1]);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [logsError, setLogsError] = useState<string | null>(null);
+  const [energyMeterError, setEnergyMeterError] = useState<string | null>(null);
+  const [tariffError, setTariffError] = useState<string | null>(null);
+  const [solarForecastError, setSolarForecastError] = useState<string | null>(null);
+  const [solarForecastLoading, setSolarForecastLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,7 +105,7 @@ export function Dashboard() {
       try {
         const nextLogs = await fetchLogs(logQuery(logRange));
         if (!cancelled) {
-          setLogs(nextLogs);
+          setChartLogs(nextLogs);
           setLogsError(null);
         }
       } catch (err) {
@@ -87,15 +127,248 @@ export function Dashboard() {
     };
   }, [logRange]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadLogPage() {
+      try {
+        const nextPage = await fetchLogsPage({
+          limit: logPageSize,
+          offset: (logPage - 1) * logPageSize,
+          q: appliedLogSearch.trim() || undefined,
+          from: datetimeLocalToISOString(appliedLogFrom),
+          to: datetimeLocalToISOString(appliedLogTo)
+        });
+        if (!cancelled) {
+          setTableLogs(nextPage.items);
+          setLogTotal(nextPage.total);
+          setLogsError(null);
+          const totalPages = Math.max(1, Math.ceil(nextPage.total / logPageSize));
+          if (logPage > totalPages) {
+            setLogPage(totalPages);
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setLogsError(err instanceof Error ? err.message : "logs request failed");
+        }
+      }
+    }
+
+    loadLogPage();
+    const timer = window.setInterval(loadLogPage, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [logPage, appliedLogSearch, appliedLogFrom, appliedLogTo]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEnergyMeterLogPage() {
+      try {
+        const nextPage = await fetchEnergyMeterLogsPage({
+          limit: energyMeterLogPageSize,
+          offset: (energyMeterPage - 1) * energyMeterLogPageSize,
+          from: datetimeLocalToISOString(appliedEnergyMeterFrom),
+          to: datetimeLocalToISOString(appliedEnergyMeterTo)
+        });
+        if (!cancelled) {
+          setEnergyMeterLogs(nextPage.items);
+          setEnergyMeterTotal(nextPage.total);
+          setEnergyMeterError(null);
+          const totalPages = Math.max(1, Math.ceil(nextPage.total / energyMeterLogPageSize));
+          if (energyMeterPage > totalPages) {
+            setEnergyMeterPage(totalPages);
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setEnergyMeterError(err instanceof Error ? err.message : "energy meter logs request failed");
+        }
+      }
+    }
+
+    loadEnergyMeterLogPage();
+    const timer = window.setInterval(loadEnergyMeterLogPage, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [energyMeterPage, appliedEnergyMeterFrom, appliedEnergyMeterTo]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadTariffSummary() {
+      try {
+        const nextSummary = await fetchTariffSummary({
+          from: datetimeLocalToISOString(appliedTariffFrom),
+          to: datetimeLocalToISOString(appliedTariffTo)
+        });
+        if (!cancelled) {
+          setTariffSummary(nextSummary);
+          setTariffError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setTariffError(err instanceof Error ? err.message : "tariff summary request failed");
+        }
+      }
+    }
+
+    loadTariffSummary();
+    const timer = window.setInterval(loadTariffSummary, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [appliedTariffFrom, appliedTariffTo, tariffRefreshToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSolarForecast() {
+      setSolarForecastLoading(true);
+      try {
+        const nextForecast = await fetchSolarForecast(forecastRange.days);
+        if (!cancelled) {
+          setSolarForecast(nextForecast);
+          setSolarForecastError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setSolarForecastError(err instanceof Error ? err.message : "solar forecast request failed");
+        }
+      } finally {
+        if (!cancelled) {
+          setSolarForecastLoading(false);
+        }
+      }
+    }
+
+    loadSolarForecast();
+    const timer = window.setInterval(loadSolarForecast, 30 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [forecastRange]);
+
+  function submitLogSearch() {
+    setAppliedLogSearch(logSearchInput);
+    setAppliedLogFrom(logFromInput);
+    setAppliedLogTo(logToInput);
+    setLogPage(1);
+  }
+
+  function clearLogSearch() {
+    setLogSearchInput("");
+    setLogFromInput("");
+    setLogToInput("");
+    setAppliedLogSearch("");
+    setAppliedLogFrom("");
+    setAppliedLogTo("");
+    setLogPage(1);
+  }
+
+  function submitEnergyMeterSearch() {
+    setAppliedEnergyMeterFrom(energyMeterFromInput);
+    setAppliedEnergyMeterTo(energyMeterToInput);
+    setEnergyMeterPage(1);
+  }
+
+  function clearEnergyMeterSearch() {
+    setEnergyMeterFromInput("");
+    setEnergyMeterToInput("");
+    setAppliedEnergyMeterFrom("");
+    setAppliedEnergyMeterTo("");
+    setEnergyMeterPage(1);
+  }
+
+  function submitTariffSearch() {
+    setAppliedTariffFrom(tariffFromInput);
+    setAppliedTariffTo(tariffToInput);
+  }
+
+  function clearTariffSearch() {
+    setTariffFromInput("");
+    setTariffToInput("");
+    setAppliedTariffFrom("");
+    setAppliedTariffTo("");
+  }
+
   return (
     <main className="page-shell">
       <Header status={status} />
       <StatusCards status={status} fetchError={statusError} />
-      <EnergyCharts logs={logs} rangeLabel={logRange.label} ranges={logRanges} selectedRange={logRange} onRangeChange={setLogRange} />
-      <LogTable logs={logs} error={logsError} />
-      <ControlPanel />
+      <EnergyCharts logs={chartLogs} rangeLabel={logRange.label} ranges={logRanges} selectedRange={logRange} onRangeChange={setLogRange} />
+      <ControlPanel onTariffPlanSaved={() => setTariffRefreshToken((value) => value + 1)} />
+      <SolarForecastPanel
+        summary={solarForecast}
+        error={solarForecastError}
+        ranges={forecastRanges}
+        selectedRange={forecastRange}
+        loading={solarForecastLoading}
+        onRangeChange={setForecastRange}
+      />
+      <TariffSummaryPanel
+        summary={tariffSummary}
+        error={tariffError}
+        from={tariffFromInput}
+        to={tariffToInput}
+        isFiltered={Boolean(appliedTariffFrom || appliedTariffTo)}
+        onFromChange={setTariffFromInput}
+        onToChange={setTariffToInput}
+        onSearchSubmit={submitTariffSearch}
+        onSearchClear={clearTariffSearch}
+      />
+      <EnergyMeterLogTable
+        logs={energyMeterLogs}
+        error={energyMeterError}
+        page={energyMeterPage}
+        pageSize={energyMeterLogPageSize}
+        total={energyMeterTotal}
+        from={energyMeterFromInput}
+        to={energyMeterToInput}
+        isFiltered={Boolean(appliedEnergyMeterFrom || appliedEnergyMeterTo)}
+        onFromChange={setEnergyMeterFromInput}
+        onToChange={setEnergyMeterToInput}
+        onSearchSubmit={submitEnergyMeterSearch}
+        onSearchClear={clearEnergyMeterSearch}
+        onPageChange={setEnergyMeterPage}
+      />
+      <LogTable
+        logs={tableLogs}
+        error={logsError}
+        page={logPage}
+        pageSize={logPageSize}
+        total={logTotal}
+        search={logSearchInput}
+        from={logFromInput}
+        to={logToInput}
+        isFiltered={Boolean(appliedLogSearch || appliedLogFrom || appliedLogTo)}
+        onSearchChange={setLogSearchInput}
+        onFromChange={setLogFromInput}
+        onToChange={setLogToInput}
+        onSearchSubmit={submitLogSearch}
+        onSearchClear={clearLogSearch}
+        onPageChange={setLogPage}
+      />
     </main>
   );
+}
+
+function datetimeLocalToISOString(value: string) {
+  if (!value) {
+    return undefined;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+  return date.toISOString();
 }
 
 function logQuery(range: LogRange) {

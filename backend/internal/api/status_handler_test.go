@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -91,5 +92,39 @@ func TestRouterStatusReadsCurrentStatusFromDatabase(t *testing.T) {
 	}
 	if payload["gridW"] != float64(-640) || payload["acChargeLimitW"] != float64(1500) || payload["lastDecisionReason"] != "database status" {
 		t.Fatalf("unexpected database status payload: %#v", payload)
+	}
+}
+
+func TestRouterUpdatesWeatherLocation(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "energy.db"))
+	if err != nil {
+		t.Fatalf("store.Open failed: %v", err)
+	}
+	defer db.Close()
+
+	body := strings.NewReader(`{"enabled":true,"latitude":35.362502,"longitude":136.9253633,"timezone":"Asia/Tokyo","pvCapacityKw":5.5,"pvPerformanceRatio":0.78,"dailyBaseLoadKwh":8.2,"batteryCapacityKwh":4.096,"minimumReserveSoc":35}`)
+	req := httptest.NewRequest(http.MethodPut, "/api/settings/weather-location", body)
+	rec := httptest.NewRecorder()
+	NewRouter(Dependencies{DB: db, StatusProvider: stubStatusProvider{}, Logger: slog.Default()}).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/settings/weather-location", nil)
+	getRec := httptest.NewRecorder()
+	NewRouter(Dependencies{DB: db, StatusProvider: stubStatusProvider{}, Logger: slog.Default()}).ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("get status code = %d, want %d", getRec.Code, http.StatusOK)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(getRec.Body).Decode(&payload); err != nil {
+		t.Fatalf("invalid json response: %v", err)
+	}
+	if payload["enabled"] != true || payload["latitude"] != 35.362502 || payload["longitude"] != 136.9253633 {
+		t.Fatalf("unexpected weather location payload: %#v", payload)
+	}
+	if payload["pvCapacityKw"] != 5.5 || payload["pvPerformanceRatio"] != 0.78 || payload["minimumReserveSoc"] != float64(35) {
+		t.Fatalf("unexpected solar settings payload: %#v", payload)
 	}
 }

@@ -15,6 +15,12 @@ type LogRepository struct {
 	db *sql.DB
 }
 
+type LogPageFilter struct {
+	Query string
+	From  *time.Time
+	To    *time.Time
+}
+
 func NewLogRepository(db *sql.DB) *LogRepository {
 	return &LogRepository{db: db}
 }
@@ -49,21 +55,38 @@ func (r *LogRepository) InsertPowerLog(ctx context.Context, log domain.PowerLog)
 }
 
 func (r *LogRepository) ListPowerLogs(ctx context.Context, limit int) ([]domain.PowerLog, error) {
+	logs, _, err := r.ListPowerLogsPage(ctx, limit, 0, LogPageFilter{})
+	return logs, err
+}
+
+func (r *LogRepository) ListPowerLogsPage(ctx context.Context, limit int, offset int, filter LogPageFilter) ([]domain.PowerLog, int, error) {
 	limit = normalizeLimit(limit)
+	offset = normalizeOffset(offset)
+	whereClause, queryArgs := logSearchWhere(filter)
+	args := append(queryArgs, limit, offset)
 	rows, err := r.db.QueryContext(ctx, `SELECT
 		id, measured_at, grid_w, import_w, export_w, battery_soc,
 		battery_input_w, battery_output_w, ac_charge_limit_w, target_charge_w,
 		actual_command_w, decision_reason, mode, command_sent,
 		error_message, created_at
 		FROM power_logs
+		`+whereClause+`
 		ORDER BY measured_at DESC, id DESC
-		LIMIT ?`, limit)
+		LIMIT ? OFFSET ?`, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
-	return scanPowerLogs(rows, limit)
+	logs, err := scanPowerLogs(rows, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := r.countPowerLogs(ctx, whereClause, queryArgs)
+	if err != nil {
+		return nil, 0, err
+	}
+	return logs, total, nil
 }
 
 func (r *LogRepository) ListPowerLogsSince(ctx context.Context, since time.Time, limit int) ([]domain.PowerLog, error) {
@@ -163,6 +186,80 @@ func normalizeLimit(limit int) int {
 		return maxLogLimit
 	}
 	return limit
+}
+
+func normalizeOffset(offset int) int {
+	if offset < 0 {
+		return 0
+	}
+	return offset
+}
+
+func (r *LogRepository) countPowerLogs(ctx context.Context, whereClause string, args []any) (int, error) {
+	var total int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM power_logs `+whereClause, args...).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+func logSearchWhere(filter LogPageFilter) (string, []any) {
+	clauses := make([]string, 0, 3)
+	args := make([]any, 0, 16)
+	if filter.Query != "" {
+		pattern := "%" + filter.Query + "%"
+		searchClauses := []string{
+			"measured_at LIKE ?",
+			"CAST(grid_w AS TEXT) LIKE ?",
+			"CAST(import_w AS TEXT) LIKE ?",
+			"CAST(export_w AS TEXT) LIKE ?",
+			"CAST(battery_soc AS TEXT) LIKE ?",
+			"CAST(battery_input_w AS TEXT) LIKE ?",
+			"CAST(battery_output_w AS TEXT) LIKE ?",
+			"CAST(ac_charge_limit_w AS TEXT) LIKE ?",
+			"CAST(target_charge_w AS TEXT) LIKE ?",
+			"CAST(actual_command_w AS TEXT) LIKE ?",
+			"decision_reason LIKE ?",
+			"mode LIKE ?",
+			"CAST(command_sent AS TEXT) LIKE ?",
+			"error_message LIKE ?",
+		}
+		clauses = append(clauses, "("+joinWithOr(searchClauses)+")")
+		for range searchClauses {
+			args = append(args, pattern)
+		}
+	}
+	if filter.From != nil {
+		clauses = append(clauses, "julianday(measured_at) >= julianday(?)")
+		args = append(args, filter.From.Format(time.RFC3339Nano))
+	}
+	if filter.To != nil {
+		clauses = append(clauses, "julianday(measured_at) <= julianday(?)")
+		args = append(args, filter.To.Format(time.RFC3339Nano))
+	}
+	if len(clauses) == 0 {
+		return "", nil
+	}
+	return "WHERE " + joinWithAnd(clauses), args
+}
+
+func joinWithOr(values []string) string {
+	return joinWith(values, " OR ")
+}
+
+func joinWithAnd(values []string) string {
+	return joinWith(values, " AND ")
+}
+
+func joinWith(values []string, separator string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	result := values[0]
+	for _, value := range values[1:] {
+		result += separator + value
+	}
+	return result
 }
 
 func intPtrFromNull(value sql.NullInt64) *int {

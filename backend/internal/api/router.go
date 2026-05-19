@@ -11,6 +11,7 @@ import (
 	"github.com/eisles/energy-controller/backend/internal/config"
 	"github.com/eisles/energy-controller/backend/internal/domain"
 	"github.com/eisles/energy-controller/backend/internal/store"
+	"github.com/eisles/energy-controller/backend/internal/weather"
 )
 
 type StatusProvider interface {
@@ -35,6 +36,23 @@ func NewRouter(deps Dependencies) http.Handler {
 	mux.HandleFunc("GET /api/status", statusHandler(statusProvider, deps.Logger))
 	if logProvider != nil {
 		mux.HandleFunc("GET /api/logs", logsHandler(logProvider, deps.Logger))
+	}
+	if deps.DB != nil {
+		weatherSettings := store.NewWeatherSettingsRepository(deps.DB)
+		weatherClient := weather.NewOpenMeteoClient(weather.OpenMeteoConfig{
+			BaseURL: deps.Config.WeatherBaseURL,
+		})
+		tariffRepository := store.NewTariffRepository(deps.DB)
+		mux.HandleFunc("GET /api/settings/weather-location", getWeatherLocationHandler(weatherSettings, deps.Logger))
+		mux.HandleFunc("PUT /api/settings/weather-location", putWeatherLocationHandler(weatherSettings, deps.Logger))
+		mux.HandleFunc("GET /api/weather/solar-forecast", solarForecastHandler(weatherSettings, weatherClient, deps.Logger))
+		mux.HandleFunc("GET /api/analytics/daytime-consumption", daytimeConsumptionHandler(store.NewDaytimeConsumptionRepository(deps.DB), deps.Logger))
+		mux.HandleFunc("GET /api/analytics/ecoflow-load", ecoFlowLoadHandler(store.NewEcoFlowLoadRepositoryWithTimezone(deps.DB, deps.Config.WeatherTimezone), deps.Logger))
+		mux.HandleFunc("GET /api/energy-meter/logs", energyMeterLogsHandler(store.NewEnergyMeterRepository(deps.DB), deps.Logger))
+		mux.HandleFunc("GET /api/tariff/summary", tariffSummaryHandler(tariffRepository, deps.Logger))
+		mux.HandleFunc("GET /api/settings/tariff-plans", getTariffPlansHandler(tariffRepository, deps.Logger))
+		mux.HandleFunc("POST /api/settings/tariff-plans", postTariffPlanHandler(tariffRepository, deps.Logger))
+		mux.HandleFunc("DELETE /api/settings/tariff-plans/{id}", deleteTariffPlanHandler(tariffRepository, deps.Logger))
 	}
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

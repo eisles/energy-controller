@@ -71,6 +71,30 @@ func (c *SignedClient) GetBatteryStatus(ctx context.Context) (domain.BatteryStat
 	return BatteryStatusFromQuotas(quotas)
 }
 
+type EnergyBackupStatus struct {
+	StartSoc int
+	Enabled  bool
+}
+
+func (c *SignedClient) GetEnergyBackupStatus(ctx context.Context) (EnergyBackupStatus, error) {
+	if c.accessKey == "" || c.secretKey == "" || c.deviceSN == "" {
+		return EnergyBackupStatus{}, fmt.Errorf("EcoFlow access key, secret key, or device SN is empty")
+	}
+	quotas, err := c.getQuotaAll(ctx)
+	if err != nil {
+		return EnergyBackupStatus{}, err
+	}
+	startSoc, ok := intFromQuota(quotas, "energyBackupStartSoc")
+	if !ok {
+		return EnergyBackupStatus{}, fmt.Errorf("EcoFlow quota does not include energyBackupStartSoc")
+	}
+	enabled, ok := boolFromQuota(quotas, "energyBackupEn")
+	if !ok {
+		return EnergyBackupStatus{}, fmt.Errorf("EcoFlow quota does not include energyBackupEn")
+	}
+	return EnergyBackupStatus{StartSoc: startSoc, Enabled: enabled}, nil
+}
+
 func (c *SignedClient) getQuotaAll(ctx context.Context) (map[string]any, error) {
 	var payload quotaResponse
 	if err := c.getJSON(ctx, "/iot-open/sign/device/quota/all", map[string]string{"sn": c.deviceSN}, &payload); err != nil {

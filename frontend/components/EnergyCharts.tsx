@@ -15,6 +15,7 @@ const powerChartConfig = {
 
 const batteryChartConfig = {
   batterySoc: { label: "SOC", color: "#0f766e", unit: "%" },
+  netBatteryW: { label: "実質", color: "#db2777", unit: "W" },
   batteryInputW: { label: "入力", color: "#ea580c", unit: "W" },
   batteryOutputW: { label: "出力", color: "#0891b2", unit: "W" }
 } satisfies ChartConfig;
@@ -45,7 +46,8 @@ export function EnergyCharts({ logs, rangeLabel, ranges, selectedRange, onRangeC
       targetChargeW: log.targetChargeW,
       batterySoc: log.batterySoc,
       batteryInputW: log.batteryInputW,
-      batteryOutputW: log.batteryOutputW
+      batteryOutputW: log.batteryOutputW,
+      netBatteryW: netBatteryW(log)
     }));
 
   if (chartData.length === 0) {
@@ -97,7 +99,7 @@ export function EnergyCharts({ logs, rangeLabel, ranges, selectedRange, onRangeC
       <Card>
         <CardHeader>
           <CardTitle>バッテリー推移</CardTitle>
-          <CardDescription>SOC / 入力W / 出力W</CardDescription>
+          <CardDescription>SOC / 実質充電W / 入力W / 出力W</CardDescription>
         </CardHeader>
         <CardContent>
           <ChartLegend config={batteryChartConfig} />
@@ -109,6 +111,7 @@ export function EnergyCharts({ logs, rangeLabel, ranges, selectedRange, onRangeC
               <YAxis yAxisId="soc" orientation="right" tickLine={false} axisLine={false} width={42} tickFormatter={(value) => `${value}%`} />
               <ChartTooltip content={<ChartTooltipContent config={batteryChartConfig} />} />
               <Line yAxisId="soc" dataKey="batterySoc" type="monotone" stroke="var(--color-batterySoc)" strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
+              <Line yAxisId="watts" dataKey="netBatteryW" type="monotone" stroke="var(--color-netBatteryW)" strokeWidth={3} dot={false} connectNulls isAnimationActive={false} />
               <Line yAxisId="watts" dataKey="batteryInputW" type="monotone" stroke="var(--color-batteryInputW)" strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
               <Line yAxisId="watts" dataKey="batteryOutputW" type="monotone" stroke="var(--color-batteryOutputW)" strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
             </LineChart>
@@ -158,4 +161,11 @@ function formatTime(value: string) {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function netBatteryW(log: PowerLog) {
+  if (log.batteryInputW === null || log.batteryOutputW === null) {
+    return null;
+  }
+  return log.batteryInputW - log.batteryOutputW;
 }

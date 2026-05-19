@@ -1,8 +1,14 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormDescription, FormItem, FormLabel } from "@/components/ui/form";
+import { TariffPlanPanel } from "@/components/TariffPlanPanel";
+import { WeatherLocationPanel } from "@/components/WeatherLocationPanel";
 
-export function ControlPanel() {
+type ControlPanelProps = {
+  onTariffPlanSaved?: () => void;
+};
+
+export function ControlPanel({ onTariffPlanSaved }: ControlPanelProps) {
   return (
     <section className="control-grid section" aria-label="read only controls">
       <Card>
@@ -62,6 +68,9 @@ export function ControlPanel() {
           <p className="readonly-note">実機制御系の API 呼び出しは追加していません。</p>
         </CardContent>
       </Card>
+
+      <WeatherLocationPanel />
+      <TariffPlanPanel onSaved={onTariffPlanSaved} />
     </section>
   );
 }

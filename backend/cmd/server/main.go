@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/eisles/energy-controller/backend/internal/mock"
 	"github.com/eisles/energy-controller/backend/internal/nature"
 	"github.com/eisles/energy-controller/backend/internal/store"
+	"github.com/eisles/energy-controller/backend/internal/weather"
 )
 
 func main() {
@@ -38,13 +40,14 @@ func main() {
 	}
 	defer db.Close()
 
-	statusProvider := newStatusProvider(cfg)
+	statusProvider, energyMeterReader := newStatusProvider(cfg, db)
 	statusRepository := store.NewStatusRepository(db)
 	logRepository := store.NewLogRepository(db)
+	energyMeterRepository := store.NewEnergyMeterRepository(db)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	recordStatus(ctx, statusProvider, statusRepository, logRepository, logger)
-	go runControlLoop(ctx, cfg.PollInterval, statusProvider, statusRepository, logRepository, logger)
+	recordStatus(ctx, statusProvider, statusRepository, logRepository, energyMeterReader, energyMeterRepository, logger)
+	go runControlLoop(ctx, cfg.PollInterval, statusProvider, statusRepository, logRepository, energyMeterReader, energyMeterRepository, logger)
 
 	router := api.NewRouter(api.Dependencies{
 		Config:         cfg,
@@ -85,6 +88,14 @@ type logWriter interface {
 	InsertPowerLog(ctx context.Context, log domain.PowerLog) error
 }
 
+type energyMeterWriter interface {
+	InsertEnergyMeterReading(ctx context.Context, reading domain.EnergyMeterReading) error
+}
+
+type energyMeterReader interface {
+	CurrentEnergyMeterReading(ctx context.Context) (domain.EnergyMeterReading, error)
+}
+
 type commandStatus struct {
 	ActualCommandW *int
 	CommandSent    bool
@@ -95,9 +106,9 @@ type commandStatusProvider interface {
 	LastCommandSent() bool
 }
 
-func newStatusProvider(cfg config.Config) api.StatusProvider {
+func newStatusProvider(cfg config.Config, db *sql.DB) (api.StatusProvider, energyMeterReader) {
 	if cfg.MockMode {
-		return mock.NewStatusProvider(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled)
+		return mock.NewStatusProvider(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled), nil
 	}
 	ecoflowClient := ecoflow.NewSignedClient(ecoflow.Config{
 		AccessKey: cfg.EcoFlowAccessKey,
@@ -106,17 +117,34 @@ func newStatusProvider(cfg config.Config) api.StatusProvider {
 		BaseURL:   cfg.EcoFlowBaseURL,
 	})
 	ecoflowWriteClient := ecoflow.NewMockWriteClient()
+	weatherReader := newWeatherReader(cfg, db)
 	if cfg.NatureMode == "cloud" {
 		natureClient := nature.NewCloudClient(nature.CloudConfig{
 			AccessToken: cfg.NatureAccessToken,
 			ApplianceID: cfg.NatureApplianceID,
 		})
-		return mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled, natureClient, ecoflowClient, ecoflowWriteClient, "nature-cloud+ecoflow-read")
+		return mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled, natureClient, ecoflowClient, ecoflowWriteClient, "nature-cloud+ecoflow-read", weatherReader), natureClient
 	}
-	return mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled, nil, ecoflowClient, ecoflowWriteClient, "ecoflow-read")
+	return mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled, nil, ecoflowClient, ecoflowWriteClient, "ecoflow-read", weatherReader), nil
 }
 
-func runControlLoop(ctx context.Context, interval time.Duration, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, logger *slog.Logger) {
+func newWeatherReader(cfg config.Config, db *sql.DB) mock.WeatherReader {
+	forecastClient := weather.NewOpenMeteoClient(weather.OpenMeteoConfig{
+		Latitude:  cfg.WeatherLatitude,
+		Longitude: cfg.WeatherLongitude,
+		Timezone:  cfg.WeatherTimezone,
+		BaseURL:   cfg.WeatherBaseURL,
+	})
+	if db != nil {
+		return weather.NewLocationForecastClient(store.NewWeatherSettingsRepository(db), forecastClient)
+	}
+	if !cfg.WeatherEnabled {
+		return nil
+	}
+	return forecastClient
+}
+
+func runControlLoop(ctx context.Context, interval time.Duration, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
@@ -127,12 +155,12 @@ func runControlLoop(ctx context.Context, interval time.Duration, provider api.St
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			recordStatus(ctx, provider, statusRepository, logRepository, logger)
+			recordStatus(ctx, provider, statusRepository, logRepository, meterReader, meterRepository, logger)
 		}
 	}
 }
 
-func recordStatus(ctx context.Context, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, logger *slog.Logger) {
+func recordStatus(ctx context.Context, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
 	status, err := provider.CurrentStatus(ctx)
 	if err != nil {
 		logger.Error("failed to evaluate current status", "error", err)
@@ -146,7 +174,22 @@ func recordStatus(ctx context.Context, provider api.StatusProvider, statusReposi
 		logger.Error("failed to update current status", "error", err)
 		return
 	}
+	recordEnergyMeterReading(ctx, meterReader, meterRepository, logger)
 	logger.Info("control decision saved", "mode", status.Mode, "state", status.State, "gridW", status.GridW, "targetChargeW", status.TargetChargeW, "reason", status.LastDecisionReason)
+}
+
+func recordEnergyMeterReading(ctx context.Context, reader energyMeterReader, repository energyMeterWriter, logger *slog.Logger) {
+	if reader == nil || repository == nil {
+		return
+	}
+	reading, err := reader.CurrentEnergyMeterReading(ctx)
+	if err != nil {
+		logger.Warn("failed to read Nature Remo cumulative energy", "error", err)
+		return
+	}
+	if err := repository.InsertEnergyMeterReading(ctx, reading); err != nil {
+		logger.Warn("failed to save energy meter log", "error", err)
+	}
 }
 
 func lastCommandStatus(provider api.StatusProvider) commandStatus {

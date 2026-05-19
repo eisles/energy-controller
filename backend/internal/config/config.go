@@ -37,6 +37,11 @@ type Config struct {
 	EcoFlowSecretKey   string
 	EcoFlowDeviceSN    string
 	EcoFlowBaseURL     string
+	WeatherEnabled     bool
+	WeatherLatitude    float64
+	WeatherLongitude   float64
+	WeatherTimezone    string
+	WeatherBaseURL     string
 	PollInterval       time.Duration
 	ControlSettings    control.Settings
 	Clock              Clock
@@ -44,6 +49,8 @@ type Config struct {
 
 func Load() Config {
 	loadDotEnv()
+	weatherLatitudeRaw := env("WEATHER_LATITUDE", "")
+	weatherLongitudeRaw := env("WEATHER_LONGITUDE", "")
 	return Config{
 		AppEnv:             env("APP_ENV", "local"),
 		HTTPPort:           env("HTTP_PORT", "8080"),
@@ -61,6 +68,11 @@ func Load() Config {
 		EcoFlowSecretKey:   env("ECOFLOW_SECRET_KEY", ""),
 		EcoFlowDeviceSN:    env("ECOFLOW_DEVICE_SN", ""),
 		EcoFlowBaseURL:     env("ECOFLOW_BASE_URL", "https://api-e.ecoflow.com"),
+		WeatherEnabled:     envBool("WEATHER_FORECAST_ENABLED", weatherLatitudeRaw != "" && weatherLongitudeRaw != ""),
+		WeatherLatitude:    parseFloat(weatherLatitudeRaw, 0),
+		WeatherLongitude:   parseFloat(weatherLongitudeRaw, 0),
+		WeatherTimezone:    env("WEATHER_TIMEZONE", "Asia/Tokyo"),
+		WeatherBaseURL:     env("WEATHER_BASE_URL", "https://api.open-meteo.com"),
 		PollInterval:       time.Duration(envInt("POLL_INTERVAL_SEC", 30)) * time.Second,
 		ControlSettings: control.Settings{
 			StartExportThresholdW: envInt("START_EXPORT_THRESHOLD_W", 700),
@@ -132,6 +144,17 @@ func envInt(key string, fallback int) int {
 		return fallback
 	}
 	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func parseFloat(value string, fallback float64) float64 {
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
 	if err != nil {
 		return fallback
 	}

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/eisles/energy-controller/backend/internal/domain"
@@ -19,13 +20,14 @@ func NewStatusRepository(db *sql.DB) *StatusRepository {
 func (r *StatusRepository) CurrentStatus(ctx context.Context) (domain.Status, error) {
 	var status domain.Status
 	var updatedAt string
-	var batterySoc, batteryInputW, batteryOutputW, acChargeLimitW sql.NullInt64
-	var lastError sql.NullString
+	var batterySoc, batteryInputW, batteryOutputW, acChargeLimitW, backupReserveSoc, energyBackupEnabled, touModeEnabled, batteryFullEnergyWh sql.NullInt64
+	var lastError, surplusPlanJSON, nightChargePlanJSON sql.NullString
 
 	err := r.db.QueryRowContext(ctx, `SELECT
 		grid_w, import_w, export_w, battery_soc, battery_input_w,
 		battery_output_w, ac_charge_limit_w, target_charge_w, state, mode,
-		last_decision_reason, last_error, updated_at
+		last_decision_reason, last_error, updated_at, backup_reserve_soc,
+		energy_backup_enabled, tou_mode_enabled, battery_full_energy_wh, surplus_plan_json, night_charge_plan_json
 		FROM current_status WHERE id = 1`,
 	).Scan(
 		&status.GridW,
@@ -41,6 +43,12 @@ func (r *StatusRepository) CurrentStatus(ctx context.Context) (domain.Status, er
 		&status.LastDecisionReason,
 		&lastError,
 		&updatedAt,
+		&backupReserveSoc,
+		&energyBackupEnabled,
+		&touModeEnabled,
+		&batteryFullEnergyWh,
+		&surplusPlanJSON,
+		&nightChargePlanJSON,
 	)
 	if err != nil {
 		return domain.Status{}, err
@@ -50,6 +58,24 @@ func (r *StatusRepository) CurrentStatus(ctx context.Context) (domain.Status, er
 	status.BatteryInputW = intFromNull(batteryInputW)
 	status.BatteryOutputW = intFromNull(batteryOutputW)
 	status.ACChargeLimitW = intFromNull(acChargeLimitW)
+	status.BackupReserveSoc = intPtrFromNull(backupReserveSoc)
+	status.EnergyBackupEnabled = boolPtrFromNull(energyBackupEnabled)
+	status.TOUModeEnabled = boolPtrFromNull(touModeEnabled)
+	status.BatteryFullEnergyWh = intPtrFromNull(batteryFullEnergyWh)
+	if surplusPlanJSON.Valid && surplusPlanJSON.String != "" {
+		var plan domain.SurplusPlan
+		if err := json.Unmarshal([]byte(surplusPlanJSON.String), &plan); err != nil {
+			return domain.Status{}, err
+		}
+		status.SurplusPlan = &plan
+	}
+	if nightChargePlanJSON.Valid && nightChargePlanJSON.String != "" {
+		var plan domain.NightChargePlan
+		if err := json.Unmarshal([]byte(nightChargePlanJSON.String), &plan); err != nil {
+			return domain.Status{}, err
+		}
+		status.NightChargePlan = &plan
+	}
 	if lastError.Valid {
 		status.LastError = &lastError.String
 	}
@@ -65,8 +91,9 @@ func (r *StatusRepository) UpdateCurrentStatus(ctx context.Context, status domai
 	_, err := r.db.ExecContext(ctx, `INSERT INTO current_status (
 		id, grid_w, import_w, export_w, battery_soc, battery_input_w,
 		battery_output_w, ac_charge_limit_w, target_charge_w, state, mode, last_decision_reason,
-		last_error, updated_at
-	) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		last_error, updated_at, backup_reserve_soc, energy_backup_enabled, tou_mode_enabled, battery_full_energy_wh, surplus_plan_json,
+		night_charge_plan_json
+	) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		grid_w = excluded.grid_w,
 		import_w = excluded.import_w,
@@ -80,6 +107,12 @@ func (r *StatusRepository) UpdateCurrentStatus(ctx context.Context, status domai
 		mode = excluded.mode,
 		last_decision_reason = excluded.last_decision_reason,
 		last_error = excluded.last_error,
+		backup_reserve_soc = excluded.backup_reserve_soc,
+		energy_backup_enabled = excluded.energy_backup_enabled,
+		tou_mode_enabled = excluded.tou_mode_enabled,
+		battery_full_energy_wh = excluded.battery_full_energy_wh,
+		surplus_plan_json = excluded.surplus_plan_json,
+		night_charge_plan_json = excluded.night_charge_plan_json,
 		updated_at = excluded.updated_at`,
 		status.GridW,
 		status.ImportW,
@@ -94,6 +127,12 @@ func (r *StatusRepository) UpdateCurrentStatus(ctx context.Context, status domai
 		status.LastDecisionReason,
 		nullableString(status.LastError),
 		status.UpdatedAt.Format(time.RFC3339Nano),
+		nullableInt(status.BackupReserveSoc),
+		nullableBool(status.EnergyBackupEnabled),
+		nullableBool(status.TOUModeEnabled),
+		nullableInt(status.BatteryFullEnergyWh),
+		nullableJSON(status.SurplusPlan),
+		nullableJSON(status.NightChargePlan),
 	)
 	return err
 }
@@ -103,6 +142,14 @@ func intFromNull(value sql.NullInt64) int {
 		return 0
 	}
 	return int(value.Int64)
+}
+
+func boolPtrFromNull(value sql.NullInt64) *bool {
+	if !value.Valid {
+		return nil
+	}
+	converted := value.Int64 != 0
+	return &converted
 }
 
 func parseTime(value string) (time.Time, error) {
@@ -118,4 +165,25 @@ func nullableString(value *string) any {
 		return nil
 	}
 	return *value
+}
+
+func nullableBool(value *bool) any {
+	if value == nil {
+		return nil
+	}
+	if *value {
+		return 1
+	}
+	return 0
+}
+
+func nullableJSON(value any) any {
+	if value == nil {
+		return nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	return string(encoded)
 }

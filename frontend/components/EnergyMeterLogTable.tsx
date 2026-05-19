@@ -1,22 +1,19 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import type { PowerLog } from "@/lib/types";
+import type { EnergyMeterLog } from "@/lib/types";
 
-type LogTableProps = {
-  logs: PowerLog[];
+type EnergyMeterLogTableProps = {
+  logs: EnergyMeterLog[];
   error: string | null;
   page: number;
   pageSize: number;
   total: number;
-  search: string;
   from: string;
   to: string;
   isFiltered: boolean;
-  onSearchChange: (search: string) => void;
   onFromChange: (from: string) => void;
   onToChange: (to: string) => void;
   onSearchSubmit: () => void;
@@ -24,36 +21,34 @@ type LogTableProps = {
   onPageChange: (page: number) => void;
 };
 
-export function LogTable({
+export function EnergyMeterLogTable({
   logs,
   error,
   page,
   pageSize,
   total,
-  search,
   from,
   to,
   isFiltered,
-  onSearchChange,
   onFromChange,
   onToChange,
   onSearchSubmit,
   onSearchClear,
   onPageChange
-}: LogTableProps) {
+}: EnergyMeterLogTableProps) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const startIndex = (page - 1) * pageSize;
   const firstItem = total === 0 ? 0 : startIndex + 1;
   const lastItem = Math.min(startIndex + logs.length, total);
-  const hasDraftFilter = Boolean(search || from || to);
-  const renderPager = () => (total > pageSize ? <LogPager page={page} totalPages={totalPages} onPageChange={onPageChange} /> : null);
+  const hasDraftFilter = Boolean(from || to);
+  const renderPager = () => (total > pageSize ? <EnergyMeterPager page={page} totalPages={totalPages} onPageChange={onPageChange} /> : null);
 
   return (
     <Card className="section">
       <CardHeader>
-        <CardTitle>制御ログ</CardTitle>
+        <CardTitle>電力量ログ</CardTitle>
         <CardDescription>
-          {total === 0 ? `/api/logs?limit=${pageSize}&offset=${startIndex}` : `${firstItem}-${lastItem} / ${total} 件を表示`}
+          {total === 0 ? `/api/energy-meter/logs?limit=${pageSize}&offset=${startIndex}` : `${firstItem}-${lastItem} / ${total} 件を表示`}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -65,15 +60,6 @@ export function LogTable({
             onSearchSubmit();
           }}
         >
-          <label className="log-search">
-            <span>ログ検索</span>
-            <input
-              className="text-input"
-              value={search}
-              onChange={(event) => onSearchChange(event.target.value)}
-              placeholder="mode / reason / error / W数"
-            />
-          </label>
           <label className="log-period">
             <span>開始</span>
             <input className="text-input" type="datetime-local" value={from} onChange={(event) => onFromChange(event.target.value)} />
@@ -97,49 +83,35 @@ export function LogTable({
             <TableHeader>
               <TableRow>
                 <TableHead>Measured</TableHead>
-                <TableHead>Grid</TableHead>
-                <TableHead>Import</TableHead>
-                <TableHead>Export</TableHead>
-                <TableHead>SOC</TableHead>
-                <TableHead>Net</TableHead>
-                <TableHead>In</TableHead>
-                <TableHead>Out</TableHead>
-                <TableHead>AC limit</TableHead>
-                <TableHead>Target</TableHead>
-                <TableHead>Mode</TableHead>
-                <TableHead>Command</TableHead>
-                <TableHead>Reason</TableHead>
-                <TableHead>Error</TableHead>
+                <TableHead>買電累積</TableHead>
+                <TableHead>売電累積</TableHead>
+                <TableHead>買電差分</TableHead>
+                <TableHead>売電差分</TableHead>
+                <TableHead>係数</TableHead>
+                <TableHead>単位</TableHead>
+                <TableHead>E0 updated</TableHead>
+                <TableHead>E3 updated</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {logs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={14} className="empty-cell">
-                    {isFiltered ? "一致するログはありません。" : "ログはまだありません。"}
+                  <TableCell colSpan={9} className="empty-cell">
+                    {isFiltered ? "一致する電力量ログはありません。" : "電力量ログはまだありません。"}
                   </TableCell>
                 </TableRow>
               ) : (
                 logs.map((log) => (
                   <TableRow key={log.id}>
                     <TableCell>{formatDateTime(log.measuredAt)}</TableCell>
-                    <TableCell>{watt(log.gridW)}</TableCell>
-                    <TableCell>{watt(log.importW)}</TableCell>
-                    <TableCell>{watt(log.exportW)}</TableCell>
-                    <TableCell>{nullableUnit(log.batterySoc, "%")}</TableCell>
-                    <TableCell>{nullableUnit(netBatteryW(log), "W")}</TableCell>
-                    <TableCell>{nullableUnit(log.batteryInputW, "W")}</TableCell>
-                    <TableCell>{nullableUnit(log.batteryOutputW, "W")}</TableCell>
-                    <TableCell>{nullableUnit(log.acChargeLimitW, "W")}</TableCell>
-                    <TableCell>{watt(log.targetChargeW)}</TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{log.mode || "-"}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={log.commandSent ? "warning" : "success"}>{log.commandSent ? "sent" : "not sent"}</Badge>
-                    </TableCell>
-                    <TableCell className="reason-cell">{log.decisionReason || "-"}</TableCell>
-                    <TableCell className="reason-cell">{log.errorMessage || "-"}</TableCell>
+                    <TableCell>{kwh(log.importCumulativeKwh)}</TableCell>
+                    <TableCell>{kwh(log.exportCumulativeKwh)}</TableCell>
+                    <TableCell>{nullableKwh(log.importDeltaKwh)}</TableCell>
+                    <TableCell>{nullableKwh(log.exportDeltaKwh)}</TableCell>
+                    <TableCell>{log.coefficient}</TableCell>
+                    <TableCell>{log.cumulativeUnit}</TableCell>
+                    <TableCell>{formatDateTime(log.importValueUpdatedAt)}</TableCell>
+                    <TableCell>{formatDateTime(log.exportValueUpdatedAt)}</TableCell>
                   </TableRow>
                 ))
               )}
@@ -152,7 +124,7 @@ export function LogTable({
   );
 }
 
-function LogPager({
+function EnergyMeterPager({
   page,
   totalPages,
   onPageChange
@@ -162,7 +134,7 @@ function LogPager({
   onPageChange: (page: number) => void;
 }) {
   return (
-    <div className="table-pager" aria-label="log table pagination">
+    <div className="table-pager" aria-label="energy meter table pagination">
       <div className="table-pager-status">
         ページ {page} / {totalPages}
       </div>
@@ -184,19 +156,16 @@ function LogPager({
   );
 }
 
-function watt(value: number) {
-  return `${value} W`;
+function kwh(value: number) {
+  return `${formatNumber(value)} kWh`;
 }
 
-function nullableUnit(value: number | null, unit: string) {
-  return value === null ? "-" : `${value} ${unit}`;
+function nullableKwh(value: number | null) {
+  return value === null ? "-" : kwh(value);
 }
 
-function netBatteryW(log: PowerLog) {
-  if (log.batteryInputW === null || log.batteryOutputW === null) {
-    return null;
-  }
-  return log.batteryInputW - log.batteryOutputW;
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 4 }).format(value);
 }
 
 function formatDateTime(value: string) {

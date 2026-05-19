@@ -14,6 +14,10 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	t.Setenv("ECOFLOW_SECRET_KEY", "ecoflow-secret")
 	t.Setenv("ECOFLOW_DEVICE_SN", "ecoflow-device")
 	t.Setenv("ECOFLOW_BASE_URL", "https://api-e.ecoflow.test")
+	t.Setenv("WEATHER_LATITUDE", "35.1")
+	t.Setenv("WEATHER_LONGITUDE", "139.2")
+	t.Setenv("WEATHER_TIMEZONE", "Asia/Tokyo")
+	t.Setenv("WEATHER_BASE_URL", "https://api.open-meteo.test")
 	t.Setenv("AUTO_CONTROL_ENABLED", "true")
 	t.Setenv("POLL_INTERVAL_SEC", "45")
 	t.Setenv("START_EXPORT_THRESHOLD_W", "900")
@@ -50,6 +54,15 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	}
 	if cfg.EcoFlowBaseURL != "https://api-e.ecoflow.test" {
 		t.Fatalf("EcoFlowBaseURL = %q, want https://api-e.ecoflow.test", cfg.EcoFlowBaseURL)
+	}
+	if !cfg.WeatherEnabled {
+		t.Fatal("WeatherEnabled = false, want true")
+	}
+	if cfg.WeatherLatitude != 35.1 || cfg.WeatherLongitude != 139.2 {
+		t.Fatalf("Weather location = %f,%f, want 35.1,139.2", cfg.WeatherLatitude, cfg.WeatherLongitude)
+	}
+	if cfg.WeatherTimezone != "Asia/Tokyo" || cfg.WeatherBaseURL != "https://api.open-meteo.test" {
+		t.Fatalf("unexpected weather config: timezone=%q baseURL=%q", cfg.WeatherTimezone, cfg.WeatherBaseURL)
 	}
 	if !cfg.AutoControlEnabled {
 		t.Fatal("AutoControlEnabled = false, want true")

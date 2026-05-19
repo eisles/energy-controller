@@ -1,0 +1,63 @@
+package control
+
+import "github.com/eisles/energy-controller/backend/internal/domain"
+
+type SurplusPlanInput struct {
+	GridW             int
+	BatterySoc        int
+	BatteryInputW     int
+	BatteryOutputW    int
+	ACChargeLimitW    int
+	BackupReserveSoc  *int
+	TOUModeEnabled    *bool
+	SimulationMode    bool
+	EnableRealControl bool
+	AutoControl       bool
+}
+
+func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.SurplusPlan {
+	settings = normalizeSettings(settings)
+	gridPower := CalculateGridPower(input.GridW)
+	netBatteryW := input.BatteryInputW - input.BatteryOutputW
+	plan := domain.SurplusPlan{
+		Mode:        "read-only",
+		NetBatteryW: netBatteryW,
+		WouldWrite:  false,
+	}
+
+	switch {
+	case gridPower.ExportW < settings.StartExportThresholdW:
+		plan.Reason = "export power is below start threshold"
+		return plan
+	case input.BatterySoc >= settings.TargetSoc:
+		plan.Reason = "battery soc is at or above target"
+		return plan
+	}
+
+	recommendedAC := calculateTargetChargeW(gridPower.ExportW, settings)
+	plan.RecommendedACChargeLimitW = recommendedAC
+	plan.ShouldAdjustACChargeLimit = abs(recommendedAC-input.ACChargeLimitW) >= settings.MinCommandDiffW
+
+	if input.BackupReserveSoc != nil {
+		recommendedReserve := clamp(input.BatterySoc+2, *input.BackupReserveSoc, settings.TargetSoc)
+		plan.RecommendedBackupReserveSoc = &recommendedReserve
+		plan.ShouldRaiseBackupReserve = recommendedReserve > *input.BackupReserveSoc && recommendedReserve > input.BatterySoc
+	}
+
+	switch {
+	case input.SimulationMode:
+		plan.Reason = "surplus detected; simulation mode keeps EcoFlow write disabled"
+	case !input.EnableRealControl:
+		plan.Reason = "surplus detected; ENABLE_REAL_CONTROL=false keeps EcoFlow write disabled"
+	case !input.AutoControl:
+		plan.Reason = "surplus detected; auto control disabled keeps EcoFlow write disabled"
+	default:
+		plan.Reason = "surplus detected; planner recommends charging adjustments"
+		plan.WouldWrite = plan.ShouldAdjustACChargeLimit || plan.ShouldRaiseBackupReserve
+	}
+
+	if input.TOUModeEnabled != nil && *input.TOUModeEnabled {
+		plan.Reason += "; EcoFlow TOU mode is enabled"
+	}
+	return plan
+}
