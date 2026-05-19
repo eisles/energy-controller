@@ -28,6 +28,7 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	t.Setenv("TARGET_SOC", "85")
 	t.Setenv("MIN_COMMAND_INTERVAL_SEC", "120")
 	t.Setenv("MIN_COMMAND_DIFF_W", "200")
+	t.Setenv("NIGHT_SAFETY_MARGIN_KWH", "0.8")
 
 	cfg := Load()
 
@@ -93,5 +94,8 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	}
 	if cfg.ControlSettings.MinCommandDiffW != 200 {
 		t.Fatalf("MinCommandDiffW = %d, want 200", cfg.ControlSettings.MinCommandDiffW)
+	}
+	if cfg.ControlSettings.NightSafetyMarginKWh != 0.8 {
+		t.Fatalf("NightSafetyMarginKWh = %f, want 0.8", cfg.ControlSettings.NightSafetyMarginKWh)
 	}
 }

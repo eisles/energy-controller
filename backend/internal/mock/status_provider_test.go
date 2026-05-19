@@ -145,7 +145,7 @@ func TestStatusProviderAddsNightDryRunPlanToDecisionReason(t *testing.T) {
 	if status.NightChargePlan == nil || status.NightChargePlan.ActionSummary == "" {
 		t.Fatalf("NightChargePlan = %+v, want action summary", status.NightChargePlan)
 	}
-	if !strings.Contains(status.LastDecisionReason, "night dry-run plan: 深夜目標SOCを90%へ設定") {
+	if !strings.Contains(status.LastDecisionReason, "night dry-run plan: 推奨modeはobserve; 深夜目標SOCを63%へ設定") {
 		t.Fatalf("LastDecisionReason = %q, want night dry-run plan marker", status.LastDecisionReason)
 	}
 }

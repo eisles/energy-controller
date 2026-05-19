@@ -83,6 +83,7 @@ func Load() Config {
 			TargetSoc:             envInt("TARGET_SOC", 90),
 			MinCommandInterval:    time.Duration(envInt("MIN_COMMAND_INTERVAL_SEC", 60)) * time.Second,
 			MinCommandDiffW:       envInt("MIN_COMMAND_DIFF_W", 100),
+			NightSafetyMarginKWh:  parseFloat(env("NIGHT_SAFETY_MARGIN_KWH", "0.5"), 0.5),
 		},
 		Clock: realClock{},
 	}

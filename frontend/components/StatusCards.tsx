@@ -109,6 +109,7 @@ function NightChargePlanCard({ plan }: { plan?: NightChargePlan | null }) {
         <div className="detail-strip" aria-label="night charging planner detail">
           <Detail label="状態" value={plan.strategyState || "-"} />
           <Detail label="PV期待度" value={`${plan.solarForecastScore}/100`} />
+          <Detail label="推奨mode" value={modeLabel(plan.recommendedMode)} />
           <Detail label="推奨深夜SOC" value={`${plan.recommendedNightTargetSoc}%`} />
           <Detail label="最低確保SOC" value={`${plan.minimumReserveSoc}%`} />
           <Detail label="今夜充電" value={yesNo(plan.shouldChargeTonight)} />
@@ -118,11 +119,14 @@ function NightChargePlanCard({ plan }: { plan?: NightChargePlan | null }) {
         <div className="detail-strip planner-secondary" aria-label="weather forecast detail">
           <Detail label="推定PV発電" value={`${formatDecimal(plan.estimatedPvKwh)} kWh`} />
           <Detail label="推定日中消費" value={`${formatDecimal(plan.estimatedDaytimeLoadKwh)} kWh`} />
+          <Detail label="朝まで消費" value={`${formatDecimal(plan.estimatedMorningLoadKwh)} kWh`} />
           <Detail label="推定余剰" value={`${formatDecimal(plan.estimatedSurplusKwh)} kWh`} />
           <Detail label="推定不足" value={`${formatDecimal(plan.estimatedDeficitKwh)} kWh`} />
           <Detail label="PV充電見込" value={`${formatDecimal(plan.estimatedPvToBatteryKwh)} kWh`} />
+          <Detail label="安全余力" value={`${formatDecimal(plan.safetyMarginKwh)} kWh`} />
           <Detail label="充電余地" value={`${formatDecimal(plan.batteryChargeHeadroomKwh)} kWh`} />
           <Detail label="容量ソース" value={capacitySourceLabel(plan.batteryCapacitySource)} />
+          <Detail label="消費ソース" value={consumptionSourceLabel(plan.consumptionSource)} />
           <Detail label="日射量" value={`${formatDecimal(plan.solarRadiationKwhPerM2)} kWh/m2`} />
         </div>
         <div className="detail-strip planner-secondary" aria-label="night charge energy detail">
@@ -138,6 +142,8 @@ function NightChargePlanCard({ plan }: { plan?: NightChargePlan | null }) {
           <Detail label="AC上限変更" value={yesNo(plan.shouldSetAcChargeLimit)} />
           <Detail label="リザーブ変更" value={yesNo(plan.shouldSetBackupReserve)} />
           <Detail label="TOU解除" value={yesNo(plan.shouldDisableEnergyModes)} />
+          <Detail label="TOU維持" value={yesNo(plan.shouldEnableTouMode)} />
+          <Detail label="Self-powered" value={yesNo(plan.shouldEnableSelfPoweredMode)} />
           <Detail label="抑制" value={yesNo(plan.commandSuppressed)} />
         </div>
         <div className="detail-strip planner-secondary" aria-label="weather forecast detail">
@@ -368,11 +374,40 @@ function formatRemainingRuntime(remainingWh: number, batteryOutputW: number) {
 }
 
 function capacitySourceLabel(value: string) {
-  if (value === "device") {
-    return "実機取得";
+	if (value === "device") {
+		return "実機取得";
+	}
+  if (value === "manual") {
+    return "手動設定";
+  }
+	return "-";
+}
+
+function consumptionSourceLabel(value: string) {
+  if (value === "ecoflow-output") {
+    return "EcoFlow出力";
   }
   if (value === "manual") {
     return "手動設定";
+  }
+  if (value === "fallback") {
+    return "保守";
+  }
+  return "-";
+}
+
+function modeLabel(value: string) {
+  if (value === "tou") {
+    return "TOU";
+  }
+  if (value === "self-powered") {
+    return "Self-powered";
+  }
+  if (value === "energy-strategy-off") {
+    return "Mode OFF";
+  }
+  if (value === "observe") {
+    return "観測";
   }
   return "-";
 }

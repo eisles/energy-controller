@@ -113,8 +113,8 @@ func TestPlanNightChargingEstimatesPVGeneration(t *testing.T) {
 	if !floatEqual(plan.CurrentBatteryEnergyKWh, 9.216) {
 		t.Fatalf("CurrentBatteryEnergyKWh = %f, want 9.216", plan.CurrentBatteryEnergyKWh)
 	}
-	if !floatEqual(plan.RecommendedNightTargetKWh, 6.144) {
-		t.Fatalf("RecommendedNightTargetKWh = %f, want 6.144", plan.RecommendedNightTargetKWh)
+	if !floatEqual(plan.RecommendedNightTargetKWh, 4.9152) {
+		t.Fatalf("RecommendedNightTargetKWh = %f, want 4.9152", plan.RecommendedNightTargetKWh)
 	}
 	if !floatEqual(plan.MinimumReserveKWh, 4.3008) {
 		t.Fatalf("MinimumReserveKWh = %f, want 4.3008", plan.MinimumReserveKWh)
@@ -152,17 +152,121 @@ func TestPlanNightChargingShowsRequiredNightChargeEnergyForWeakForecast(t *testi
 		SimulationMode: true,
 	}, DefaultSettings())
 
-	if plan.RecommendedNightTargetSoc != DefaultSettings().TargetSoc {
-		t.Fatalf("RecommendedNightTargetSoc = %d, want %d", plan.RecommendedNightTargetSoc, DefaultSettings().TargetSoc)
+	if plan.RecommendedNightTargetSoc != 63 {
+		t.Fatalf("RecommendedNightTargetSoc = %d, want 63", plan.RecommendedNightTargetSoc)
 	}
-	if !floatEqual(plan.RequiredNightChargeKWh, 4.3008) {
-		t.Fatalf("RequiredNightChargeKWh = %f, want 4.3008", plan.RequiredNightChargeKWh)
+	if !floatEqual(plan.RequiredNightChargeKWh, 0.98304) {
+		t.Fatalf("RequiredNightChargeKWh = %f, want 0.98304", plan.RequiredNightChargeKWh)
 	}
 	if plan.EstimatedDeficitKWh <= 0 {
 		t.Fatalf("EstimatedDeficitKWh = %f, want positive", plan.EstimatedDeficitKWh)
 	}
-	if !strings.Contains(plan.ActionSummary, "深夜目標SOCを90%へ設定") {
+	if !strings.Contains(plan.ActionSummary, "深夜目標SOCを63%へ設定") {
 		t.Fatalf("ActionSummary = %q, want target SOC action", plan.ActionSummary)
+	}
+}
+
+func TestPlanNightChargingUsesEcoFlowLoadAndMorningLoadForKWhTarget(t *testing.T) {
+	fullEnergyWh := 12288
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                 time.Date(2026, 5, 19, 23, 0, 0, 0, jst),
+		BatterySoc:          35,
+		BatteryFullEnergyWh: &fullEnergyWh,
+		Forecast: &domain.WeatherForecast{
+			ShortwaveRadiationMJPerM2: 12,
+			SunshineDurationHours:     4,
+			CloudCoverMeanPercent:     60,
+		},
+		SolarSettings: &domain.WeatherLocation{
+			PVCapacityKW:       4,
+			PVPerformanceRatio: 0.75,
+			DailyBaseLoadKWh:   8,
+			MinimumReserveSoc:  30,
+		},
+		EcoFlowLoadEstimate: &domain.EcoFlowLoadEstimate{
+			SampleCount:             10,
+			AverageDaytimeOutputKWh: 5,
+			AverageNightOutputKWh:   2,
+		},
+		SimulationMode: true,
+	}, DefaultSettings())
+
+	if plan.ConsumptionSource != "ecoflow-output" {
+		t.Fatalf("ConsumptionSource = %q, want ecoflow-output", plan.ConsumptionSource)
+	}
+	if !floatEqual(plan.EstimatedDaytimeLoadKWh, 5) {
+		t.Fatalf("EstimatedDaytimeLoadKWh = %f, want 5", plan.EstimatedDaytimeLoadKWh)
+	}
+	if !floatEqual(plan.EstimatedMorningLoadKWh, 2) {
+		t.Fatalf("EstimatedMorningLoadKWh = %f, want 2", plan.EstimatedMorningLoadKWh)
+	}
+	if plan.RecommendedNightTargetSoc != 51 {
+		t.Fatalf("RecommendedNightTargetSoc = %d, want 51", plan.RecommendedNightTargetSoc)
+	}
+}
+
+func TestPlanNightChargingKeepsTargetEnergyConsistentWithClampedTargetSoc(t *testing.T) {
+	fullEnergyWh := 12288
+	settings := DefaultSettings()
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                 time.Date(2026, 5, 19, 23, 0, 0, 0, jst),
+		BatterySoc:          20,
+		BatteryFullEnergyWh: &fullEnergyWh,
+		Forecast:            &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 1, SunshineDurationHours: 1, CloudCoverMeanPercent: 95, PrecipitationProbabilityMax: 90},
+		SolarSettings:       &domain.WeatherLocation{PVCapacityKW: 1, PVPerformanceRatio: 0.7, DailyBaseLoadKWh: 20, MinimumReserveSoc: 30},
+		EcoFlowLoadEstimate: &domain.EcoFlowLoadEstimate{SampleCount: 10, AverageDaytimeOutputKWh: 20, AverageNightOutputKWh: 4},
+		SimulationMode:      true,
+	}, settings)
+
+	if plan.RecommendedNightTargetSoc != settings.TargetSoc {
+		t.Fatalf("RecommendedNightTargetSoc = %d, want %d", plan.RecommendedNightTargetSoc, settings.TargetSoc)
+	}
+	wantKWh := float64(fullEnergyWh) / 1000 * float64(settings.TargetSoc) / 100
+	if !floatEqual(plan.RecommendedNightTargetKWh, wantKWh) {
+		t.Fatalf("RecommendedNightTargetKWh = %f, want %f", plan.RecommendedNightTargetKWh, wantKWh)
+	}
+}
+
+func TestPlanNightChargingProratesMorningLoadDuringNightWindow(t *testing.T) {
+	fullEnergyWh := 12288
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                 time.Date(2026, 5, 20, 3, 0, 0, 0, jst),
+		BatterySoc:          35,
+		BatteryFullEnergyWh: &fullEnergyWh,
+		Forecast:            &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 12, SunshineDurationHours: 4, CloudCoverMeanPercent: 60},
+		SolarSettings:       &domain.WeatherLocation{PVCapacityKW: 4, PVPerformanceRatio: 0.75, DailyBaseLoadKWh: 5, MinimumReserveSoc: 30},
+		EcoFlowLoadEstimate: &domain.EcoFlowLoadEstimate{SampleCount: 10, AverageDaytimeOutputKWh: 5, AverageNightOutputKWh: 2},
+		SimulationMode:      true,
+	}, DefaultSettings())
+
+	if !floatEqual(plan.EstimatedMorningLoadKWh, 1) {
+		t.Fatalf("EstimatedMorningLoadKWh = %f, want 1", plan.EstimatedMorningLoadKWh)
+	}
+}
+
+func TestPlanNightChargingRecommendsSelfPoweredWhenDischargeIsNeeded(t *testing.T) {
+	fullEnergyWh := 12288
+	tou := true
+	reserve := 30
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                 time.Date(2026, 5, 19, 23, 30, 0, 0, jst),
+		BatterySoc:          85,
+		BatteryFullEnergyWh: &fullEnergyWh,
+		BackupReserveSoc:    &reserve,
+		TOUModeEnabled:      &tou,
+		Forecast:            &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 22, SunshineDurationHours: 10, CloudCoverMeanPercent: 10},
+		SolarSettings:       &domain.WeatherLocation{PVCapacityKW: 5, PVPerformanceRatio: 0.8, DailyBaseLoadKWh: 3, MinimumReserveSoc: 30},
+		SimulationMode:      true,
+	}, DefaultSettings())
+
+	if plan.RecommendedMode != "self-powered" {
+		t.Fatalf("RecommendedMode = %q, want self-powered", plan.RecommendedMode)
+	}
+	if !plan.ShouldEnableSelfPoweredMode {
+		t.Fatal("ShouldEnableSelfPoweredMode = false, want true")
+	}
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != plan.RecommendedNightTargetSoc {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want %d", plan.RecommendedBackupReserveSoc, plan.RecommendedNightTargetSoc)
 	}
 }
 
@@ -229,6 +333,7 @@ func TestPlanNightChargingBuildsCommandPlanForNightChargeWindow(t *testing.T) {
 	plan := PlanNightCharging(NightChargePlanInput{
 		Now:               time.Date(2026, 5, 19, 23, 30, 0, 0, jst),
 		BatterySoc:        55,
+		BatteryInputW:     DefaultSettings().MinChargeW,
 		ACChargeLimitW:    400,
 		BackupReserveSoc:  &reserve,
 		TOUModeEnabled:    &tou,
@@ -244,13 +349,41 @@ func TestPlanNightChargingBuildsCommandPlanForNightChargeWindow(t *testing.T) {
 	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != DefaultSettings().TargetSoc {
 		t.Fatalf("RecommendedBackupReserveSoc = %v, want %d", plan.RecommendedBackupReserveSoc, DefaultSettings().TargetSoc)
 	}
-	if !plan.ShouldSetACChargeLimit || !plan.ShouldSetBackupReserve || !plan.ShouldDisableEnergyModes {
-		t.Fatalf("command plan flags = ac:%t reserve:%t modes:%t, want all true", plan.ShouldSetACChargeLimit, plan.ShouldSetBackupReserve, plan.ShouldDisableEnergyModes)
+	if !plan.ShouldSetACChargeLimit || !plan.ShouldSetBackupReserve || plan.ShouldDisableEnergyModes {
+		t.Fatalf("command plan flags = ac:%t reserve:%t modes:%t, want ac/reserve true and modes false for TOU priority", plan.ShouldSetACChargeLimit, plan.ShouldSetBackupReserve, plan.ShouldDisableEnergyModes)
 	}
-	for _, want := range []string{"energy strategy modesを全OFF", "バックアップリザーブを90%へ設定", "AC充電上限を1500Wへ設定"} {
+	for _, want := range []string{"推奨modeはtou", "バックアップリザーブを90%へ設定", "AC充電上限を1500Wへ設定"} {
 		if !strings.Contains(plan.ActionSummary, want) {
 			t.Fatalf("ActionSummary = %q, want %q", plan.ActionSummary, want)
 		}
+	}
+}
+
+func TestPlanNightChargingRecommendsEnergyStrategyOffWhenTOUIsNotCharging(t *testing.T) {
+	forecast := &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 3, SunshineDurationHours: 1, CloudCoverMeanPercent: 95, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 12}
+	reserve := 30
+	tou := true
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:               time.Date(2026, 5, 19, 23, 30, 0, 0, jst),
+		BatterySoc:        55,
+		BatteryInputW:     0,
+		ACChargeLimitW:    400,
+		BackupReserveSoc:  &reserve,
+		TOUModeEnabled:    &tou,
+		Forecast:          forecast,
+		SimulationMode:    true,
+		EnableRealControl: false,
+		AutoControl:       false,
+	}, DefaultSettings())
+
+	if plan.RecommendedMode != "energy-strategy-off" {
+		t.Fatalf("RecommendedMode = %q, want energy-strategy-off", plan.RecommendedMode)
+	}
+	if !plan.ShouldDisableEnergyModes {
+		t.Fatal("ShouldDisableEnergyModes = false, want true when TOU is not charging")
+	}
+	if plan.ShouldEnableTOUMode {
+		t.Fatal("ShouldEnableTOUMode = true, want false when disabling modes")
 	}
 }
 
@@ -304,6 +437,7 @@ func TestPlanNightChargingBlocksWriteUnlessAllGuardsPass(t *testing.T) {
 			input := tt.input
 			input.Now = time.Date(2026, 5, 19, 23, 30, 0, 0, jst)
 			input.BatterySoc = 55
+			input.BatteryInputW = DefaultSettings().MinChargeW
 			input.ACChargeLimitW = 400
 			input.Forecast = forecast
 			plan := PlanNightCharging(input, DefaultSettings())
@@ -350,6 +484,7 @@ func TestPlanNightChargingDoesNotSuppressReserveOrModeChangeWhenACTargetIsUnchan
 	plan := PlanNightCharging(NightChargePlanInput{
 		Now:               now,
 		BatterySoc:        55,
+		BatteryInputW:     DefaultSettings().MinChargeW,
 		ACChargeLimitW:    DefaultSettings().MaxChargeW,
 		BackupReserveSoc:  &reserve,
 		TOUModeEnabled:    &tou,
@@ -363,14 +498,43 @@ func TestPlanNightChargingDoesNotSuppressReserveOrModeChangeWhenACTargetIsUnchan
 	if plan.ShouldSetACChargeLimit {
 		t.Fatal("ShouldSetACChargeLimit = true, want false because current AC limit already matches")
 	}
-	if !plan.ShouldSetBackupReserve || !plan.ShouldDisableEnergyModes {
-		t.Fatalf("reserve/mode flags = reserve:%t modes:%t, want both true", plan.ShouldSetBackupReserve, plan.ShouldDisableEnergyModes)
+	if !plan.ShouldSetBackupReserve || plan.ShouldDisableEnergyModes {
+		t.Fatalf("reserve/mode flags = reserve:%t modes:%t, want reserve true and modes false for TOU priority", plan.ShouldSetBackupReserve, plan.ShouldDisableEnergyModes)
 	}
 	if plan.CommandSuppressed {
 		t.Fatal("CommandSuppressed = true, want false for reserve/mode changes after interval")
 	}
 	if !plan.WouldWrite {
 		t.Fatal("WouldWrite = false, want true for reserve/mode changes after interval")
+	}
+}
+
+func TestPlanNightChargingKeepsModeOnlyCandidateOutOfSettingsMatchNoop(t *testing.T) {
+	forecast := &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 3, SunshineDurationHours: 1, CloudCoverMeanPercent: 95, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 12}
+	now := time.Date(2026, 5, 19, 23, 30, 0, 0, jst)
+	reserve := DefaultSettings().TargetSoc
+	tou := false
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:               now,
+		BatterySoc:        55,
+		BatteryInputW:     0,
+		ACChargeLimitW:    DefaultSettings().MaxChargeW,
+		BackupReserveSoc:  &reserve,
+		TOUModeEnabled:    &tou,
+		Forecast:          forecast,
+		SimulationMode:    true,
+		EnableRealControl: false,
+		AutoControl:       false,
+	}, DefaultSettings())
+
+	if !plan.ShouldEnableTOUMode {
+		t.Fatal("ShouldEnableTOUMode = false, want true")
+	}
+	if plan.CommandBlockReason == "night charge settings already match plan" {
+		t.Fatalf("CommandBlockReason = %q, want mode-only candidate to pass no-op guard", plan.CommandBlockReason)
+	}
+	if !strings.Contains(plan.CommandBlockReason, "simulation mode") {
+		t.Fatalf("CommandBlockReason = %q, want simulation guard", plan.CommandBlockReason)
 	}
 }
 

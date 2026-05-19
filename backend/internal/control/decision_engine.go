@@ -1,6 +1,7 @@
 package control
 
 import (
+	"math"
 	"time"
 
 	"github.com/eisles/energy-controller/backend/internal/domain"
@@ -15,6 +16,7 @@ type Settings struct {
 	TargetSoc             int
 	MinCommandInterval    time.Duration
 	MinCommandDiffW       int
+	NightSafetyMarginKWh  float64
 }
 
 type Input struct {
@@ -53,6 +55,7 @@ func DefaultSettings() Settings {
 		TargetSoc:             90,
 		MinCommandInterval:    60 * time.Second,
 		MinCommandDiffW:       100,
+		NightSafetyMarginKWh:  0.5,
 	}
 }
 
@@ -172,6 +175,9 @@ func normalizeSettings(settings Settings) Settings {
 	if settings.MinCommandDiffW <= 0 {
 		settings.MinCommandDiffW = defaults.MinCommandDiffW
 	}
+	if settings.NightSafetyMarginKWh < 0 {
+		settings.NightSafetyMarginKWh = defaults.NightSafetyMarginKWh
+	}
 	if settings.StopExportThresholdW > settings.StartExportThresholdW {
 		settings.StopExportThresholdW = settings.StartExportThresholdW
 	}
@@ -204,4 +210,8 @@ func abs(value int) int {
 		return -value
 	}
 	return value
+}
+
+func ceilToInt(value float64) int {
+	return int(math.Ceil(value))
 }

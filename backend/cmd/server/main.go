@@ -118,14 +118,19 @@ func newStatusProvider(cfg config.Config, db *sql.DB) (api.StatusProvider, energ
 	})
 	ecoflowWriteClient := ecoflow.NewMockWriteClient()
 	weatherReader := newWeatherReader(cfg, db)
+	loadEstimator := store.NewEcoFlowLoadRepository(db)
 	if cfg.NatureMode == "cloud" {
 		natureClient := nature.NewCloudClient(nature.CloudConfig{
 			AccessToken: cfg.NatureAccessToken,
 			ApplianceID: cfg.NatureApplianceID,
 		})
-		return mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled, natureClient, ecoflowClient, ecoflowWriteClient, "nature-cloud+ecoflow-read", weatherReader), natureClient
+		provider := mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled, natureClient, ecoflowClient, ecoflowWriteClient, "nature-cloud+ecoflow-read", weatherReader)
+		provider.SetEcoFlowLoadEstimator(loadEstimator)
+		return provider, natureClient
 	}
-	return mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled, nil, ecoflowClient, ecoflowWriteClient, "ecoflow-read", weatherReader), nil
+	provider := mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled, nil, ecoflowClient, ecoflowWriteClient, "ecoflow-read", weatherReader)
+	provider.SetEcoFlowLoadEstimator(loadEstimator)
+	return provider, nil
 }
 
 func newWeatherReader(cfg config.Config, db *sql.DB) mock.WeatherReader {

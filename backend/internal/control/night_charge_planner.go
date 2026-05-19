@@ -11,6 +11,8 @@ import (
 type NightChargePlanInput struct {
 	Now                 time.Time
 	BatterySoc          int
+	BatteryInputW       int
+	BatteryOutputW      int
 	ACChargeLimitW      int
 	BackupReserveSoc    *int
 	BatteryFullEnergyWh *int
@@ -20,6 +22,7 @@ type NightChargePlanInput struct {
 	IntelligentEnabled  *bool
 	Forecast            *domain.WeatherForecast
 	SolarSettings       *domain.WeatherLocation
+	EcoFlowLoadEstimate *domain.EcoFlowLoadEstimate
 	Previous            PreviousDecision
 	MockMode            bool
 	SimulationMode      bool
@@ -45,11 +48,13 @@ func PlanNightCharging(input NightChargePlanInput, settings Settings) domain.Nig
 		TargetForecast:    input.Forecast,
 	}
 	if input.Forecast == nil {
-		plan.RecommendedNightTargetSoc = clamp(70, minReserveSoc, settings.TargetSoc)
+		plan.RecommendedNightTargetSoc = fallbackNightTargetSoc(input, plan, settings)
 		plan.ShouldChargeTonight = input.BatterySoc < plan.RecommendedNightTargetSoc
 		applyBatteryEnergyEstimate(&plan, input)
+		applyNightEnergyTarget(&plan, input, settings)
+		recalculateNightChargeState(&plan, input)
 		plan.RequiredNightChargeKWh = requiredNightChargeKWh(plan.CurrentBatteryEnergyKWh, plan.RecommendedNightTargetKWh)
-		plan.StrategyState = nightChargeStrategyState(input.Now, plan.ShouldChargeTonight, input.BatterySoc, plan.RecommendedNightTargetSoc)
+		applyNightModeRecommendation(&plan, input, settings)
 		applyNightChargeCommandPlan(&plan, input, settings)
 		plan.ActionSummary = nightChargeActionSummary(plan)
 		plan.Reason = "weather forecast is not configured; keep a conservative night charge target"
@@ -60,12 +65,14 @@ func PlanNightCharging(input NightChargePlanInput, settings Settings) domain.Nig
 	score := SolarForecastScore(*input.Forecast)
 	plan.SolarForecastScore = score
 	applySolarEstimate(&plan, input)
-	targetSoc := nightTargetSocForSolarScore(score, settings.TargetSoc)
+	targetSoc := nightTargetSocForEnergy(plan, input, settings, score)
 	plan.RecommendedNightTargetSoc = clamp(targetSoc, minReserveSoc, settings.TargetSoc)
 	plan.ShouldChargeTonight = input.BatterySoc < plan.RecommendedNightTargetSoc
 	applyBatteryEnergyEstimate(&plan, input)
+	applyNightEnergyTarget(&plan, input, settings)
+	recalculateNightChargeState(&plan, input)
 	plan.RequiredNightChargeKWh = requiredNightChargeKWh(plan.CurrentBatteryEnergyKWh, plan.RecommendedNightTargetKWh)
-	plan.StrategyState = nightChargeStrategyState(input.Now, plan.ShouldChargeTonight, input.BatterySoc, plan.RecommendedNightTargetSoc)
+	applyNightModeRecommendation(&plan, input, settings)
 	applyNightChargeCommandPlan(&plan, input, settings)
 	plan.ActionSummary = nightChargeActionSummary(plan)
 
@@ -85,6 +92,11 @@ func PlanNightCharging(input NightChargePlanInput, settings Settings) domain.Nig
 
 	applyNightChargeWriteGuard(&plan, input, settings)
 	return plan
+}
+
+func recalculateNightChargeState(plan *domain.NightChargePlan, input NightChargePlanInput) {
+	plan.ShouldChargeTonight = input.BatterySoc < plan.RecommendedNightTargetSoc
+	plan.StrategyState = nightChargeStrategyState(input.Now, plan.ShouldChargeTonight, input.BatterySoc, plan.RecommendedNightTargetSoc)
 }
 
 func nightChargeStrategyState(now time.Time, shouldChargeTonight bool, batterySoc int, targetSoc int) string {
@@ -114,6 +126,7 @@ func applySolarEstimate(plan *domain.NightChargePlan, input NightChargePlanInput
 	}
 	plan.SolarRadiationKWhPerM2 = input.Forecast.ShortwaveRadiationMJPerM2 / 3.6
 	if input.SolarSettings == nil {
+		applyConsumptionEstimate(plan, input)
 		applyBatteryEnergyEstimate(plan, input)
 		return
 	}
@@ -122,7 +135,7 @@ func applySolarEstimate(plan *domain.NightChargePlan, input NightChargePlanInput
 		ratio = 0.75
 	}
 	plan.EstimatedPVKWh = plan.SolarRadiationKWhPerM2 * input.SolarSettings.PVCapacityKW * ratio
-	plan.EstimatedDaytimeLoadKWh = input.SolarSettings.DailyBaseLoadKWh
+	applyConsumptionEstimate(plan, input)
 	plan.EstimatedSurplusKWh = plan.EstimatedPVKWh - plan.EstimatedDaytimeLoadKWh
 	if plan.EstimatedSurplusKWh < 0 {
 		plan.EstimatedDeficitKWh = -plan.EstimatedSurplusKWh
@@ -131,6 +144,21 @@ func applySolarEstimate(plan *domain.NightChargePlan, input NightChargePlanInput
 	applyBatteryEnergyEstimate(plan, input)
 	if plan.BatteryChargeHeadroomKWh > 0 && plan.EstimatedSurplusKWh > 0 {
 		plan.EstimatedPVToBatteryKWh = minFloat(plan.EstimatedSurplusKWh, plan.BatteryChargeHeadroomKWh)
+	}
+}
+
+func applyConsumptionEstimate(plan *domain.NightChargePlan, input NightChargePlanInput) {
+	if input.EcoFlowLoadEstimate != nil && input.EcoFlowLoadEstimate.SampleCount > 0 && input.EcoFlowLoadEstimate.AverageDaytimeOutputKWh > 0 {
+		plan.EstimatedDaytimeLoadKWh = input.EcoFlowLoadEstimate.AverageDaytimeOutputKWh
+		plan.ConsumptionSource = "ecoflow-output"
+	} else if input.SolarSettings != nil && input.SolarSettings.DailyBaseLoadKWh > 0 {
+		plan.EstimatedDaytimeLoadKWh = input.SolarSettings.DailyBaseLoadKWh
+		plan.ConsumptionSource = "manual"
+	} else {
+		plan.ConsumptionSource = "fallback"
+	}
+	if input.EcoFlowLoadEstimate != nil && input.EcoFlowLoadEstimate.SampleCount > 0 && input.EcoFlowLoadEstimate.AverageNightOutputKWh > 0 {
+		plan.EstimatedMorningLoadKWh = input.EcoFlowLoadEstimate.AverageNightOutputKWh * remainingNightLoadRatio(input.Now)
 	}
 }
 
@@ -148,6 +176,69 @@ func applyBatteryEnergyEstimate(plan *domain.NightChargePlan, input NightChargeP
 	}
 	if plan.MinimumReserveSoc > 0 {
 		plan.MinimumReserveKWh = batteryCapacityKWh * float64(plan.MinimumReserveSoc) / 100
+	}
+}
+
+func applyNightEnergyTarget(plan *domain.NightChargePlan, input NightChargePlanInput, settings Settings) {
+	applyConsumptionEstimate(plan, input)
+	if plan.BatteryCapacityKWh <= 0 {
+		return
+	}
+	plan.SafetyMarginKWh = settings.NightSafetyMarginKWh
+	if plan.SafetyMarginKWh < 0 {
+		plan.SafetyMarginKWh = 0
+	}
+	targetKWh := plan.MinimumReserveKWh + plan.EstimatedMorningLoadKWh + plan.EstimatedDeficitKWh + plan.SafetyMarginKWh
+	if targetKWh > plan.BatteryCapacityKWh {
+		targetKWh = plan.BatteryCapacityKWh
+	}
+	if targetKWh > 0 {
+		plan.RecommendedNightTargetSoc = clamp(ceilToInt(targetKWh/plan.BatteryCapacityKWh*100), plan.MinimumReserveSoc, settings.TargetSoc)
+		plan.RecommendedNightTargetKWh = plan.BatteryCapacityKWh * float64(plan.RecommendedNightTargetSoc) / 100
+	}
+}
+
+func nightTargetSocForEnergy(plan domain.NightChargePlan, input NightChargePlanInput, settings Settings, score int) int {
+	batteryCapacityKWh, _ := batteryCapacityKWh(input)
+	if batteryCapacityKWh <= 0 {
+		return nightTargetSocForSolarScore(score, settings.TargetSoc)
+	}
+	targetKWh := plan.MinimumReserveKWh + plan.EstimatedMorningLoadKWh + plan.EstimatedDeficitKWh + settings.NightSafetyMarginKWh
+	if targetKWh <= 0 {
+		return nightTargetSocForSolarScore(score, settings.TargetSoc)
+	}
+	return ceilToInt(targetKWh / batteryCapacityKWh * 100)
+}
+
+func fallbackNightTargetSoc(input NightChargePlanInput, plan domain.NightChargePlan, settings Settings) int {
+	batteryCapacityKWh, _ := batteryCapacityKWh(input)
+	if batteryCapacityKWh <= 0 {
+		return clamp(70, plan.MinimumReserveSoc, settings.TargetSoc)
+	}
+	targetKWh := plan.MinimumReserveKWh + estimatedMorningLoadKWh(input) + settings.NightSafetyMarginKWh
+	return clamp(ceilToInt(targetKWh/batteryCapacityKWh*100), plan.MinimumReserveSoc, settings.TargetSoc)
+}
+
+func estimatedMorningLoadKWh(input NightChargePlanInput) float64 {
+	if input.EcoFlowLoadEstimate == nil || input.EcoFlowLoadEstimate.SampleCount <= 0 {
+		return 0
+	}
+	return input.EcoFlowLoadEstimate.AverageNightOutputKWh * remainingNightLoadRatio(input.Now)
+}
+
+func remainingNightLoadRatio(now time.Time) float64 {
+	if now.IsZero() {
+		return 1
+	}
+	const nightHours = 8.0
+	hour := float64(now.Hour()) + float64(now.Minute())/60 + float64(now.Second())/3600
+	switch {
+	case hour >= 23:
+		return (24 - hour + 7) / nightHours
+	case hour < 7:
+		return (7 - hour) / nightHours
+	default:
+		return 1
 	}
 }
 
@@ -170,6 +261,9 @@ func requiredNightChargeKWh(currentKWh, targetKWh float64) float64 {
 
 func nightChargeActionSummary(plan domain.NightChargePlan) string {
 	actions := make([]string, 0, 4)
+	if plan.RecommendedMode != "" {
+		actions = append(actions, fmt.Sprintf("推奨modeは%s", plan.RecommendedMode))
+	}
 	if plan.ShouldChargeTonight {
 		actions = append(actions, fmt.Sprintf("深夜目標SOCを%d%%へ設定", plan.RecommendedNightTargetSoc))
 		if plan.RequiredNightChargeKWh > 0 {
@@ -180,6 +274,12 @@ func nightChargeActionSummary(plan domain.NightChargePlan) string {
 	}
 	if plan.ShouldDisableEnergyModes {
 		actions = append(actions, "夜間充電前にenergy strategy modesを全OFF")
+	}
+	if plan.ShouldEnableTOUMode {
+		actions = append(actions, "TOUをONに維持")
+	}
+	if plan.ShouldEnableSelfPoweredMode {
+		actions = append(actions, "self-powered modeへ切り替え")
 	}
 	if plan.ShouldSetBackupReserve && plan.RecommendedBackupReserveSoc != nil {
 		actions = append(actions, fmt.Sprintf("バックアップリザーブを%d%%へ設定", *plan.RecommendedBackupReserveSoc))
@@ -193,8 +293,45 @@ func nightChargeActionSummary(plan domain.NightChargePlan) string {
 	return strings.Join(actions, "; ")
 }
 
+func applyNightModeRecommendation(plan *domain.NightChargePlan, input NightChargePlanInput, settings Settings) {
+	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" && !(plan.StrategyState == "NIGHT_RECOVER" && isNightChargeTime(input.Now)) {
+		plan.RecommendedMode = "observe"
+		return
+	}
+	if !plan.ShouldChargeTonight && plan.CurrentBatteryEnergyKWh > plan.RecommendedNightTargetKWh && plan.RecommendedNightTargetKWh > 0 {
+		plan.RecommendedMode = "self-powered"
+		plan.ShouldEnableSelfPoweredMode = !boolPtrTrue(input.SelfPoweredEnabled)
+		plan.ShouldEnableTOUMode = false
+		return
+	}
+	if plan.ShouldChargeTonight && touChargeIneffective(input, settings) {
+		plan.RecommendedMode = "energy-strategy-off"
+		plan.ShouldEnableTOUMode = false
+		return
+	}
+	if boolPtrTrue(input.TOUModeEnabled) || plan.ShouldChargeTonight {
+		plan.RecommendedMode = "tou"
+		plan.ShouldEnableTOUMode = !boolPtrTrue(input.TOUModeEnabled)
+		return
+	}
+	plan.RecommendedMode = "energy-strategy-off"
+}
+
+func touChargeIneffective(input NightChargePlanInput, settings Settings) bool {
+	return boolPtrTrue(input.TOUModeEnabled) && input.BatteryInputW < settings.MinChargeW
+}
+
 func applyNightChargeCommandPlan(plan *domain.NightChargePlan, input NightChargePlanInput, settings Settings) {
-	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" || !plan.ShouldChargeTonight {
+	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" && !(plan.StrategyState == "NIGHT_RECOVER" && isNightChargeTime(input.Now)) {
+		return
+	}
+	if plan.RecommendedMode == "self-powered" {
+		recommendedReserve := plan.RecommendedNightTargetSoc
+		plan.RecommendedBackupReserveSoc = &recommendedReserve
+		plan.ShouldSetBackupReserve = input.BackupReserveSoc == nil || *input.BackupReserveSoc != recommendedReserve
+		return
+	}
+	if !plan.ShouldChargeTonight {
 		return
 	}
 	plan.RecommendedACChargeLimitW = settings.MaxChargeW
@@ -202,12 +339,20 @@ func applyNightChargeCommandPlan(plan *domain.NightChargePlan, input NightCharge
 	recommendedReserve := plan.RecommendedNightTargetSoc
 	plan.RecommendedBackupReserveSoc = &recommendedReserve
 	plan.ShouldSetBackupReserve = input.BackupReserveSoc == nil || *input.BackupReserveSoc != recommendedReserve
-	plan.ShouldDisableEnergyModes = hasEnabledEnergyMode(SurplusPlanInput{
+	plan.ShouldDisableEnergyModes = plan.RecommendedMode == "energy-strategy-off" && hasEnabledEnergyMode(SurplusPlanInput{
 		TOUModeEnabled:     input.TOUModeEnabled,
 		SelfPoweredEnabled: input.SelfPoweredEnabled,
 		ScheduledEnabled:   input.ScheduledEnabled,
 		IntelligentEnabled: input.IntelligentEnabled,
 	})
+}
+
+func isNightChargeTime(now time.Time) bool {
+	if now.IsZero() {
+		return false
+	}
+	hour := now.Hour()
+	return hour >= 23 || hour < 7
 }
 
 func applyNightChargeWriteGuard(plan *domain.NightChargePlan, input NightChargePlanInput, settings Settings) {
@@ -219,7 +364,7 @@ func applyNightChargeWriteGuard(plan *domain.NightChargePlan, input NightChargeP
 		plan.CommandBlockReason = "outside night charge window"
 		return
 	}
-	if !plan.ShouldSetACChargeLimit && !plan.ShouldSetBackupReserve && !plan.ShouldDisableEnergyModes {
+	if !nightChargeHasCandidateChange(*plan) {
 		plan.CommandBlockReason = "night charge settings already match plan"
 		return
 	}
@@ -247,14 +392,21 @@ func applyNightChargeWriteGuard(plan *domain.NightChargePlan, input NightChargeP
 }
 
 func nightChargeCommandGate(plan domain.NightChargePlan, input NightChargePlanInput, settings Settings) (bool, bool) {
-	hasCandidateChange := plan.ShouldSetACChargeLimit || plan.ShouldSetBackupReserve || plan.ShouldDisableEnergyModes
-	if !hasCandidateChange {
+	if !nightChargeHasCandidateChange(plan) {
 		return false, true
 	}
 	if !input.Previous.LastCommandAt.IsZero() && input.Now.Sub(input.Previous.LastCommandAt) < settings.MinCommandInterval {
 		return false, true
 	}
 	return true, false
+}
+
+func nightChargeHasCandidateChange(plan domain.NightChargePlan) bool {
+	return plan.ShouldSetACChargeLimit ||
+		plan.ShouldSetBackupReserve ||
+		plan.ShouldDisableEnergyModes ||
+		plan.ShouldEnableTOUMode ||
+		plan.ShouldEnableSelfPoweredMode
 }
 
 func SolarForecastScore(forecast domain.WeatherForecast) int {

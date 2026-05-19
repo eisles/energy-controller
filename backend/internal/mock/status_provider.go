@@ -24,6 +24,7 @@ type StatusProvider struct {
 	gridReader     GridReader
 	batteryReader  BatteryReader
 	weatherReader  WeatherReader
+	loadEstimator  EcoFlowLoadEstimator
 	writeClient    ecoflow.WriteClient
 	staleAfter     time.Duration
 	mu             sync.Mutex
@@ -43,6 +44,10 @@ type BatteryReader interface {
 type WeatherReader interface {
 	ForecastTargetDaytime(ctx context.Context, now time.Time) (domain.WeatherForecast, error)
 	CurrentWeatherLocation(ctx context.Context) (domain.WeatherLocation, error)
+}
+
+type EcoFlowLoadEstimator interface {
+	EstimateEcoFlowLoad(ctx context.Context, now time.Time, days int) (domain.EcoFlowLoadEstimate, error)
 }
 
 func NewStatusProvider(clock config.Clock, settings control.Settings, mockMode bool, simulationMode bool, realControl bool, autoControl bool) *StatusProvider {
@@ -68,6 +73,10 @@ func NewStatusProviderWithReaders(clock config.Clock, settings control.Settings,
 		provider.weatherReader = weatherReader[0]
 	}
 	return provider
+}
+
+func (p *StatusProvider) SetEcoFlowLoadEstimator(estimator EcoFlowLoadEstimator) {
+	p.loadEstimator = estimator
 }
 
 func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, error) {
@@ -101,6 +110,8 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 	lastError = combineErrors(lastError, commandError)
 	weatherForecast, solarSettings, weatherError := p.currentWeatherForecast(ctx, now)
 	lastError = combineErrors(lastError, weatherError)
+	ecoflowLoadEstimate, loadEstimateError := p.currentEcoFlowLoadEstimate(ctx, now)
+	lastError = combineErrors(lastError, loadEstimateError)
 	p.setCommandStatus(commandSent, actualCommandW)
 	surplusPlan := control.PlanSurplusCharging(control.SurplusPlanInput{
 		GridW:              gridPower.GridW,
@@ -133,6 +144,8 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 	nightChargePlan := control.PlanNightCharging(control.NightChargePlanInput{
 		Now:                 now,
 		BatterySoc:          batteryStatus.Soc,
+		BatteryInputW:       batteryStatus.InputW,
+		BatteryOutputW:      batteryStatus.OutputW,
 		ACChargeLimitW:      batteryStatus.ACChargeLimitW,
 		BackupReserveSoc:    batteryStatus.BackupReserveSoc,
 		BatteryFullEnergyWh: batteryStatus.FullEnergyWh,
@@ -142,6 +155,7 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 		IntelligentEnabled:  batteryStatus.IntelligentEnabled,
 		Forecast:            weatherForecast,
 		SolarSettings:       solarSettings,
+		EcoFlowLoadEstimate: ecoflowLoadEstimate,
 		Previous:            p.previousDecisionSnapshot(),
 		MockMode:            p.mockMode,
 		SimulationMode:      p.simulationMode,
@@ -291,6 +305,18 @@ func (p *StatusProvider) currentWeatherForecast(ctx context.Context, now time.Ti
 		return nil, &weatherLocation, &message
 	}
 	return &forecast, &weatherLocation, nil
+}
+
+func (p *StatusProvider) currentEcoFlowLoadEstimate(ctx context.Context, now time.Time) (*domain.EcoFlowLoadEstimate, *string) {
+	if p.loadEstimator == nil {
+		return nil, nil
+	}
+	estimate, err := p.loadEstimator.EstimateEcoFlowLoad(ctx, now, 7)
+	if err != nil {
+		message := fmt.Sprintf("EcoFlow load estimate failed: %v", err)
+		return nil, &message
+	}
+	return &estimate, nil
 }
 
 func combineErrors(first *string, second *string) *string {

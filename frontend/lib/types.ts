@@ -118,9 +118,11 @@ export type NightChargePlan = {
   solarRadiationKwhPerM2: number;
   estimatedPvKwh: number;
   estimatedDaytimeLoadKwh: number;
+  estimatedMorningLoadKwh: number;
   estimatedSurplusKwh: number;
   estimatedDeficitKwh: number;
   estimatedPvToBatteryKwh: number;
+  safetyMarginKwh: number;
   batteryCapacityKwh: number;
   currentBatteryEnergyKwh: number;
   batteryChargeHeadroomKwh: number;
@@ -128,6 +130,8 @@ export type NightChargePlan = {
   minimumReserveKwh: number;
   requiredNightChargeKwh: number;
   batteryCapacitySource: string;
+  consumptionSource: string;
+  recommendedMode: string;
   recommendedAcChargeLimitW: number;
   recommendedBackupReserveSoc?: number | null;
   recommendedNightTargetSoc: number;
@@ -136,6 +140,8 @@ export type NightChargePlan = {
   shouldSetAcChargeLimit: boolean;
   shouldSetBackupReserve: boolean;
   shouldDisableEnergyModes: boolean;
+  shouldEnableTouMode: boolean;
+  shouldEnableSelfPoweredMode: boolean;
   commandSuppressed: boolean;
   commandBlockReason: string;
   wouldWrite: boolean;

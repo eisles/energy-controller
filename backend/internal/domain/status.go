@@ -173,9 +173,11 @@ type NightChargePlan struct {
 	SolarRadiationKWhPerM2      float64          `json:"solarRadiationKwhPerM2"`
 	EstimatedPVKWh              float64          `json:"estimatedPvKwh"`
 	EstimatedDaytimeLoadKWh     float64          `json:"estimatedDaytimeLoadKwh"`
+	EstimatedMorningLoadKWh     float64          `json:"estimatedMorningLoadKwh"`
 	EstimatedSurplusKWh         float64          `json:"estimatedSurplusKwh"`
 	EstimatedDeficitKWh         float64          `json:"estimatedDeficitKwh"`
 	EstimatedPVToBatteryKWh     float64          `json:"estimatedPvToBatteryKwh"`
+	SafetyMarginKWh             float64          `json:"safetyMarginKwh"`
 	BatteryCapacityKWh          float64          `json:"batteryCapacityKwh"`
 	CurrentBatteryEnergyKWh     float64          `json:"currentBatteryEnergyKwh"`
 	BatteryChargeHeadroomKWh    float64          `json:"batteryChargeHeadroomKwh"`
@@ -183,6 +185,8 @@ type NightChargePlan struct {
 	MinimumReserveKWh           float64          `json:"minimumReserveKwh"`
 	RequiredNightChargeKWh      float64          `json:"requiredNightChargeKwh"`
 	BatteryCapacitySource       string           `json:"batteryCapacitySource"`
+	ConsumptionSource           string           `json:"consumptionSource"`
+	RecommendedMode             string           `json:"recommendedMode"`
 	RecommendedACChargeLimitW   int              `json:"recommendedAcChargeLimitW"`
 	RecommendedBackupReserveSoc *int             `json:"recommendedBackupReserveSoc,omitempty"`
 	RecommendedNightTargetSoc   int              `json:"recommendedNightTargetSoc"`
@@ -191,6 +195,8 @@ type NightChargePlan struct {
 	ShouldSetACChargeLimit      bool             `json:"shouldSetAcChargeLimit"`
 	ShouldSetBackupReserve      bool             `json:"shouldSetBackupReserve"`
 	ShouldDisableEnergyModes    bool             `json:"shouldDisableEnergyModes"`
+	ShouldEnableTOUMode         bool             `json:"shouldEnableTouMode"`
+	ShouldEnableSelfPoweredMode bool             `json:"shouldEnableSelfPoweredMode"`
 	CommandSuppressed           bool             `json:"commandSuppressed"`
 	CommandBlockReason          string           `json:"commandBlockReason"`
 	WouldWrite                  bool             `json:"wouldWrite"`
