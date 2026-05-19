@@ -91,6 +91,8 @@ export type EcoFlowLoadEstimate = {
   nightStartHour: number;
   nightEndHour: number;
   sampleCount: number;
+  daytimeSampleDays: number;
+  completeDaytimeSampleDays: number;
   averageDaytimeOutputKwh: number;
   averageShoulderOutputKwh: number;
   averageNightOutputKwh: number;
@@ -102,6 +104,8 @@ export type EcoFlowLoadEstimate = {
   daily: Array<{
     date: string;
     sampleCount: number;
+    daytimeSampleCount: number;
+    daytimeComplete: boolean;
     daytimeOutputKwh: number;
     shoulderOutputKwh: number;
     nightOutputKwh: number;

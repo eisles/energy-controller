@@ -83,8 +83,12 @@ export function WeatherLocationPanel() {
     try {
       const nextEstimate = await fetchEcoFlowLoadEstimate(7);
       setEcoFlowEstimate(nextEstimate);
-      setLocation((current) => ({ ...current, dailyBaseLoadKwh: roundKwh(nextEstimate.suggestedDaytimeBaseLoadKwh) }));
-      setStatus("EcoFlow出力の直近7日平均から日中消費を推定しました");
+      if (nextEstimate.completeDaytimeSampleDays > 0) {
+        setLocation((current) => ({ ...current, dailyBaseLoadKwh: roundKwh(nextEstimate.suggestedDaytimeBaseLoadKwh) }));
+        setStatus("EcoFlow出力の完了済み日中データから日中消費を推定しました");
+      } else {
+        setStatus("EcoFlow出力の日中完了データが不足しています");
+      }
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "EcoFlow出力推定失敗");
     } finally {
@@ -213,11 +217,11 @@ export function WeatherLocationPanel() {
               <div className="estimate-panel">
                 <div>
                   <strong>EcoFlow特定回路推定</strong>
-                  <p>
-                    {ecoFlowEstimate
-                      ? `日中 ${formatKwh(ecoFlowEstimate.suggestedDaytimeBaseLoadKwh)} kWh / 朝夕 ${formatKwh(ecoFlowEstimate.averageShoulderOutputKwh)} kWh / 1日 ${formatKwh(ecoFlowEstimate.averageDailyOutputKwh)} kWh / samples ${ecoFlowEstimate.sampleCount}`
-                      : "未取得"}
-                  </p>
+	                  <p>
+	                    {ecoFlowEstimate
+	                      ? `日中 ${formatKwh(ecoFlowEstimate.suggestedDaytimeBaseLoadKwh)} kWh / 完了日 ${ecoFlowEstimate.completeDaytimeSampleDays}/${ecoFlowEstimate.daytimeSampleDays} / 朝夕 ${formatKwh(ecoFlowEstimate.averageShoulderOutputKwh)} kWh / 1日 ${formatKwh(ecoFlowEstimate.averageDailyOutputKwh)} kWh / samples ${ecoFlowEstimate.sampleCount}`
+	                      : "未取得"}
+	                  </p>
                 </div>
                 <Button type="button" variant="outline" onClick={estimateEcoFlowLoad} disabled={estimatingEcoFlow}>
                   {estimatingEcoFlow ? "推定中" : "EcoFlow出力から推定"}
@@ -225,8 +229,9 @@ export function WeatherLocationPanel() {
               </div>
               {ecoFlowEstimate ? (
                 <div className="estimate-grid" aria-label="EcoFlow load estimate">
-                  <DetailText label="日中出力" value={`${formatKwh(ecoFlowEstimate.averageDaytimeOutputKwh)} kWh`} />
-                  <DetailText label="朝夕出力" value={`${formatKwh(ecoFlowEstimate.averageShoulderOutputKwh)} kWh`} />
+	                  <DetailText label="日中出力" value={`${formatKwh(ecoFlowEstimate.averageDaytimeOutputKwh)} kWh`} />
+	                  <DetailText label="日中完了日" value={`${ecoFlowEstimate.completeDaytimeSampleDays} / ${ecoFlowEstimate.daytimeSampleDays} 日`} />
+	                  <DetailText label="朝夕出力" value={`${formatKwh(ecoFlowEstimate.averageShoulderOutputKwh)} kWh`} />
                   <DetailText label="夜間出力" value={`${formatKwh(ecoFlowEstimate.averageNightOutputKwh)} kWh`} />
                   <DetailText label="1日出力" value={`${formatKwh(ecoFlowEstimate.averageDailyOutputKwh)} kWh`} />
                   <DetailText label="日中充電" value={`${formatKwh(ecoFlowEstimate.averageDaytimeChargeKwh)} kWh`} />

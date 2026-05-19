@@ -1072,16 +1072,98 @@ Phase 7 で実制御を入れる場合の優先制御軸:
   = max(0, 推奨深夜残量 kWh - 現在バッテリー残量 kWh)
 ```
 
+時間別日射量を使った翌日PV発電推定:
+
+Open-Meteo の `hourly=shortwave_radiation` を 16 日分取得できるため、深夜計画では日次の天気スコアだけでなく、翌日の時間別日射量から発電見込みとPV有効時間帯を推定する。
+
+```text
+hourlySolarRadiation:
+  Open-Meteo hourly shortwave_radiation
+  単位は W/m2
+  1時間ごとの水平面全天日射量として扱う
+
+hourlyRadiationKWhPerM2:
+  shortwave_radiation W/m2 / 1000
+  1時間値なので kWh/m2 相当に変換する
+
+hourlyEstimatedPVKWh:
+  hourlyRadiationKWhPerM2
+  * pvCapacityKw
+  * pvPerformanceRatio
+  * orientationAdjustment
+
+dailyEstimatedPVKWh:
+  sum(hourlyEstimatedPVKWh for target forecast date)
+
+pvEffectiveWindow:
+  shortwave_radiation >= pvEffectiveRadiationThresholdWm2 の連続時間帯
+  初期しきい値は 200 W/m2
+```
+
+翌日深夜充電計画への使い方:
+
+- `dailyEstimatedPVKWh` は、翌日日中に太陽光から補える見込み量として使う
+- `pvEffectiveWindow` は、翌日にPV充電・売電抑制が期待できる時間帯として使う
+- 深夜計画では、`targetForecastDate` の `dailyEstimatedPVKWh` と `pvEffectiveWindow` を保存する
+- 翌日のEcoFlow特定回路消費は、固定 `09:00-16:00` ではなく、予報から算出した `pvEffectiveWindow` に近い時間帯の過去平均を優先する
+- `pvEffectiveWindow` が短い日、または `dailyEstimatedPVKWh` が小さい日は、深夜の推奨SOCを高める
+- `pvEffectiveWindow` が長く、`dailyEstimatedPVKWh` が日中消費を十分上回る日は、深夜の推奨SOCを最低確保寄りに抑える
+- 朝 7:00 以降は高単価時間帯なので、PVがまだ弱い時間帯の買電を避けるため、朝からPV有効時間帯開始までの EcoFlow 出力見込みも必要量に含める
+
+深夜計画用の不足量:
+
+```text
+pvUsableForEcoFlowKWh
+  = max(0, dailyEstimatedPVKWh - expectedUncontrollableDaytimeLoadKWh)
+
+forecastDaytimeDeficitKWh
+  = max(0, expectedEcoFlowDaytimeOutputKWh - pvUsableForEcoFlowKWh)
+
+morningToPVStartLoadKWh
+  = expectedEcoFlowOutputKWh from 07:00 to pvEffectiveStart
+
+nightRequiredEnergyKWh
+  = minimumReserveKWh
+  + remainingNightToMorningLoadKWh
+  + morningToPVStartLoadKWh
+  + forecastDaytimeDeficitKWh
+  + safetyMarginKWh
+```
+
+ここで `expectedUncontrollableDaytimeLoadKWh` は、EcoFlow が直接供給しない全負荷側の消費や、エコキュートなど制御対象外の需要を保守的に差し引くための値である。初期実装では手動設定またはログからの推定値を使い、不明な場合は `0` にせず、`insufficient-data` として理由を残す。
+
+保存・表示する値:
+
+- `targetForecastDate`
+- `hourlySolarRadiation`
+  - APIレスポンスまたは要約値として保持する。DBには全時間値を保存するか、日次集計と有効時間帯だけ保存するかを実装時に決める
+- `dailyEstimatedPVKWh`
+- `pvEffectiveStartAt`
+- `pvEffectiveEndAt`
+- `pvEffectiveWindowSource`
+  - `hourly-radiation`
+  - `fallback`
+- `pvEffectiveRadiationThresholdWm2`
+- `expectedEcoFlowDaytimeOutputKWh`
+- `expectedUncontrollableDaytimeLoadKWh`
+- `morningToPVStartLoadKWh`
+- `forecastDaytimeDeficitKWh`
+- `recommendedNightTargetSoc`
+- `requiredNightChargeKWh`
+- `nightPlanReason`
+
 入力データ:
 
 - `batterySoc`
 - `batteryFullEnergyWh`、取得できない場合は手動設定の `batteryCapacityKWh`
 - `minimumReserveSoc`
 - `targetSoc`
-- Open-Meteo の翌日日中 `shortwave_radiation`
+- Open-Meteo の翌日時間別 `shortwave_radiation`
 - 太陽光設定 `pvCapacityKw` / `pvPerformanceRatio`
 - EcoFlow 出力ログから推定した特定回路の日中消費 kWh
 - EcoFlow 夜間出力ログから推定した深夜-朝の消費 kWh
+- EcoFlow 朝 07:00 から `pvEffectiveStartAt` までの出力見込み kWh
+- 制御対象外負荷または全負荷側の推定消費 kWh
 - 料金時間帯 `nightStart=23:00` / `nightEnd=07:00`
 
 日中消費の優先順位:
@@ -1588,6 +1670,260 @@ GET /api/analytics/night-uncontrollable-load?days=7
 - 未設定時の既定値は `default` として表示され、ユーザーが明示保存した `manual` 値と混同されない
 - read-only API のみで、実機 write path が増えていない
 - 料金計算は実買電 kWh のまま維持される
+- `cd backend && go test ./...` が通る
+- `cd frontend && npm run build` が通る
+
+---
+
+#### 料金帯とPV余剰を分離した日中制御の実装計画
+
+現状の `09:00-16:00` の EcoFlow 出力平均は、深夜充電計画で「翌日の日中に EcoFlow 回路がどれくらい消費しそうか」を見積もるための値である。一方、実際の日中制御では、7時以降は深夜料金ではなく電力単価が高くなるため、単純に「日中だから充電する」ではなく、料金帯と太陽光余剰を分けて判定する必要がある。
+
+目的:
+
+- 深夜計画用の日次見積もりと、日中リアルタイム制御を混同しない
+- 7時以降の高単価時間帯では、買電充電を避ける
+- 太陽光余剰がある場合だけ、売電を減らす目的で EcoFlow 充電またはパススルーを許可する
+- 最低 400W 充電制約や EcoFlow 出力中の同時入出力を考慮し、余剰不足時に買電を増やさない
+- 実機 write を強める前に、read-only dry-run で判定理由を監査できるようにする
+
+この段階の安全境界:
+
+- 実機 write path は追加しない。既存 write guard の有効化・接続変更も行わず、判定は dry-run の理由・推奨値保存に留める
+- `ENABLE_REAL_CONTROL=true` かつ `SIMULATION_MODE=false` 以外では EcoFlow write しない
+- 料金帯判定とPV余剰判定は dry-run の理由・推奨値として保存する
+- 高単価時間帯に買電が発生している場合は、充電開始ではなく充電停止・放電優先に倒す
+- 料金単価は料金概算と制御判定で参照するが、料金計算の履歴再計算ロジックとは分離する
+
+制御で扱う時間帯:
+
+```text
+NIGHT_CHEAP
+  23:00-07:00
+  深夜単価。翌日の不足分だけ充電を許可する
+
+MORNING_EXPENSIVE_LOW_PV
+  07:00-09:00
+  深夜明けで太陽光が弱い。買電充電は原則禁止し、放電または待機を優先する
+
+DAYTIME_EXPENSIVE_HIGH_PV
+  pvEffectiveStart-pvEffectiveEnd
+  単価は高いがPV余剰が出やすい。売電が十分ある場合だけ充電を許可する。
+  初期fallbackは 09:00-16:00 とする
+
+EVENING_EXPENSIVE_LOW_PV
+  pvEffectiveEnd-23:00
+  発電が落ちる。充電より放電・買電抑制を優先する
+```
+
+PV有効時間帯の算出:
+
+```text
+pvEffectiveWindow:
+  太陽光の発電が制御判断に使える時間帯
+
+優先順位:
+  1. Open-Meteo hourly shortwave_radiation が取得できる場合:
+     - shortwave_radiation >= pvEffectiveRadiationThresholdWm2 の時間帯を採用
+     - 初期しきい値は 200 W/m2
+     - 短時間の途切れは 1 時間まで連結してよい
+
+  2. sunrise / sunset が取得できる場合:
+     - sunrise + pvMorningBuffer
+     - sunset - pvEveningBuffer
+     - 初期値は pvMorningBuffer=2h, pvEveningBuffer=1.5h
+
+  3. 日次 sunshineDurationHours しかない場合:
+     - 太陽南中付近を中心に sunshineDurationHours の 70% を有効時間帯として置く
+     - 過度に広げず、07:00-17:00 の範囲に clamp する
+
+  4. 予報不足:
+     - fallback として 09:00-16:00 を使う
+```
+
+設定項目:
+
+- `pvEffectiveWindowSource`
+  - `hourly-radiation`
+  - `sunrise-sunset`
+  - `sunshine-duration`
+  - `fallback`
+- `pvEffectiveRadiationThresholdWm2`
+  - 初期値: `200`
+- `pvMorningBufferMinutes`
+  - 初期値: `120`
+- `pvEveningBufferMinutes`
+  - 初期値: `90`
+- `fallbackPvEffectiveStartHour`
+  - 初期値: `9`
+- `fallbackPvEffectiveEndHour`
+  - 初期値: `16`
+
+UI には `PV有効時間帯 09:30-15:30 / source: hourly-radiation` のように表示し、固定時間帯なのか予報由来なのかを分かるようにする。
+
+重要な判定:
+
+```text
+gridState:
+  export:
+    exportW > 0
+  import:
+    importW > 0
+  neutral:
+    importW == 0 && exportW == 0
+
+netBatteryW:
+  batteryInputW - batteryOutputW
+  正: 実質充電
+  負: 実質放電
+
+pvSurplusAvailableW:
+  exportW + max(0, batteryOutputW - batteryInputW)
+
+minimumChargeStartRequiredW:
+  minEcoFlowChargeW + currentBatteryOutputW + safetyMarginW
+```
+
+日中充電許可の基本ルール:
+
+- `DAYTIME_EXPENSIVE_HIGH_PV` でも、買電中なら充電開始しない
+- 売電があっても、`exportW` が最低充電開始に足りない場合は AC 充電を開始しない
+- EcoFlow が放電中の場合、充電開始には `exportW >= batteryOutputW + minEcoFlowChargeW + safetyMarginW` を要求する
+- 最低 400W 充電に足りない余剰では、バックアップリザーブを現在SOC付近に合わせるパススルー候補だけを検討する
+- パススルー中に買電へ転じたら、TOU ON または self-powered へ戻して放電・買電抑制に倒す
+
+料金帯ごとの推奨動作:
+
+```text
+NIGHT_CHEAP:
+  if requiredNightChargeKWh > 0:
+    安い深夜帯で必要分だけ充電
+  else:
+    充電抑制。TOU維持またはself-poweredで必要に応じて放電
+
+MORNING_EXPENSIVE_LOW_PV:
+  if importW > 0:
+    充電停止、放電優先
+  if exportW > 0 but exportW < minimumChargeStartRequiredW:
+    充電開始しない
+
+DAYTIME_EXPENSIVE_HIGH_PV:
+  if exportW >= minimumChargeStartRequiredW:
+    売電抑制のため充電許可
+  else if exportW > 0 and passThroughCandidate:
+    パススルー候補
+  else if importW > 0:
+    充電停止、放電優先
+
+EVENING_EXPENSIVE_LOW_PV:
+  if importW > 0:
+    放電優先
+  if exportW > 0:
+    短時間の揺らぎとして様子見。原則充電開始しない
+```
+
+深夜計画との関係:
+
+- EcoFlow 出力平均は、深夜にどこまで充電しておくかを決めるための日次見積もりとして使う
+- 平均対象の時間帯は固定 `09:00-16:00` ではなく、予報から算出した `pvEffectiveWindow` を優先する
+- 予報不足時だけ `09:00-16:00` fallback を使う
+- 実際の日中充電可否は、日次平均ではなく現在の `importW` / `exportW` / `batteryInputW` / `batteryOutputW` / 料金帯で判断する
+- 日中平均が不足していても、リアルタイム余剰追従は現在値ベースで動く
+- 当日の `pvEffectiveWindow` が未完了の場合は、日中平均の更新には使わない
+
+追加する domain / status 値:
+
+- `tariffWindow`
+  - `night-cheap`
+  - `morning-expensive-low-pv`
+  - `daytime-expensive-high-pv`
+  - `evening-expensive-low-pv`
+- `gridState`
+  - `import`
+  - `export`
+  - `neutral`
+- `pvSurplusAvailableW`
+- `minimumChargeStartRequiredW`
+- `daytimeChargeAllowed`
+- `daytimeChargeBlockReason`
+- `recommendedDaytimeMode`
+  - `charge`
+  - `pass-through`
+  - `discharge`
+  - `observe`
+- `pvEffectiveStartAt`
+- `pvEffectiveEndAt`
+- `pvEffectiveWindowSource`
+- `pvEffectiveRadiationThresholdWm2`
+
+API / UI:
+
+- `/api/status`
+  - 余剰追従プランまたは新しい日中制御プランに上記値を追加する
+- Dashboard
+  - 現在の料金帯を Badge 表示する
+  - PV有効時間帯と source を表示する
+  - `高単価だがPV余剰あり` / `高単価で買電中のため充電停止` のような判定理由を表示する
+  - `最低充電開始に必要な売電W` と `現在の売電W` を並べて表示する
+- dry-run 履歴
+  - `tariffWindow`
+  - `pvEffectiveStartAt`
+  - `pvEffectiveEndAt`
+  - `pvEffectiveWindowSource`
+  - `gridState`
+  - `minimumChargeStartRequiredW`
+  - `daytimeChargeAllowed`
+  - `daytimeChargeBlockReason`
+  を保存・検索できるようにする
+
+実装対象ファイル:
+
+- `backend/internal/control/surplus_planner.go`
+  - 料金帯とPV余剰を分けた日中制御判定を追加する
+- `backend/internal/weather/open_meteo_client.go`
+  - hourly shortwave_radiation または sunrise/sunset を取得できるようにする
+- `backend/internal/control/pv_effective_window.go`
+  - 予報からPV有効時間帯を算出する helper を追加する
+- `backend/internal/control/night_charge_planner.go`
+  - 深夜計画側は日次見積もり用途に限定し、日中リアルタイム制御と分離する
+- `backend/internal/store/ecoflow_load_repository.go`
+  - 固定 09:00-16:00 だけでなく、PV有効時間帯を指定して完了済み日を平均できるようにする
+- `backend/internal/domain/status.go`
+  - 日中制御判定用の状態値を追加する
+- `backend/internal/store/log_repository.go`
+  - dry-run reason に必要な値が保存できるか確認し、必要なら構造化ログを追加する
+- `frontend/components/StatusCards.tsx`
+  - 料金帯・充電許可・ブロック理由を表示する
+- `frontend/components/DryRunPlanHistory.tsx`
+  - 日中制御の dry-run 理由を読みやすく表示する
+- `implementation-plan.md`
+  - この計画を制御フェーズの前提として維持する
+
+実装ステップ:
+
+1. 天気予報 adapter で hourly shortwave_radiation または sunrise/sunset を取得できるか確認し、取得できる値から実装する
+2. `pvEffectiveWindow` を算出する helper を追加し、hourly-radiation / sunrise-sunset / sunshine-duration / fallback の source を返す
+3. `tariffWindow` を現在時刻と料金プランから判定する小さな domain helper を追加する
+4. 現在値から `gridState` / `netBatteryW` / `pvSurplusAvailableW` / `minimumChargeStartRequiredW` を計算する
+5. `DAYTIME_EXPENSIVE_HIGH_PV` を固定時刻ではなく `pvEffectiveWindow` から判定し、十分な売電がある場合に充電許可する dry-run 判定を追加する
+6. `MORNING_EXPENSIVE_LOW_PV` / `EVENING_EXPENSIVE_LOW_PV` では買電充電をブロックする
+7. 既存の余剰追従・パススルー判定に、料金帯とPV有効時間帯による guard を追加する
+8. dry-run reason に「料金帯」「PV有効時間帯」「売電不足」「最低400W制約」「買電中」の理由を残す
+9. UI に料金帯、PV有効時間帯、充電許可/ブロック理由を表示する
+10. unit test で各時間帯、季節差、予報不足fallback、売電不足、買電中、放電中、400W制約を確認する
+11. `cd backend && go test ./...` と `cd frontend && npm run build` を通す
+12. 実機 write は有効にせず、read-only/dry-run で実データ確認する
+
+完了条件:
+
+- 固定 `09:00-16:00` は fallback であり、通常は天気予報由来の `pvEffectiveWindow` が使われる
+- `pvEffectiveWindow` の source が UI と dry-run 履歴で確認できる
+- EcoFlow 出力平均が深夜計画用であり、日中リアルタイム制御とは別物として扱われている
+- 7:00以降の高単価時間帯で、買電中に充電開始しない
+- 太陽光余剰が十分ある場合だけ、売電抑制のための充電候補が出る
+- 最低 400W 充電制約と現在の EcoFlow 出力を考慮して、余剰不足時に買電を増やさない
+- 判定理由が UI と dry-run 履歴で追える
+- read-only / simulation default の安全境界が維持される
 - `cd backend && go test ./...` が通る
 - `cd frontend && npm run build` が通る
 

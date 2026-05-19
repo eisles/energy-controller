@@ -64,13 +64,14 @@ func (r *EcoFlowLoadRepository) EstimateEcoFlowLoad(ctx context.Context, now tim
 	if err := rows.Err(); err != nil {
 		return domain.EcoFlowLoadEstimate{}, err
 	}
-	return estimateEcoFlowLoadFromSamples(samples, days, r.location), nil
+	return estimateEcoFlowLoadFromSamples(samples, now, days, r.location), nil
 }
 
-func estimateEcoFlowLoadFromSamples(samples []ecoflowLoadSample, days int, location *time.Location) domain.EcoFlowLoadEstimate {
+func estimateEcoFlowLoadFromSamples(samples []ecoflowLoadSample, now time.Time, days int, location *time.Location) domain.EcoFlowLoadEstimate {
 	if location == nil {
 		location = loadEcoFlowLoadLocation("")
 	}
+	nowLocal := now.In(location)
 	byDate := map[string]*domain.DailyEcoFlowLoadEstimate{}
 	for i := 0; i < len(samples)-1; i++ {
 		current := samples[i]
@@ -94,6 +95,7 @@ func estimateEcoFlowLoadFromSamples(samples []ecoflowLoadSample, days int, locat
 		if isEcoFlowDaytime(localMeasuredAt.Hour()) {
 			day.DaytimeOutputKWh += outputKWh
 			day.DaytimeChargeKWh += inputKWh
+			day.DaytimeSampleCount++
 		} else if isEcoFlowNight(localMeasuredAt.Hour()) {
 			day.NightOutputKWh += outputKWh
 		} else {
@@ -116,20 +118,30 @@ func estimateEcoFlowLoadFromSamples(samples []ecoflowLoadSample, days int, locat
 			day.DaytimeNetLoadKWh = 0
 		}
 		estimate.SampleCount += day.SampleCount
-		estimate.AverageDaytimeOutputKWh += day.DaytimeOutputKWh
+		day.DaytimeComplete = isEcoFlowDaytimeComplete(day.Date, nowLocal, location)
+		if day.DaytimeSampleCount > 0 {
+			estimate.DaytimeSampleDays++
+		}
+		if day.DaytimeComplete && day.DaytimeSampleCount > 0 {
+			estimate.CompleteDaytimeSampleDays++
+			estimate.AverageDaytimeOutputKWh += day.DaytimeOutputKWh
+			estimate.AverageDaytimeChargeKWh += day.DaytimeChargeKWh
+		}
 		estimate.AverageShoulderOutputKWh += day.ShoulderOutputKWh
 		estimate.AverageNightOutputKWh += day.NightOutputKWh
 		estimate.AverageDailyOutputKWh += day.DailyOutputKWh
-		estimate.AverageDaytimeChargeKWh += day.DaytimeChargeKWh
 		estimate.Daily = append(estimate.Daily, *day)
 	}
 	if len(estimate.Daily) > 0 {
+		if estimate.CompleteDaytimeSampleDays > 0 {
+			count := float64(estimate.CompleteDaytimeSampleDays)
+			estimate.AverageDaytimeOutputKWh /= count
+			estimate.AverageDaytimeChargeKWh /= count
+		}
 		count := float64(len(estimate.Daily))
-		estimate.AverageDaytimeOutputKWh /= count
 		estimate.AverageShoulderOutputKWh /= count
 		estimate.AverageNightOutputKWh /= count
 		estimate.AverageDailyOutputKWh /= count
-		estimate.AverageDaytimeChargeKWh /= count
 	}
 	estimate.SuggestedDaytimeBaseLoadKWh = estimate.AverageDaytimeOutputKWh
 	estimate.SuggestedOvernightReserveKWh = estimate.AverageNightOutputKWh
@@ -138,6 +150,15 @@ func estimateEcoFlowLoadFromSamples(samples []ecoflowLoadSample, days int, locat
 
 func isEcoFlowDaytime(hour int) bool {
 	return hour >= defaultEcoFlowDayStartHour && hour < defaultEcoFlowDayEndHour
+}
+
+func isEcoFlowDaytimeComplete(date string, now time.Time, location *time.Location) bool {
+	day, err := time.ParseInLocation("2006-01-02", date, location)
+	if err != nil {
+		return false
+	}
+	daytimeEnd := time.Date(day.Year(), day.Month(), day.Day(), defaultEcoFlowDayEndHour, 0, 0, 0, location)
+	return !now.Before(daytimeEnd)
 }
 
 func isEcoFlowNight(hour int) bool {

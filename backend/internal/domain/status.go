@@ -134,6 +134,8 @@ type EcoFlowLoadEstimate struct {
 	NightStartHour               int                        `json:"nightStartHour"`
 	NightEndHour                 int                        `json:"nightEndHour"`
 	SampleCount                  int                        `json:"sampleCount"`
+	DaytimeSampleDays            int                        `json:"daytimeSampleDays"`
+	CompleteDaytimeSampleDays    int                        `json:"completeDaytimeSampleDays"`
 	AverageDaytimeOutputKWh      float64                    `json:"averageDaytimeOutputKwh"`
 	AverageShoulderOutputKWh     float64                    `json:"averageShoulderOutputKwh"`
 	AverageNightOutputKWh        float64                    `json:"averageNightOutputKwh"`
@@ -146,14 +148,16 @@ type EcoFlowLoadEstimate struct {
 }
 
 type DailyEcoFlowLoadEstimate struct {
-	Date              string  `json:"date"`
-	SampleCount       int     `json:"sampleCount"`
-	DaytimeOutputKWh  float64 `json:"daytimeOutputKwh"`
-	ShoulderOutputKWh float64 `json:"shoulderOutputKwh"`
-	NightOutputKWh    float64 `json:"nightOutputKwh"`
-	DailyOutputKWh    float64 `json:"dailyOutputKwh"`
-	DaytimeChargeKWh  float64 `json:"daytimeChargeKwh"`
-	DaytimeNetLoadKWh float64 `json:"daytimeNetLoadKwh"`
+	Date               string  `json:"date"`
+	SampleCount        int     `json:"sampleCount"`
+	DaytimeSampleCount int     `json:"daytimeSampleCount"`
+	DaytimeComplete    bool    `json:"daytimeComplete"`
+	DaytimeOutputKWh   float64 `json:"daytimeOutputKwh"`
+	ShoulderOutputKWh  float64 `json:"shoulderOutputKwh"`
+	NightOutputKWh     float64 `json:"nightOutputKwh"`
+	DailyOutputKWh     float64 `json:"dailyOutputKwh"`
+	DaytimeChargeKWh   float64 `json:"daytimeChargeKwh"`
+	DaytimeNetLoadKWh  float64 `json:"daytimeNetLoadKwh"`
 }
 
 type DailyDaytimeConsumptionEstimate struct {

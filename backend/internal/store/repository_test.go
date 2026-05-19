@@ -938,6 +938,63 @@ func TestEcoFlowLoadRepositoryEstimatesSpecificCircuitOutput(t *testing.T) {
 	if !floatAlmostEqual(estimate.SuggestedDaytimeBaseLoadKWh, 0.01) {
 		t.Fatalf("SuggestedDaytimeBaseLoadKWh = %f, want 0.01", estimate.SuggestedDaytimeBaseLoadKWh)
 	}
+	if estimate.DaytimeSampleDays != 1 || estimate.CompleteDaytimeSampleDays != 1 {
+		t.Fatalf("daytime sample days = %d/%d, want 1/1", estimate.DaytimeSampleDays, estimate.CompleteDaytimeSampleDays)
+	}
+}
+
+func TestEcoFlowLoadRepositoryExcludesIncompleteDaytimeFromAverage(t *testing.T) {
+	db := openTestDB(t)
+	logRepo := NewLogRepository(db)
+	estimateRepo := NewEcoFlowLoadRepositoryWithTimezone(db, "Asia/Tokyo")
+	completeDayBase := time.Date(2026, 5, 18, 9, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	incompleteDayBase := time.Date(2026, 5, 19, 9, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+
+	for i := 0; i <= 2; i++ {
+		output := 300
+		at := completeDayBase.Add(time.Duration(i) * time.Minute)
+		if err := logRepo.InsertPowerLog(context.Background(), domain.PowerLog{
+			MeasuredAt:     at,
+			BatteryOutputW: &output,
+			DecisionReason: "complete daytime sample",
+			Mode:           "test",
+			CreatedAt:      at,
+		}); err != nil {
+			t.Fatalf("InsertPowerLog complete daytime failed: %v", err)
+		}
+	}
+	for i := 0; i <= 2; i++ {
+		output := 900
+		at := incompleteDayBase.Add(time.Duration(i) * time.Minute)
+		if err := logRepo.InsertPowerLog(context.Background(), domain.PowerLog{
+			MeasuredAt:     at,
+			BatteryOutputW: &output,
+			DecisionReason: "incomplete daytime sample",
+			Mode:           "test",
+			CreatedAt:      at,
+		}); err != nil {
+			t.Fatalf("InsertPowerLog incomplete daytime failed: %v", err)
+		}
+	}
+
+	estimate, err := estimateRepo.EstimateEcoFlowLoad(context.Background(), incompleteDayBase.Add(time.Hour), 7)
+	if err != nil {
+		t.Fatalf("EstimateEcoFlowLoad failed: %v", err)
+	}
+	if estimate.DaytimeSampleDays != 2 || estimate.CompleteDaytimeSampleDays != 1 {
+		t.Fatalf("daytime sample days = %d/%d, want 2/1", estimate.DaytimeSampleDays, estimate.CompleteDaytimeSampleDays)
+	}
+	if !floatAlmostEqual(estimate.AverageDaytimeOutputKWh, 0.01) {
+		t.Fatalf("AverageDaytimeOutputKWh = %f, want completed day only 0.01", estimate.AverageDaytimeOutputKWh)
+	}
+	if !floatAlmostEqual(estimate.SuggestedDaytimeBaseLoadKWh, 0.01) {
+		t.Fatalf("SuggestedDaytimeBaseLoadKWh = %f, want completed day only 0.01", estimate.SuggestedDaytimeBaseLoadKWh)
+	}
+	for _, day := range estimate.Daily {
+		if day.Date == "2026-05-19" && day.DaytimeComplete {
+			t.Fatalf("2026-05-19 DaytimeComplete = true, want false before 16:00")
+		}
+	}
 }
 
 func TestEcoFlowLoadRepositoryUsesConfiguredTimezoneForBuckets(t *testing.T) {
