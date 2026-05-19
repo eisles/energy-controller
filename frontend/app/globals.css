@@ -482,6 +482,10 @@ input {
   border-radius: var(--radius);
 }
 
+.dry-run-table-wrap .ui-table {
+  min-width: 780px;
+}
+
 .forecast-table-wrap {
   margin-top: 14px;
 }

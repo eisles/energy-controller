@@ -22,13 +22,18 @@ export type EnergyStatus = {
 
 export type SurplusPlan = {
   mode: string;
+  strategyState: string;
   netBatteryW: number;
+  requiredStartExportW: number;
+  availableStartMarginW: number;
   recommendedAcChargeLimitW: number;
   recommendedBackupReserveSoc?: number | null;
   shouldRaiseBackupReserve: boolean;
   shouldLowerBackupReserve: boolean;
+  shouldAlignBackupReserve: boolean;
   shouldAdjustAcChargeLimit: boolean;
   shouldDisableEnergyModes: boolean;
+  shouldEnableTouMode: boolean;
   wouldWrite: boolean;
   actionSummary: string;
   reason: string;

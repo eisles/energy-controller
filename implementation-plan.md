@@ -824,7 +824,7 @@ now - lastCommandAt >= MIN_COMMAND_INTERVAL_SEC
 - `power_logs.actual_command_w` に送信した W を保存する
 - `power_logs.command_sent` を正しく保存する
 - `decision_reason` に guard / hysteresis / interval / API error の理由を含める
-- `decision_reason` と `surplusPlan.actionSummary` に dry-run の予定アクションを残し、実送信前に買電時の戻し/売電時の充電開始条件を確認できるようにする
+- `decision_reason` と `surplusPlan.actionSummary` に dry-run の予定アクションを残し、実送信前に買電時のAC充電抑制/リザーブ戻し、売電時の充電開始条件を確認できるようにする
 - current status の `lastDecisionReason` / `lastError` に UI で判断できる情報を残す
 - Phase 6 dashboard には書き込み操作を追加しない。必要なら read-only 表示だけを拡張する
 
@@ -908,6 +908,116 @@ energyStrategyOperateMode.operateIntelligentScheduleModeOpen
 ```
 
 ただし、上記は read-only quota とアプリ操作後の観測に基づく仮説であり、書き込み API の command / quota name / params は Phase 7 で別途確定する。
+
+#### 小余剰 pass-through 制御の実装計画
+
+2026-05-19 の実機観測では、`backupReserveSoc` を現在 `batterySoc` と同じ、または近い値にすると、`touModeEnabled=true` のまま `batteryInputW` と `batteryOutputW` が近い値になり、EcoFlow が満充電維持に近い pass-through 的な挙動をすることがあった。
+
+この挙動は EcoFlow の公式な余剰追従モードではなく観測ベースの仮説なので、通常の余剰充電制御とは分けて、段階的に実装する。
+
+##### 7-7. pass-through dry-run planner を先に固定する
+
+目的:
+
+- AC 充電最小値 400W では吸収しきれない小さい売電を、backup reserve を現在 SOC へ寄せることで吸収できるかを dry-run で判断する
+- 買電中や SOC 上限到達時に pass-through を継続しない
+- 実機 write を増やす前に、`surplusPlan` と `decision_reason` に判断理由を残す
+
+開始候補条件:
+
+```text
+exportW > 0
+exportW < batteryOutputW + minChargeW + safetyMarginW
+batteryOutputW > 0
+touModeEnabled == true
+batterySoc < targetSoc
+```
+
+上記を満たす場合のみ `PASSTHROUGH` 状態にし、`recommendedBackupReserveSoc = batterySoc` を出す。
+
+禁止条件:
+
+```text
+importW > 0
+batterySoc >= targetSoc
+touModeEnabled != true
+batteryOutputW <= 0
+status / quota が不明
+```
+
+禁止条件では `PASSTHROUGH` ではなく `RECOVERING` または `IDLE` とする。
+
+実装条件:
+
+- `domain.SurplusPlan` に `StrategyState=PASSTHROUGH` と `ShouldAlignBackupReserve` を持たせる
+- `surplusPlan.actionSummary` に「バックアップリザーブを現在SOCへ合わせる」候補を出す
+- 買電中は「バックアップリザーブをデフォルトへ戻す」計画を優先する
+- SOC 上限到達時は pass-through より `RECOVERING` を優先する
+- unit test で以下を確認する
+  - 小余剰、TOU ON、SOC 上限未満なら `PASSTHROUGH`
+  - リザーブが既に SOC と一致している場合は no-op
+  - 買電中は `RECOVERING`
+  - SOC 上限以上では `RECOVERING`
+
+##### 7-8. pass-through one-shot 実機検証を追加する
+
+dry-run で十分に判断できるようになった後、手動 CLI だけで backup reserve を現在 SOC に合わせる検証を行う。
+
+実装条件:
+
+- server / UI からは送信しない
+- 既存の `ecoflow-write-test` と同じ safety guard を使う
+- 実行前に read-only で現在の `backupReserveSoc` / `batterySoc` / `touModeEnabled` を確認する
+- `--reserve-soc` は 1 command のみ送る
+- `expected-current-reserve` が一致しない場合は拒否する
+- 実行後は read-only で `batteryInputW` / `batteryOutputW` / `importW` / `exportW` の変化を確認する
+- 買電が増えた場合は、backup reserve をデフォルト値へ戻す rollback 手順を README に残す
+
+検証観点:
+
+```text
+pass-through が成立:
+  batteryInputW と batteryOutputW が近づく
+  netBatteryW が小さくなる
+  importW が増えない
+
+pass-through を解除:
+  backupReserveSoc を defaultReserveSoc へ戻す
+  batteryInputW が 0W へ落ちる
+  batteryOutputW が増えて放電寄りになる
+```
+
+##### 7-9. 自動制御へ入れる場合の状態遷移
+
+pass-through を自動制御に入れる場合でも、通常充電より弱い補助制御として扱う。
+
+```text
+IDLE:
+  余剰待ち。TOU ON を基本にする。
+
+READY:
+  exportW >= batteryOutputW + minChargeW + safetyMarginW
+  通常の 400W 以上充電を検討する。
+
+PASSTHROUGH:
+  通常充電には足りない小余剰。
+  TOU ON のまま backup reserve を現在 SOC へ合わせる候補。
+
+CHARGING:
+  TOU OFF または netBatteryW > 0 で通常充電中。
+
+RECOVERING:
+  買電、SOC 上限、エラー、または pass-through 解除時。
+  TOU ON と backup reserve default 復帰を優先する。
+```
+
+自動制御の初期制約:
+
+- `PASSTHROUGH` の自動 write は既定 OFF
+- `ENABLE_REAL_CONTROL=true` / `SIMULATION_MODE=false` / `AUTO_CONTROL_ENABLED=true` でも、専用 feature flag がない限り送らない
+- 連続成立回数と最小 command interval を通常充電より厳しくする
+- 買電を検出したら pass-through より rollback を優先する
+- 夕方、SOC 高止まり、天気予測で翌日晴天の場合は、pass-through を抑制できるようにする
 
 Phase 7 で実制御を入れる場合の優先制御軸:
 

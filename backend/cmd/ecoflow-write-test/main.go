@@ -28,6 +28,7 @@ type options struct {
 	expectedReserveSet     bool
 	disableTOU             bool
 	disableEnergyModes     bool
+	enableTOUMode          bool
 	expectedTOUMode        bool
 	expectedSelfPowered    bool
 	expectedScheduled      bool
@@ -67,6 +68,9 @@ func run(ctx context.Context, args []string, getenv envGetter, out io.Writer) er
 		if opts.disableEnergyModes {
 			fmt.Fprintf(out, " disable energy strategy modes after current checks (tou=%t selfPowered=%t scheduled=%t intelligent=%t)", opts.expectedTOUMode, opts.expectedSelfPowered, opts.expectedScheduled, opts.expectedIntelligent)
 		}
+		if opts.enableTOUMode {
+			fmt.Fprintf(out, " enable TOU mode after current checks (tou=%t selfPowered=%t scheduled=%t intelligent=%t)", opts.expectedTOUMode, opts.expectedSelfPowered, opts.expectedScheduled, opts.expectedIntelligent)
+		}
 		fmt.Fprintln(out, "; no request sent")
 		return nil
 	}
@@ -99,6 +103,11 @@ func run(ctx context.Context, args []string, getenv envGetter, out io.Writer) er
 		}
 	}
 	if opts.disableEnergyModes {
+		if err := validateEnergyModeStatus(status, opts); err != nil {
+			return err
+		}
+	}
+	if opts.enableTOUMode {
 		if err := validateEnergyModeStatus(status, opts); err != nil {
 			return err
 		}
@@ -136,6 +145,15 @@ func run(ctx context.Context, args []string, getenv envGetter, out io.Writer) er
 		}
 		commandsSent = append(commandsSent, "energy strategy modes false")
 	}
+	if opts.enableTOUMode {
+		if err := writer.SetTOUMode(ctx, true); err != nil {
+			if len(commandsSent) > 0 {
+				return fmt.Errorf("enable EcoFlow TOU mode after prior command(s) were already sent (%s): %w; verify current EcoFlow settings before retrying", strings.Join(commandsSent, ", "), err)
+			}
+			return fmt.Errorf("enable EcoFlow TOU mode: %w", err)
+		}
+		commandsSent = append(commandsSent, "TOU mode true")
+	}
 	fmt.Fprintf(out, "sent EcoFlow command(s): %s\n", strings.Join(commandsSent, ", "))
 	return nil
 }
@@ -150,6 +168,7 @@ func parseOptions(args []string) (options, error) {
 	flags.IntVar(&opts.expectedReserveSoc, "expected-current-reserve", 0, "expected current backup reserve SOC percent when --reserve-soc is set")
 	flags.BoolVar(&opts.disableEnergyModes, "disable-energy-modes", false, "disable EcoFlow energy strategy modes")
 	flags.BoolVar(&opts.disableTOU, "disable-tou", false, "deprecated alias for --disable-energy-modes")
+	flags.BoolVar(&opts.enableTOUMode, "enable-tou-mode", false, "enable EcoFlow TOU mode and keep other energy strategy modes disabled")
 	flags.BoolVar(&opts.expectedTOUMode, "expected-tou-mode", false, "expected current TOU mode when disabling energy modes")
 	flags.BoolVar(&opts.expectedSelfPowered, "expected-self-powered-mode", false, "expected current self-powered mode when disabling energy modes")
 	flags.BoolVar(&opts.expectedScheduled, "expected-scheduled-mode", false, "expected current scheduled mode when disabling energy modes")
@@ -184,8 +203,11 @@ func parseOptions(args []string) (options, error) {
 }
 
 func validateOptions(opts options) error {
-	if !opts.wattsSet && !opts.reserveSocSet && !opts.disableEnergyModes {
+	if !opts.wattsSet && !opts.reserveSocSet && !opts.disableEnergyModes && !opts.enableTOUMode {
 		return fmt.Errorf("at least one command flag is required")
+	}
+	if opts.disableEnergyModes && opts.enableTOUMode {
+		return fmt.Errorf("--disable-energy-modes and --enable-tou-mode cannot be used together")
 	}
 	if opts.wattsSet {
 		if !opts.expectedLimitSet {
@@ -219,15 +241,18 @@ func validateOptions(opts options) error {
 	} else if opts.expectedReserveSet {
 		return fmt.Errorf("--reserve-soc is required when --expected-current-reserve is set")
 	}
-	if opts.disableEnergyModes {
+	if opts.disableEnergyModes || opts.enableTOUMode {
 		if !opts.expectedTOUModeSet || !opts.expectedSelfSet || !opts.expectedScheduledSet || !opts.expectedIntelligentSet {
-			return fmt.Errorf("--expected-tou-mode, --expected-self-powered-mode, --expected-scheduled-mode, and --expected-intelligent-schedule-mode are required when disabling energy modes")
+			return fmt.Errorf("--expected-tou-mode, --expected-self-powered-mode, --expected-scheduled-mode, and --expected-intelligent-schedule-mode are required when changing energy modes")
 		}
-		if !opts.expectedTOUMode && !opts.expectedSelfPowered && !opts.expectedScheduled && !opts.expectedIntelligent {
+		if opts.disableEnergyModes && !opts.expectedTOUMode && !opts.expectedSelfPowered && !opts.expectedScheduled && !opts.expectedIntelligent {
 			return fmt.Errorf("at least one expected energy strategy mode must be true when disabling energy modes")
 		}
+		if opts.enableTOUMode && (opts.expectedTOUMode || opts.expectedSelfPowered || opts.expectedScheduled || opts.expectedIntelligent) {
+			return fmt.Errorf("--enable-tou-mode requires current TOU, self-powered, scheduled, and intelligent schedule modes to all be false")
+		}
 	} else if opts.expectedTOUModeSet || opts.expectedSelfSet || opts.expectedScheduledSet || opts.expectedIntelligentSet {
-		return fmt.Errorf("--disable-energy-modes is required when expected energy mode flags are set")
+		return fmt.Errorf("--disable-energy-modes or --enable-tou-mode is required when expected energy mode flags are set")
 	}
 	return nil
 }

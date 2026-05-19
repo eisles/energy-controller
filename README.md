@@ -101,7 +101,7 @@ go run ./cmd/server
 確認ポイント:
 
 - `/api/logs?limit=10` の `decisionReason` に `would-send` が残る
-- `decisionReason` に `surplus dry-run plan: ...` が残り、買電時のAC充電停止/リザーブ戻し、売電時の充電開始条件を確認できる
+- `decisionReason` に `surplus dry-run plan: ...` が残り、買電時のAC充電抑制/リザーブ戻し、売電時の充電開始条件を確認できる
 - dry-run のため `commandSent` は `false`
 - dry-run のため `actualCommandW` は `null`
 - interval / diff 抑制時は `decisionReason` に `command suppressed` が残る
@@ -189,7 +189,7 @@ go run ./cmd/ecoflow-write-test \
 
 2026-05-19 の実機確認では、AC充電上限とバックアップリザーブだけでは充電が始まらず、energy strategy modes 全OFF 後に `batteryInputW` が約 1.4kW へ増えました。この操作は時間帯制御への影響が大きいため、当面は one-shot CLI に限定し、自動連続制御や UI/API からは実行しません。
 
-実行後は EcoFlow app または read-only status で反映を確認し、`ENABLE_REAL_CONTROL` と `CONFIRM_ECOFLOW_WRITE` は継続運用用に残さないでください。自動連続制御、UI からの書き込み、server API からの書き込みはまだ有効化していません。
+実行後は EcoFlow app または read-only status で反映を確認し、`ENABLE_REAL_CONTROL` と `CONFIRM_ECOFLOW_WRITE` は継続運用用に残さないでください。2026-05-19 の実機確認では read-only status 上は 200W まで反映しましたが、EcoFlow app の設定UIでは 400W が最小値として表示されるため、自動制御の下限は 400W として扱います。自動連続制御、UI からの書き込み、server API からの書き込みはまだ有効化していません。
 
 ## Phase 1 の実装範囲
 

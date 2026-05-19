@@ -422,6 +422,66 @@ func TestRunExecuteDisablesTOUAfterReadCheck(t *testing.T) {
 	}
 }
 
+func TestRunExecuteEnablesTOUAfterReadCheck(t *testing.T) {
+	var getRequests, putRequests int
+	var putBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			getRequests++
+			writeQuotaAllWithEnergyModes(t, w, 200, 85, false, false, false, false)
+		case http.MethodPut:
+			putRequests++
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("ReadAll failed: %v", err)
+			}
+			putBody = string(body)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "0", "message": "Success"})
+		default:
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	err := run(context.Background(), []string{
+		"--execute",
+		"--enable-tou-mode",
+		"--expected-tou-mode=false",
+		"--expected-self-powered-mode=false",
+		"--expected-scheduled-mode=false",
+		"--expected-intelligent-schedule-mode=false",
+	}, mapEnv(validEnv(server.URL)), &out)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if getRequests != 1 || putRequests != 1 {
+		t.Fatalf("requests GET=%d PUT=%d, want 1/1", getRequests, putRequests)
+	}
+	wantBody := `{"sn":"DP3-SN","cmdId":17,"cmdFunc":254,"dirDest":1,"dirSrc":1,"dest":2,"needAck":true,"params":{"cfgEnergyStrategyOperateMode":{"operateIntelligentScheduleModeOpen":false,"operateScheduledOpen":false,"operateSelfPoweredOpen":false,"operateTouModeOpen":true}}}`
+	if putBody != wantBody {
+		t.Fatalf("PUT body = %s, want %s", putBody, wantBody)
+	}
+	if !strings.Contains(out.String(), "TOU mode true") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestRunEnableTOUModeRequiresAllEnergyModesCurrentlyFalse(t *testing.T) {
+	err := run(context.Background(), []string{
+		"--execute",
+		"--enable-tou-mode",
+		"--expected-tou-mode=false",
+		"--expected-self-powered-mode=true",
+		"--expected-scheduled-mode=false",
+		"--expected-intelligent-schedule-mode=false",
+	}, emptyEnv, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "requires current TOU, self-powered, scheduled, and intelligent schedule modes to all be false") {
+		t.Fatalf("run error = %v, want enable TOU mode validation error", err)
+	}
+}
+
 func TestRunExecuteRefusesWhenCurrentTOUDoesNotMatch(t *testing.T) {
 	var getRequests, putRequests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

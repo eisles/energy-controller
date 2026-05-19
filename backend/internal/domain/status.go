@@ -53,13 +53,18 @@ type Status struct {
 
 type SurplusPlan struct {
 	Mode                        string `json:"mode"`
+	StrategyState               string `json:"strategyState"`
 	NetBatteryW                 int    `json:"netBatteryW"`
+	RequiredStartExportW        int    `json:"requiredStartExportW"`
+	AvailableStartMarginW       int    `json:"availableStartMarginW"`
 	RecommendedACChargeLimitW   int    `json:"recommendedAcChargeLimitW"`
 	RecommendedBackupReserveSoc *int   `json:"recommendedBackupReserveSoc,omitempty"`
 	ShouldRaiseBackupReserve    bool   `json:"shouldRaiseBackupReserve"`
 	ShouldLowerBackupReserve    bool   `json:"shouldLowerBackupReserve"`
+	ShouldAlignBackupReserve    bool   `json:"shouldAlignBackupReserve"`
 	ShouldAdjustACChargeLimit   bool   `json:"shouldAdjustAcChargeLimit"`
 	ShouldDisableEnergyModes    bool   `json:"shouldDisableEnergyModes"`
+	ShouldEnableTOUMode         bool   `json:"shouldEnableTouMode"`
 	WouldWrite                  bool   `json:"wouldWrite"`
 	ActionSummary               string `json:"actionSummary"`
 	Reason                      string `json:"reason"`

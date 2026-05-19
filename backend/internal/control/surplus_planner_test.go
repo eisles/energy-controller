@@ -18,10 +18,13 @@ func TestPlanSurplusChargingRecommendsACAndReserve(t *testing.T) {
 		TOUModeEnabled:    &tou,
 		SimulationMode:    true,
 		EnableRealControl: false,
-	}, DefaultSettings())
+	}, SettingsWithTargetSoc(100))
 
 	if plan.RecommendedACChargeLimitW != 1000 {
 		t.Fatalf("RecommendedACChargeLimitW = %d, want 1000", plan.RecommendedACChargeLimitW)
+	}
+	if plan.StrategyState != "READY" {
+		t.Fatalf("StrategyState = %q, want READY", plan.StrategyState)
 	}
 	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 80 {
 		t.Fatalf("RecommendedBackupReserveSoc = %v, want 80", plan.RecommendedBackupReserveSoc)
@@ -48,19 +51,199 @@ func TestPlanSurplusChargingRecommendsACAndReserve(t *testing.T) {
 	}
 }
 
+func TestPlanSurplusChargingWaitsBelowConservativeStartRequirement(t *testing.T) {
+	reserve := 85
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:             -768,
+		BatterySoc:        97,
+		BatteryInputW:     0,
+		BatteryOutputW:    359,
+		ACChargeLimitW:    400,
+		BackupReserveSoc:  &reserve,
+		SimulationMode:    true,
+		EnableRealControl: false,
+	}, SettingsWithTargetSoc(100))
+
+	if plan.StrategyState != "IDLE" {
+		t.Fatalf("StrategyState = %q, want IDLE", plan.StrategyState)
+	}
+	if plan.RequiredStartExportW != 909 {
+		t.Fatalf("RequiredStartExportW = %d, want 909", plan.RequiredStartExportW)
+	}
+	if plan.AvailableStartMarginW != -141 {
+		t.Fatalf("AvailableStartMarginW = %d, want -141", plan.AvailableStartMarginW)
+	}
+	if plan.ActionSummary != "" {
+		t.Fatalf("ActionSummary = %q, want empty", plan.ActionSummary)
+	}
+	if !strings.Contains(plan.Reason, "conservative start requirement") {
+		t.Fatalf("Reason = %q, want conservative start requirement", plan.Reason)
+	}
+}
+
+func TestPlanSurplusChargingUsesPassThroughForSmallSurplusWhenSocIsHigh(t *testing.T) {
+	tou := true
+	reserve := 85
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:             -768,
+		BatterySoc:        97,
+		BatteryInputW:     0,
+		BatteryOutputW:    359,
+		ACChargeLimitW:    400,
+		BackupReserveSoc:  &reserve,
+		TOUModeEnabled:    &tou,
+		SimulationMode:    true,
+		EnableRealControl: false,
+	}, SettingsWithTargetSoc(100))
+
+	if plan.StrategyState != "PASSTHROUGH" {
+		t.Fatalf("StrategyState = %q, want PASSTHROUGH", plan.StrategyState)
+	}
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 97 {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want 97", plan.RecommendedBackupReserveSoc)
+	}
+	if !plan.ShouldAlignBackupReserve {
+		t.Fatal("ShouldAlignBackupReserve = false, want true")
+	}
+	if plan.WouldWrite {
+		t.Fatal("WouldWrite = true, want false until pass-through write gets a dedicated feature flag")
+	}
+	if plan.ShouldDisableEnergyModes || plan.ShouldAdjustACChargeLimit {
+		t.Fatalf("unexpected normal charging action: %+v", plan)
+	}
+	if !strings.Contains(plan.ActionSummary, "バックアップリザーブを現在SOCの97%へ合わせる") {
+		t.Fatalf("ActionSummary = %q, want pass-through reserve action", plan.ActionSummary)
+	}
+	if !strings.Contains(plan.Reason, "pass-through behavior") {
+		t.Fatalf("Reason = %q, want pass-through behavior", plan.Reason)
+	}
+}
+
+func TestPlanSurplusChargingPassThroughDoesNothingWhenReserveAlreadyMatchesSoc(t *testing.T) {
+	tou := true
+	reserve := 97
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:             -768,
+		BatterySoc:        97,
+		BatteryInputW:     0,
+		BatteryOutputW:    359,
+		ACChargeLimitW:    400,
+		BackupReserveSoc:  &reserve,
+		TOUModeEnabled:    &tou,
+		SimulationMode:    true,
+		EnableRealControl: false,
+	}, SettingsWithTargetSoc(100))
+
+	if plan.StrategyState != "PASSTHROUGH" {
+		t.Fatalf("StrategyState = %q, want PASSTHROUGH", plan.StrategyState)
+	}
+	if plan.ShouldAlignBackupReserve {
+		t.Fatal("ShouldAlignBackupReserve = true, want false")
+	}
+	if plan.ActionSummary != "" {
+		t.Fatalf("ActionSummary = %q, want empty", plan.ActionSummary)
+	}
+}
+
+func TestPlanSurplusChargingDoesNotUsePassThroughWithoutBackupReserveStatus(t *testing.T) {
+	tou := true
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:             -768,
+		BatterySoc:        97,
+		BatteryInputW:     0,
+		BatteryOutputW:    359,
+		ACChargeLimitW:    400,
+		BackupReserveSoc:  nil,
+		TOUModeEnabled:    &tou,
+		SimulationMode:    true,
+		EnableRealControl: false,
+	}, SettingsWithTargetSoc(100))
+
+	if plan.StrategyState == "PASSTHROUGH" {
+		t.Fatalf("StrategyState = %q, want non-PASSTHROUGH when backup reserve is unavailable", plan.StrategyState)
+	}
+	if plan.ShouldAlignBackupReserve {
+		t.Fatal("ShouldAlignBackupReserve = true, want false when backup reserve is unavailable")
+	}
+	if strings.Contains(plan.ActionSummary, "バックアップリザーブを現在SOC") {
+		t.Fatalf("ActionSummary = %q, want no pass-through reserve action", plan.ActionSummary)
+	}
+}
+
+func TestPlanSurplusChargingRecoversAtTargetSocBeforePassThrough(t *testing.T) {
+	tou := true
+	reserve := 97
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:             -768,
+		BatterySoc:        97,
+		BatteryInputW:     0,
+		BatteryOutputW:    359,
+		ACChargeLimitW:    400,
+		BackupReserveSoc:  &reserve,
+		DefaultReserveSoc: 85,
+		TOUModeEnabled:    &tou,
+		SimulationMode:    true,
+		EnableRealControl: false,
+	}, SettingsWithTargetSoc(97))
+
+	if plan.StrategyState != "RECOVERING" {
+		t.Fatalf("StrategyState = %q, want RECOVERING", plan.StrategyState)
+	}
+	if plan.ShouldAlignBackupReserve {
+		t.Fatal("ShouldAlignBackupReserve = true, want false")
+	}
+	if !plan.ShouldLowerBackupReserve {
+		t.Fatal("ShouldLowerBackupReserve = false, want true")
+	}
+	if !strings.Contains(plan.Reason, "battery soc is at or above target") {
+		t.Fatalf("Reason = %q, want target SOC recovery", plan.Reason)
+	}
+}
+
+func TestPlanSurplusChargingStartsAtMinimumWhenConservativeRequirementMet(t *testing.T) {
+	tou := true
+	reserve := 85
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:             -950,
+		BatterySoc:        97,
+		BatteryInputW:     0,
+		BatteryOutputW:    359,
+		ACChargeLimitW:    200,
+		BackupReserveSoc:  &reserve,
+		TOUModeEnabled:    &tou,
+		SimulationMode:    true,
+		EnableRealControl: false,
+	}, SettingsWithTargetSoc(100))
+
+	if plan.StrategyState != "READY" {
+		t.Fatalf("StrategyState = %q, want READY", plan.StrategyState)
+	}
+	if plan.RecommendedACChargeLimitW != 400 {
+		t.Fatalf("RecommendedACChargeLimitW = %d, want 400", plan.RecommendedACChargeLimitW)
+	}
+	if !plan.ShouldDisableEnergyModes {
+		t.Fatal("ShouldDisableEnergyModes = false, want true")
+	}
+	if !strings.Contains(plan.ActionSummary, "AC充電上限を400Wへ設定") {
+		t.Fatalf("ActionSummary = %q, want AC charge action", plan.ActionSummary)
+	}
+}
+
 func TestPlanSurplusChargingRestoresDefaultReserveWhenImporting(t *testing.T) {
 	reserve := 90
+	tou := false
 	plan := PlanSurplusCharging(SurplusPlanInput{
 		GridW:             900,
 		BatterySoc:        78,
 		ACChargeLimitW:    1500,
 		BackupReserveSoc:  &reserve,
 		DefaultReserveSoc: 30,
+		TOUModeEnabled:    &tou,
 		SimulationMode:    true,
 	}, DefaultSettings())
 
-	if plan.RecommendedACChargeLimitW != 0 {
-		t.Fatalf("RecommendedACChargeLimitW = %d, want 0", plan.RecommendedACChargeLimitW)
+	if plan.RecommendedACChargeLimitW != 400 {
+		t.Fatalf("RecommendedACChargeLimitW = %d, want 400", plan.RecommendedACChargeLimitW)
 	}
 	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 30 {
 		t.Fatalf("RecommendedBackupReserveSoc = %v, want 30", plan.RecommendedBackupReserveSoc)
@@ -71,13 +254,91 @@ func TestPlanSurplusChargingRestoresDefaultReserveWhenImporting(t *testing.T) {
 	if !plan.ShouldLowerBackupReserve {
 		t.Fatal("ShouldLowerBackupReserve = false, want true")
 	}
-	for _, want := range []string{"AC充電上限を0Wへ設定", "バックアップリザーブを30%へ戻す"} {
+	if !plan.ShouldEnableTOUMode {
+		t.Fatal("ShouldEnableTOUMode = false, want true")
+	}
+	if plan.StrategyState != "RECOVERING" {
+		t.Fatalf("StrategyState = %q, want RECOVERING", plan.StrategyState)
+	}
+	for _, want := range []string{"AC充電上限を400Wへ設定", "バックアップリザーブを30%へ戻す", "TOUをONに戻す"} {
 		if !strings.Contains(plan.ActionSummary, want) {
 			t.Fatalf("ActionSummary = %q, want contains %q", plan.ActionSummary, want)
 		}
 	}
-	if plan.ShouldRaiseBackupReserve || plan.WouldWrite {
+	if plan.ShouldRaiseBackupReserve || plan.ShouldAlignBackupReserve || plan.WouldWrite {
 		t.Fatalf("unexpected write recommendation: %+v", plan)
+	}
+}
+
+func TestPlanSurplusChargingStopsWhenTargetSocReached(t *testing.T) {
+	reserve := 100
+	tou := false
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:             -1200,
+		BatterySoc:        98,
+		BatteryInputW:     600,
+		BatteryOutputW:    200,
+		ACChargeLimitW:    400,
+		BackupReserveSoc:  &reserve,
+		DefaultReserveSoc: 85,
+		TOUModeEnabled:    &tou,
+		SimulationMode:    true,
+	}, DefaultSettings())
+
+	if plan.StrategyState != "RECOVERING" {
+		t.Fatalf("StrategyState = %q, want RECOVERING", plan.StrategyState)
+	}
+	if !plan.ShouldEnableTOUMode {
+		t.Fatal("ShouldEnableTOUMode = false, want true")
+	}
+	if !plan.ShouldLowerBackupReserve {
+		t.Fatal("ShouldLowerBackupReserve = false, want true")
+	}
+	for _, want := range []string{"バックアップリザーブを85%へ戻す", "TOUをONに戻す"} {
+		if !strings.Contains(plan.ActionSummary, want) {
+			t.Fatalf("ActionSummary = %q, want contains %q", plan.ActionSummary, want)
+		}
+	}
+}
+
+func TestPlanSurplusChargingDoesNotGoBelowAppMinimumWhenImporting(t *testing.T) {
+	reserve := 90
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:             900,
+		BatterySoc:        78,
+		ACChargeLimitW:    500,
+		BackupReserveSoc:  &reserve,
+		DefaultReserveSoc: 30,
+		SimulationMode:    true,
+	}, DefaultSettings())
+
+	if plan.RecommendedACChargeLimitW != 400 {
+		t.Fatalf("RecommendedACChargeLimitW = %d, want 400", plan.RecommendedACChargeLimitW)
+	}
+	if !strings.Contains(plan.ActionSummary, "AC充電上限を400Wへ設定") {
+		t.Fatalf("ActionSummary = %q, want app-minimum AC action", plan.ActionSummary)
+	}
+}
+
+func TestPlanSurplusChargingDoesNotRaiseBelowRecoveryLimitWhenImporting(t *testing.T) {
+	reserve := 90
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:             900,
+		BatterySoc:        78,
+		ACChargeLimitW:    80,
+		BackupReserveSoc:  &reserve,
+		DefaultReserveSoc: 30,
+		SimulationMode:    true,
+	}, DefaultSettings())
+
+	if plan.RecommendedACChargeLimitW != 80 {
+		t.Fatalf("RecommendedACChargeLimitW = %d, want 80", plan.RecommendedACChargeLimitW)
+	}
+	if plan.ShouldAdjustACChargeLimit {
+		t.Fatal("ShouldAdjustACChargeLimit = true, want false")
+	}
+	if strings.Contains(plan.ActionSummary, "AC充電上限") {
+		t.Fatalf("ActionSummary = %q, want no AC action", plan.ActionSummary)
 	}
 }
 
@@ -144,10 +405,16 @@ func TestPlanSurplusChargingDoesNotLowerReserveBelowDefaultWhenImporting(t *test
 	if plan.RecommendedBackupReserveSoc != nil {
 		t.Fatalf("RecommendedBackupReserveSoc = %v, want nil", plan.RecommendedBackupReserveSoc)
 	}
-	if plan.ShouldRaiseBackupReserve || plan.ShouldLowerBackupReserve || plan.ShouldAdjustACChargeLimit || plan.WouldWrite {
+	if plan.ShouldRaiseBackupReserve || plan.ShouldLowerBackupReserve || plan.ShouldAlignBackupReserve || plan.ShouldAdjustACChargeLimit || plan.WouldWrite {
 		t.Fatalf("unexpected write recommendation: %+v", plan)
 	}
 	if plan.ActionSummary != "" {
 		t.Fatalf("ActionSummary = %q, want empty", plan.ActionSummary)
 	}
+}
+
+func SettingsWithTargetSoc(targetSoc int) Settings {
+	settings := DefaultSettings()
+	settings.TargetSoc = targetSoc
+	return settings
 }

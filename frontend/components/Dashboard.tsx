@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ControlPanel } from "@/components/ControlPanel";
+import { DryRunPlanHistory } from "@/components/DryRunPlanHistory";
 import { EnergyCharts } from "@/components/EnergyCharts";
 import { EnergyMeterLogTable } from "@/components/EnergyMeterLogTable";
 import { Header } from "@/components/Header";
@@ -32,6 +33,7 @@ const forecastRanges = [
 
 const logPageSize = 25;
 const energyMeterLogPageSize = 25;
+const dryRunPlanLimit = 10;
 
 const initialStatus: EnergyStatus = {
   gridW: 0,
@@ -53,6 +55,7 @@ export function Dashboard() {
   const [status, setStatus] = useState<EnergyStatus>(initialStatus);
   const [chartLogs, setChartLogs] = useState<PowerLog[]>([]);
   const [tableLogs, setTableLogs] = useState<PowerLog[]>([]);
+  const [dryRunPlanLogs, setDryRunPlanLogs] = useState<PowerLog[]>([]);
   const [logPage, setLogPage] = useState(1);
   const [logSearchInput, setLogSearchInput] = useState("");
   const [logFromInput, setLogFromInput] = useState("");
@@ -79,6 +82,7 @@ export function Dashboard() {
   const [logRange, setLogRange] = useState<LogRange>(logRanges[1]);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [logsError, setLogsError] = useState<string | null>(null);
+  const [dryRunPlanError, setDryRunPlanError] = useState<string | null>(null);
   const [energyMeterError, setEnergyMeterError] = useState<string | null>(null);
   const [tariffError, setTariffError] = useState<string | null>(null);
   const [solarForecastError, setSolarForecastError] = useState<string | null>(null);
@@ -162,6 +166,35 @@ export function Dashboard() {
       window.clearInterval(timer);
     };
   }, [logPage, appliedLogSearch, appliedLogFrom, appliedLogTo]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDryRunPlans() {
+      try {
+        const nextPage = await fetchLogsPage({
+          limit: dryRunPlanLimit,
+          offset: 0,
+          q: "surplus dry-run plan"
+        });
+        if (!cancelled) {
+          setDryRunPlanLogs(nextPage.items);
+          setDryRunPlanError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setDryRunPlanError(err instanceof Error ? err.message : "dry-run plan logs request failed");
+        }
+      }
+    }
+
+    loadDryRunPlans();
+    const timer = window.setInterval(loadDryRunPlans, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -303,6 +336,7 @@ export function Dashboard() {
     <main className="page-shell">
       <Header status={status} />
       <StatusCards status={status} fetchError={statusError} />
+      <DryRunPlanHistory logs={dryRunPlanLogs} error={dryRunPlanError} />
       <EnergyCharts logs={chartLogs} rangeLabel={logRange.label} ranges={logRanges} selectedRange={logRange} onRangeChange={setLogRange} />
       <ControlPanel onTariffPlanSaved={() => setTariffRefreshToken((value) => value + 1)} />
       <SolarForecastPanel

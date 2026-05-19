@@ -154,13 +154,18 @@ function SurplusPlanCard({ plan }: { plan?: SurplusPlan | null }) {
       </CardHeader>
       <CardContent>
         <div className="detail-strip" aria-label="surplus planner detail">
+          <Detail label="状態" value={plan.strategyState || "-"} />
           <Detail label="Net battery" value={formatNetBatteryFlow(plan.netBatteryW)} />
+          <Detail label="開始必要売電" value={`${plan.requiredStartExportW} W`} />
+          <Detail label="開始余力" value={formatSignedW(plan.availableStartMarginW)} />
           <Detail label="推奨AC充電" value={`${plan.recommendedAcChargeLimitW} W`} />
           <Detail label="推奨リザーブ" value={nullablePercent(plan.recommendedBackupReserveSoc)} />
           <Detail label="AC調整" value={yesNo(plan.shouldAdjustAcChargeLimit)} />
           <Detail label="リザーブ引上げ" value={yesNo(plan.shouldRaiseBackupReserve)} />
           <Detail label="リザーブ戻し" value={yesNo(plan.shouldLowerBackupReserve)} />
+          <Detail label="リザーブ同期" value={yesNo(plan.shouldAlignBackupReserve)} />
           <Detail label="Modes OFF" value={yesNo(plan.shouldDisableEnergyModes)} />
+          <Detail label="TOU ON" value={yesNo(plan.shouldEnableTouMode)} />
         </div>
         <p className="planner-reason">{surplusActionLabel(plan)}</p>
         <p className="planner-reason">{plan.reason || "-"}</p>
@@ -207,6 +212,13 @@ function formatNetBatteryFlow(netBatteryW: number) {
   return "待機中 0 W";
 }
 
+function formatSignedW(value: number) {
+  if (value > 0) {
+    return `+${value} W`;
+  }
+  return `${value} W`;
+}
+
 function chargeRecommendationDescription(exportW: number, targetChargeW: number) {
   if (exportW > 0 && targetChargeW > 0) {
     return `余剰あり: ${targetChargeW}W充電推奨 / read-onlyで未送信`;
@@ -232,11 +244,17 @@ function surplusActionLabel(plan: SurplusPlan) {
   if (plan.shouldRaiseBackupReserve && reserveLabel) {
     surplusActions.push(`リザーブを${reserveLabel}へ引き上げ`);
   }
+  if (plan.shouldAlignBackupReserve && reserveLabel) {
+    surplusActions.push(`リザーブを現在SOCの${reserveLabel}へ合わせる`);
+  }
   if (plan.shouldAdjustAcChargeLimit && plan.recommendedAcChargeLimitW > 0) {
     surplusActions.push(`AC充電を${plan.recommendedAcChargeLimitW}Wへ調整`);
   }
   if (plan.shouldDisableEnergyModes) {
     surplusActions.push("energy strategy modesを全OFFに");
+  }
+  if (plan.shouldEnableTouMode) {
+    surplusActions.push("TOUをONに戻す");
   }
   if (surplusActions.length > 0) {
     return `売電抑制: 充電開始には${surplusActions.join("、")}する推奨です。read-onlyのため未送信です。`;
