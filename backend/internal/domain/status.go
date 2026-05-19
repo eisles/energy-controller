@@ -16,6 +16,9 @@ type BatteryStatus struct {
 	BackupReserveSoc    *int  `json:"backupReserveSoc,omitempty"`
 	EnergyBackupEnabled *bool `json:"energyBackupEnabled,omitempty"`
 	TOUModeEnabled      *bool `json:"touModeEnabled,omitempty"`
+	SelfPoweredEnabled  *bool `json:"selfPoweredEnabled,omitempty"`
+	ScheduledEnabled    *bool `json:"scheduledEnabled,omitempty"`
+	IntelligentEnabled  *bool `json:"intelligentEnabled,omitempty"`
 	FullEnergyWh        *int  `json:"fullEnergyWh,omitempty"`
 	IsOnline            bool  `json:"isOnline"`
 }
@@ -56,6 +59,7 @@ type SurplusPlan struct {
 	ShouldRaiseBackupReserve    bool   `json:"shouldRaiseBackupReserve"`
 	ShouldLowerBackupReserve    bool   `json:"shouldLowerBackupReserve"`
 	ShouldAdjustACChargeLimit   bool   `json:"shouldAdjustAcChargeLimit"`
+	ShouldDisableEnergyModes    bool   `json:"shouldDisableEnergyModes"`
 	WouldWrite                  bool   `json:"wouldWrite"`
 	Reason                      string `json:"reason"`
 }

@@ -266,6 +266,49 @@ params.cfgBackupReverseSoc=<percent>
 
 この param は read-only quota の `backupReverseSoc` / `energyBackupStartSoc` と EcoFlow 系の隣接 document からの候補であり、DELTA Pro 3 実機での正式反映は one-shot で確認する必要がある。CLI は `--reserve-soc` 指定時に read-only API で現在の backup reserve が `--expected-current-reserve` と一致することを確認してから、AC 充電 W、backup reserve % の順で 1 回ずつ送る。
 
+## 実機確認: TOU OFF が実充電開始条件だった
+
+2026-05-19 に、売電中の状態で AC 充電上限を 1500W、backup reserve を 85% に one-shot 設定したが、`batteryInputW=0` のままで実充電は始まらなかった。
+
+その後、energy strategy modes を全て OFF にする one-shot を検証した。
+
+失敗した候補:
+
+```json
+{
+  "params": {
+    "cfgEnergyStrategyOperateMode.operateTouModeOpen": false
+  }
+}
+```
+
+この dotted key 形式は EcoFlow API から `code=1008 message=request fail,please check your params` で拒否された。
+
+成功した候補:
+
+```json
+{
+  "params": {
+    "cfgEnergyStrategyOperateMode": {
+      "operateTouModeOpen": false,
+      "operateSelfPoweredOpen": false,
+      "operateScheduledOpen": false,
+      "operateIntelligentScheduleModeOpen": false
+    }
+  }
+}
+```
+
+この one-shot 後に read-only status で `touModeEnabled=false` となり、`batteryInputW` が約 1.4kW、実質充電が約 1.1kW になった。
+
+このため、余剰追従で実際に充電させるには、少なくとも以下の3点が必要と判断する。
+
+1. energy strategy modes を全て OFF にする
+2. backup reserve % を現在 SOC より上げる
+3. AC charge power W を売電余剰に合わせる
+
+ただし、energy strategy modes 全OFF は生活/料金時間帯制御への影響が大きいため、当面は one-shot CLI に限定し、自動連続制御や UI/API からの write には接続しない。CLI では TOU / self-powered / scheduled / intelligent schedule の read-only 現在値を期待値として指定し、変更対象の全 flag を確認してから送信する。
+
 ## 実機確認: AC 充電上限 1500W -> 1000W one-shot
 
 2026-05-18 に、one-shot CLI を使って DELTA Pro 3 の AC 充電上限を 1500W から 1000W へ 1 回だけ変更した。

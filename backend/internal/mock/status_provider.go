@@ -112,17 +112,20 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 	}
 	p.setCommandStatus(commandSent, actualCommandW)
 	surplusPlan := control.PlanSurplusCharging(control.SurplusPlanInput{
-		GridW:             gridPower.GridW,
-		BatterySoc:        batteryStatus.Soc,
-		BatteryInputW:     batteryStatus.InputW,
-		BatteryOutputW:    batteryStatus.OutputW,
-		ACChargeLimitW:    batteryStatus.ACChargeLimitW,
-		BackupReserveSoc:  batteryStatus.BackupReserveSoc,
-		DefaultReserveSoc: defaultReserveSoc(solarSettings),
-		TOUModeEnabled:    batteryStatus.TOUModeEnabled,
-		SimulationMode:    p.simulationMode,
-		EnableRealControl: p.realControl,
-		AutoControl:       p.autoControl,
+		GridW:              gridPower.GridW,
+		BatterySoc:         batteryStatus.Soc,
+		BatteryInputW:      batteryStatus.InputW,
+		BatteryOutputW:     batteryStatus.OutputW,
+		ACChargeLimitW:     batteryStatus.ACChargeLimitW,
+		BackupReserveSoc:   batteryStatus.BackupReserveSoc,
+		DefaultReserveSoc:  defaultReserveSoc(solarSettings),
+		TOUModeEnabled:     batteryStatus.TOUModeEnabled,
+		SelfPoweredEnabled: batteryStatus.SelfPoweredEnabled,
+		ScheduledEnabled:   batteryStatus.ScheduledEnabled,
+		IntelligentEnabled: batteryStatus.IntelligentEnabled,
+		SimulationMode:     p.simulationMode,
+		EnableRealControl:  p.realControl,
+		AutoControl:        p.autoControl,
 	}, p.settings)
 	nightChargePlan := control.PlanNightCharging(control.NightChargePlanInput{
 		BatterySoc:          batteryStatus.Soc,

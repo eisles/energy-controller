@@ -3,17 +3,20 @@ package control
 import "github.com/eisles/energy-controller/backend/internal/domain"
 
 type SurplusPlanInput struct {
-	GridW             int
-	BatterySoc        int
-	BatteryInputW     int
-	BatteryOutputW    int
-	ACChargeLimitW    int
-	BackupReserveSoc  *int
-	DefaultReserveSoc int
-	TOUModeEnabled    *bool
-	SimulationMode    bool
-	EnableRealControl bool
-	AutoControl       bool
+	GridW              int
+	BatterySoc         int
+	BatteryInputW      int
+	BatteryOutputW     int
+	ACChargeLimitW     int
+	BackupReserveSoc   *int
+	DefaultReserveSoc  int
+	TOUModeEnabled     *bool
+	SelfPoweredEnabled *bool
+	ScheduledEnabled   *bool
+	IntelligentEnabled *bool
+	SimulationMode     bool
+	EnableRealControl  bool
+	AutoControl        bool
 }
 
 func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.SurplusPlan {
@@ -56,6 +59,9 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		plan.RecommendedBackupReserveSoc = &recommendedReserve
 		plan.ShouldRaiseBackupReserve = recommendedReserve > *input.BackupReserveSoc && recommendedReserve > input.BatterySoc
 	}
+	if hasEnabledEnergyMode(input) {
+		plan.ShouldDisableEnergyModes = true
+	}
 
 	switch {
 	case input.SimulationMode:
@@ -66,13 +72,24 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		plan.Reason = "surplus detected; auto control disabled keeps EcoFlow write disabled"
 	default:
 		plan.Reason = "surplus detected; planner recommends charging adjustments"
-		plan.WouldWrite = plan.ShouldAdjustACChargeLimit || plan.ShouldRaiseBackupReserve
+		plan.WouldWrite = plan.ShouldAdjustACChargeLimit || plan.ShouldRaiseBackupReserve || plan.ShouldDisableEnergyModes
 	}
 
-	if input.TOUModeEnabled != nil && *input.TOUModeEnabled {
-		plan.Reason += "; EcoFlow TOU mode is enabled"
+	if hasEnabledEnergyMode(input) {
+		plan.Reason += "; EcoFlow energy strategy mode blocks surplus charging until disabled"
 	}
 	return plan
+}
+
+func hasEnabledEnergyMode(input SurplusPlanInput) bool {
+	return boolPtrTrue(input.TOUModeEnabled) ||
+		boolPtrTrue(input.SelfPoweredEnabled) ||
+		boolPtrTrue(input.ScheduledEnabled) ||
+		boolPtrTrue(input.IntelligentEnabled)
+}
+
+func boolPtrTrue(value *bool) bool {
+	return value != nil && *value
 }
 
 func normalizeReserveSoc(value int) int {

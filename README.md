@@ -164,6 +164,30 @@ go run ./cmd/ecoflow-write-test \
   --expected-current-reserve 88
 ```
 
+Energy strategy modes を全て OFF にする one-shot 検証:
+
+```bash
+cd backend
+MOCK_MODE=false \
+SIMULATION_MODE=false \
+ENABLE_REAL_CONTROL=true \
+AUTO_CONTROL_ENABLED=false \
+CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND \
+ECOFLOW_ACCESS_KEY=... \
+ECOFLOW_SECRET_KEY=... \
+ECOFLOW_DEVICE_SN=... \
+ECOFLOW_BASE_URL=https://api-e.ecoflow.com \
+go run ./cmd/ecoflow-write-test \
+  --execute \
+  --disable-energy-modes \
+  --expected-tou-mode=true \
+  --expected-self-powered-mode=false \
+  --expected-scheduled-mode=false \
+  --expected-intelligent-schedule-mode=false
+```
+
+2026-05-19 の実機確認では、AC充電上限とバックアップリザーブだけでは充電が始まらず、energy strategy modes 全OFF 後に `batteryInputW` が約 1.4kW へ増えました。この操作は時間帯制御への影響が大きいため、当面は one-shot CLI に限定し、自動連続制御や UI/API からは実行しません。
+
 実行後は EcoFlow app または read-only status で反映を確認し、`ENABLE_REAL_CONTROL` と `CONFIRM_ECOFLOW_WRITE` は継続運用用に残さないでください。自動連続制御、UI からの書き込み、server API からの書き込みはまだ有効化していません。
 
 ## Phase 1 の実装範囲

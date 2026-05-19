@@ -14,13 +14,16 @@ func TestMockWriteClientRecordsCommands(t *testing.T) {
 	if err := client.SetBackupReserveSoc(context.Background(), 82); err != nil {
 		t.Fatalf("SetBackupReserveSoc failed: %v", err)
 	}
+	if err := client.SetTOUMode(context.Background(), false); err != nil {
+		t.Fatalf("SetTOUMode failed: %v", err)
+	}
 	if err := client.StopOrMinimizeCharging(context.Background()); err != nil {
 		t.Fatalf("StopOrMinimizeCharging failed: %v", err)
 	}
 
 	commands := client.Snapshot()
-	if len(commands) != 3 {
-		t.Fatalf("len(commands) = %d, want 3", len(commands))
+	if len(commands) != 4 {
+		t.Fatalf("len(commands) = %d, want 4", len(commands))
 	}
 	if commands[0].Name != "set_ac_charge_power" || commands[0].Watts != 1000 {
 		t.Fatalf("first command = %+v, want set_ac_charge_power 1000", commands[0])
@@ -28,8 +31,11 @@ func TestMockWriteClientRecordsCommands(t *testing.T) {
 	if commands[1].Name != "set_backup_reserve_soc" || commands[1].Watts != 82 {
 		t.Fatalf("second command = %+v, want set_backup_reserve_soc 82", commands[1])
 	}
-	if commands[2].Name != "stop_or_minimize_charging" || commands[2].Watts != 0 {
-		t.Fatalf("third command = %+v, want stop_or_minimize_charging 0", commands[2])
+	if commands[2].Name != "set_tou_mode" || commands[2].Watts != 0 {
+		t.Fatalf("third command = %+v, want set_tou_mode 0", commands[2])
+	}
+	if commands[3].Name != "stop_or_minimize_charging" || commands[3].Watts != 0 {
+		t.Fatalf("fourth command = %+v, want stop_or_minimize_charging 0", commands[3])
 	}
 }
 

@@ -1,6 +1,9 @@
 package control
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPlanSurplusChargingRecommendsACAndReserve(t *testing.T) {
 	reserve := 30
@@ -29,8 +32,14 @@ func TestPlanSurplusChargingRecommendsACAndReserve(t *testing.T) {
 	if !plan.ShouldAdjustACChargeLimit {
 		t.Fatal("ShouldAdjustACChargeLimit = false, want true")
 	}
+	if !plan.ShouldDisableEnergyModes {
+		t.Fatal("ShouldDisableEnergyModes = false, want true")
+	}
 	if plan.WouldWrite {
 		t.Fatal("WouldWrite = true in simulation mode")
+	}
+	if got := plan.Reason; got == "" || !strings.Contains(got, "energy strategy mode blocks surplus charging") {
+		t.Fatalf("Reason = %q, want energy strategy mode note", got)
 	}
 }
 
@@ -59,6 +68,55 @@ func TestPlanSurplusChargingRestoresDefaultReserveWhenImporting(t *testing.T) {
 	}
 	if plan.ShouldRaiseBackupReserve || plan.WouldWrite {
 		t.Fatalf("unexpected write recommendation: %+v", plan)
+	}
+}
+
+func TestPlanSurplusChargingWouldWriteIncludesEnergyModeDisableWhenAllowed(t *testing.T) {
+	tou := true
+	reserve := 85
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:             -1200,
+		BatterySoc:        83,
+		ACChargeLimitW:    1000,
+		BackupReserveSoc:  &reserve,
+		TOUModeEnabled:    &tou,
+		SimulationMode:    false,
+		EnableRealControl: true,
+		AutoControl:       true,
+	}, DefaultSettings())
+
+	if !plan.ShouldDisableEnergyModes {
+		t.Fatal("ShouldDisableEnergyModes = false, want true")
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true")
+	}
+}
+
+func TestPlanSurplusChargingRecommendsEnergyModeDisableForNonTOUModes(t *testing.T) {
+	tou := false
+	selfPowered := true
+	reserve := 85
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:              -1200,
+		BatterySoc:         83,
+		ACChargeLimitW:     1000,
+		BackupReserveSoc:   &reserve,
+		TOUModeEnabled:     &tou,
+		SelfPoweredEnabled: &selfPowered,
+		SimulationMode:     false,
+		EnableRealControl:  true,
+		AutoControl:        true,
+	}, DefaultSettings())
+
+	if !plan.ShouldDisableEnergyModes {
+		t.Fatal("ShouldDisableEnergyModes = false, want true")
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true")
+	}
+	if got := plan.Reason; !strings.Contains(got, "energy strategy mode blocks surplus charging") {
+		t.Fatalf("Reason = %q, want energy strategy mode note", got)
 	}
 }
 

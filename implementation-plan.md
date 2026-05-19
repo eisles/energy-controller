@@ -882,6 +882,9 @@ energyStrategyOperateMode.operateIntelligentScheduleModeOpen
 - TOU mode のときは `energyStrategyOperateMode.operateTouModeOpen=true`
 - self-powered mode のときは `energyStrategyOperateMode.operateSelfPoweredOpen=true`
 - TOU / self-powered を OFF にすると、上記 mode flag はすべて `false`
+- 2026-05-19 の one-shot 実機確認で、AC 充電上限 1500W / backup reserve 85% だけでは `batteryInputW=0` のままだった
+- 同日、`cfgEnergyStrategyOperateMode` の nested payload で全 energy strategy mode flag を false にすると `touModeEnabled=false` になり、`batteryInputW` が約 1.4kW へ増えて実充電が始まることを確認した
+- dotted key 形式 `cfgEnergyStrategyOperateMode.operateTouModeOpen=false` は EcoFlow API で `code=1008` となり拒否された
 - backup reserve を 60% に設定すると `energyBackupStartSoc=60` / `backupReverseSoc=60` に反映される
 - self-powered mode では `energyBackupEn=true`、TOU / self-powered OFF では `energyBackupEn=false` になることを確認した
 - AC 充電上限 W は `plugInInfoAcInChgPowMax` に見える
@@ -891,6 +894,7 @@ energyStrategyOperateMode.operateIntelligentScheduleModeOpen
 
 ```text
 充電したい:
+  - energy strategy mode が ON の場合は、nested `cfgEnergyStrategyOperateMode` で TOU/self-powered/scheduled/intelligent flags を false にする
   - backup reserve % を現在 SOC より高め、または target SOC 付近へ上げる
   - AC charge power W を売電余剰に合わせて設定する
 
@@ -906,14 +910,16 @@ energyStrategyOperateMode.operateIntelligentScheduleModeOpen
 
 Phase 7 で実制御を入れる場合の優先制御軸:
 
-1. `plugInInfoAcInChgPowMax` 相当の AC 充電 W
-2. `energyBackupStartSoc` / `backupReverseSoc` 相当の backup reserve %
+1. `cfgEnergyStrategyOperateMode` 相当の energy strategy mode flags 全OFF
+2. `plugInInfoAcInChgPowMax` 相当の AC 充電 W
+3. `energyBackupStartSoc` / `backupReverseSoc` 相当の backup reserve %
 
 安全境界:
 
 - Phase 5 / Phase 6 では EcoFlow 書き込み制御を実装しない
 - Phase 7 でも `ENABLE_REAL_CONTROL=true` かつ `SIMULATION_MODE=false` かつ `MOCK_MODE=false` のときだけ送信する
 - backup reserve % と AC charge power W は最後に送った値を保存し、差分が小さいときは送らない
+- energy strategy mode flags 全OFF は実充電開始に必要だが、当面は one-shot CLI に限定し、自動連続制御へは未接続のままにする
 - 買電状態、売電不足、API 不確実、quota 不確実のときは送信せず `lastError` / log に残す
 - 最初の実制御は手動実行または短時間限定で確認し、自動連続制御は最後に有効化する
 

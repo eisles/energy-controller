@@ -222,7 +222,7 @@ func TestRunExecuteSendsOneCommandAfterReadCheck(t *testing.T) {
 	if putBody != wantBody {
 		t.Fatalf("PUT body = %s, want %s", putBody, wantBody)
 	}
-	if !strings.Contains(out.String(), "sent one EcoFlow AC charge power command: 1000W") {
+	if !strings.Contains(out.String(), "sent EcoFlow command(s): AC charge power 1000W") {
 		t.Fatalf("output = %q", out.String())
 	}
 }
@@ -265,7 +265,7 @@ func TestRunExecuteSendsChargeAndReserveCommandsAfterReadCheck(t *testing.T) {
 	if len(putBodies) != 2 || putBodies[0] != wantChargeBody || putBodies[1] != wantReserveBody {
 		t.Fatalf("PUT bodies = %+v, want charge then reserve", putBodies)
 	}
-	if !strings.Contains(out.String(), "backup reserve command: 30%") {
+	if !strings.Contains(out.String(), "backup reserve 30%") {
 		t.Fatalf("output = %q", out.String())
 	}
 }
@@ -304,7 +304,7 @@ func TestRunExecuteSendsZeroReserveCommandAfterReadCheck(t *testing.T) {
 	if len(putBodies) != 2 || putBodies[1] != wantReserveBody {
 		t.Fatalf("PUT bodies = %+v, want second reserve zero", putBodies)
 	}
-	if !strings.Contains(out.String(), "backup reserve command: 0%") {
+	if !strings.Contains(out.String(), "backup reserve 0%") {
 		t.Fatalf("output = %q", out.String())
 	}
 }
@@ -333,7 +333,7 @@ func TestRunExecuteReportsPartialSuccessWhenReserveCommandFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("run succeeded, want reserve failure")
 	}
-	for _, want := range []string{"AC charge power command was already sent (1000W)", "reserve rejected", "verify current AC charge limit before retrying"} {
+	for _, want := range []string{"prior command(s) were already sent (AC charge power 1000W)", "reserve rejected", "verify current EcoFlow settings before retrying"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("run error = %v, want contains %q", err, want)
 		}
@@ -343,7 +343,123 @@ func TestRunExecuteReportsPartialSuccessWhenReserveCommandFails(t *testing.T) {
 	}
 }
 
+func TestRunExecuteReportsReserveFailureWithoutPartialSuccessWhenNoPriorCommand(t *testing.T) {
+	var getRequests, putRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			getRequests++
+			writeQuotaAll(t, w, 1500, 25)
+		case http.MethodPut:
+			putRequests++
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "500", "message": "reserve rejected"})
+		default:
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	err := run(context.Background(), []string{"--execute", "--reserve-soc", "30", "--expected-current-reserve", "25"}, mapEnv(validEnv(server.URL)), io.Discard)
+	if err == nil {
+		t.Fatal("run succeeded, want reserve failure")
+	}
+	for _, want := range []string{"set EcoFlow backup reserve SOC", "reserve rejected"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("run error = %v, want contains %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "prior command(s) were already sent") {
+		t.Fatalf("run error = %v, want no partial success warning", err)
+	}
+	if getRequests != 1 || putRequests != 1 {
+		t.Fatalf("requests GET=%d PUT=%d, want 1/1", getRequests, putRequests)
+	}
+}
+
+func TestRunExecuteDisablesTOUAfterReadCheck(t *testing.T) {
+	var getRequests, putRequests int
+	var putBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			getRequests++
+			writeQuotaAll(t, w, 1500, 85)
+		case http.MethodPut:
+			putRequests++
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("ReadAll failed: %v", err)
+			}
+			putBody = string(body)
+			_ = json.NewEncoder(w).Encode(map[string]string{"code": "0", "message": "Success"})
+		default:
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	err := run(context.Background(), []string{
+		"--execute",
+		"--disable-energy-modes",
+		"--expected-tou-mode=true",
+		"--expected-self-powered-mode=false",
+		"--expected-scheduled-mode=false",
+		"--expected-intelligent-schedule-mode=false",
+	}, mapEnv(validEnv(server.URL)), &out)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if getRequests != 1 || putRequests != 1 {
+		t.Fatalf("requests GET=%d PUT=%d, want 1/1", getRequests, putRequests)
+	}
+	wantBody := `{"sn":"DP3-SN","cmdId":17,"cmdFunc":254,"dirDest":1,"dirSrc":1,"dest":2,"needAck":true,"params":{"cfgEnergyStrategyOperateMode":{"operateIntelligentScheduleModeOpen":false,"operateScheduledOpen":false,"operateSelfPoweredOpen":false,"operateTouModeOpen":false}}}`
+	if putBody != wantBody {
+		t.Fatalf("PUT body = %s, want %s", putBody, wantBody)
+	}
+	if !strings.Contains(out.String(), "energy strategy modes false") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestRunExecuteRefusesWhenCurrentTOUDoesNotMatch(t *testing.T) {
+	var getRequests, putRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			getRequests++
+			writeQuotaAllWithEnergyModes(t, w, 1500, 85, false, false, false, false)
+		case http.MethodPut:
+			putRequests++
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+	}))
+	defer server.Close()
+
+	err := run(context.Background(), []string{
+		"--execute",
+		"--disable-energy-modes",
+		"--expected-tou-mode=true",
+		"--expected-self-powered-mode=false",
+		"--expected-scheduled-mode=false",
+		"--expected-intelligent-schedule-mode=false",
+	}, mapEnv(validEnv(server.URL)), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "current TOU mode is false") {
+		t.Fatalf("run error = %v, want current TOU mismatch", err)
+	}
+	if getRequests != 1 || putRequests != 0 {
+		t.Fatalf("requests GET=%d PUT=%d, want 1/0", getRequests, putRequests)
+	}
+}
+
 func writeQuotaAll(t *testing.T, w http.ResponseWriter, acChargeLimitW int, backupReserveSoc int) {
+	t.Helper()
+	writeQuotaAllWithEnergyModes(t, w, acChargeLimitW, backupReserveSoc, true, false, false, false)
+}
+
+func writeQuotaAllWithEnergyModes(t *testing.T, w http.ResponseWriter, acChargeLimitW int, backupReserveSoc int, touMode bool, selfPowered bool, scheduled bool, intelligent bool) {
 	t.Helper()
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"code":    "0",
@@ -354,6 +470,10 @@ func writeQuotaAll(t *testing.T, w http.ResponseWriter, acChargeLimitW int, back
 			"powOutSumW":              0,
 			"plugInInfoAcInChgPowMax": acChargeLimitW,
 			"energyBackupStartSoc":    backupReserveSoc,
+			"energyStrategyOperateMode.operateTouModeOpen":                 touMode,
+			"energyStrategyOperateMode.operateSelfPoweredOpen":             selfPowered,
+			"energyStrategyOperateMode.operateScheduledOpen":               scheduled,
+			"energyStrategyOperateMode.operateIntelligentScheduleModeOpen": intelligent,
 		},
 	})
 }

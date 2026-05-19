@@ -160,6 +160,7 @@ function SurplusPlanCard({ plan }: { plan?: SurplusPlan | null }) {
           <Detail label="AC調整" value={yesNo(plan.shouldAdjustAcChargeLimit)} />
           <Detail label="リザーブ引上げ" value={yesNo(plan.shouldRaiseBackupReserve)} />
           <Detail label="リザーブ戻し" value={yesNo(plan.shouldLowerBackupReserve)} />
+          <Detail label="Modes OFF" value={yesNo(plan.shouldDisableEnergyModes)} />
         </div>
         <p className="planner-reason">{surplusActionLabel(plan)}</p>
         <p className="planner-reason">{plan.reason || "-"}</p>
@@ -224,8 +225,18 @@ function surplusActionLabel(plan: SurplusPlan) {
     plan.recommendedBackupReserveSoc !== null && plan.recommendedBackupReserveSoc !== undefined
       ? `${plan.recommendedBackupReserveSoc}%`
       : null;
-  if (plan.shouldRaiseBackupReserve && plan.shouldAdjustAcChargeLimit && reserveLabel) {
-    return `売電抑制: 充電開始にはリザーブを${reserveLabel}へ引き上げ、AC充電を${plan.recommendedAcChargeLimitW}Wへ調整する推奨です。read-onlyのため未送信です。`;
+  const surplusActions: string[] = [];
+  if (plan.shouldRaiseBackupReserve && reserveLabel) {
+    surplusActions.push(`リザーブを${reserveLabel}へ引き上げ`);
+  }
+  if (plan.shouldAdjustAcChargeLimit && plan.recommendedAcChargeLimitW > 0) {
+    surplusActions.push(`AC充電を${plan.recommendedAcChargeLimitW}Wへ調整`);
+  }
+  if (plan.shouldDisableEnergyModes) {
+    surplusActions.push("energy strategy modesを全OFFに");
+  }
+  if (surplusActions.length > 0) {
+    return `売電抑制: 充電開始には${surplusActions.join("、")}する推奨です。read-onlyのため未送信です。`;
   }
   if (plan.shouldRaiseBackupReserve && reserveLabel) {
     return `売電抑制: 充電開始にはリザーブを${reserveLabel}へ引き上げる推奨です。read-onlyのため未送信です。`;

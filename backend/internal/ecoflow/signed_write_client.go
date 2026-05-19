@@ -48,6 +48,17 @@ func (c *SignedWriteClient) SetBackupReserveSoc(ctx context.Context, percent int
 	return c.putCommand(ctx, payload)
 }
 
+func (c *SignedWriteClient) SetTOUMode(ctx context.Context, enabled bool) error {
+	if err := c.guard(); err != nil {
+		return err
+	}
+	payload, err := buildSetTOUModePayload(c.client.deviceSN, enabled)
+	if err != nil {
+		return err
+	}
+	return c.putCommand(ctx, payload)
+}
+
 func (c *SignedWriteClient) StopOrMinimizeCharging(context.Context) error {
 	return fmt.Errorf("EcoFlow stop/minimize real write is not implemented")
 }

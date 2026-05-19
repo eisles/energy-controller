@@ -55,6 +55,10 @@ func (failingWriteClient) SetBackupReserveSoc(context.Context, int) error {
 	return errors.New("write failed")
 }
 
+func (failingWriteClient) SetTOUMode(context.Context, bool) error {
+	return errors.New("write failed")
+}
+
 func (failingWriteClient) StopOrMinimizeCharging(context.Context) error {
 	return errors.New("write failed")
 }

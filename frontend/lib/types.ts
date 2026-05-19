@@ -28,6 +28,7 @@ export type SurplusPlan = {
   shouldRaiseBackupReserve: boolean;
   shouldLowerBackupReserve: boolean;
   shouldAdjustAcChargeLimit: boolean;
+  shouldDisableEnergyModes: boolean;
   wouldWrite: boolean;
   reason: string;
 };

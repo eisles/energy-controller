@@ -18,6 +18,9 @@ func BatteryStatusFromQuotas(quotas map[string]any) (domain.BatteryStatus, error
 	backupReserveSoc := intPtrFromQuota(quotas, "energyBackupStartSoc", "backupReverseSoc")
 	energyBackupEnabled := boolPtrFromQuota(quotas, "energyBackupEn")
 	touModeEnabled := boolPtrFromQuota(quotas, "energyStrategyOperateMode.operateTouModeOpen")
+	selfPoweredEnabled := boolPtrFromQuota(quotas, "energyStrategyOperateMode.operateSelfPoweredOpen")
+	scheduledEnabled := boolPtrFromQuota(quotas, "energyStrategyOperateMode.operateScheduledOpen")
+	intelligentEnabled := boolPtrFromQuota(quotas, "energyStrategyOperateMode.operateIntelligentScheduleModeOpen")
 	fullEnergyWh := intPtrFromQuota(quotas, "cmsBattFullEnergy")
 
 	return domain.BatteryStatus{
@@ -28,6 +31,9 @@ func BatteryStatusFromQuotas(quotas map[string]any) (domain.BatteryStatus, error
 		BackupReserveSoc:    backupReserveSoc,
 		EnergyBackupEnabled: energyBackupEnabled,
 		TOUModeEnabled:      touModeEnabled,
+		SelfPoweredEnabled:  selfPoweredEnabled,
+		ScheduledEnabled:    scheduledEnabled,
+		IntelligentEnabled:  intelligentEnabled,
 		FullEnergyWh:        fullEnergyWh,
 		IsOnline:            true,
 	}, nil
