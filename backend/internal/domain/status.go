@@ -229,6 +229,32 @@ type NightChargePlanLog struct {
 	CreatedAt                 time.Time `json:"createdAt"`
 }
 
+type NightChargeDailySummary struct {
+	SummaryDate              string     `json:"summaryDate"`
+	PlanCreatedAt            *time.Time `json:"planCreatedAt,omitempty"`
+	TargetForecastDate       *string    `json:"targetForecastDate,omitempty"`
+	PlannedTargetSoc         *int       `json:"plannedTargetSoc,omitempty"`
+	PlannedTargetKWh         *float64   `json:"plannedTargetKwh,omitempty"`
+	PlannedRequiredChargeKWh *float64   `json:"plannedRequiredChargeKwh,omitempty"`
+	PlannedMode              string     `json:"plannedMode"`
+	NightStartSoc            *int       `json:"nightStartSoc,omitempty"`
+	NightEndSoc              *int       `json:"nightEndSoc,omitempty"`
+	NightSocDelta            *int       `json:"nightSocDelta,omitempty"`
+	MinNightSoc              *int       `json:"minNightSoc,omitempty"`
+	MaxNightSoc              *int       `json:"maxNightSoc,omitempty"`
+	NightImportKWh           *float64   `json:"nightImportKwh,omitempty"`
+	NightExportKWh           *float64   `json:"nightExportKwh,omitempty"`
+	NightBatteryInputKWh     *float64   `json:"nightBatteryInputKwh,omitempty"`
+	NightBatteryOutputKWh    *float64   `json:"nightBatteryOutputKwh,omitempty"`
+	DaytimeBatteryInputKWh   *float64   `json:"daytimeBatteryInputKwh,omitempty"`
+	DaytimeExportKWh         *float64   `json:"daytimeExportKwh,omitempty"`
+	MorningStatus            string     `json:"morningStatus"`
+	MorningReason            string     `json:"morningReason"`
+	FinalResultStatus        string     `json:"finalResultStatus"`
+	FinalResultReason        string     `json:"finalResultReason"`
+	DataSource               string     `json:"dataSource"`
+}
+
 type PowerLog struct {
 	ID             int64     `json:"id"`
 	MeasuredAt     time.Time `json:"measuredAt"`

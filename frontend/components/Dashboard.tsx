@@ -8,6 +8,7 @@ import { EnergyMeterLogTable } from "@/components/EnergyMeterLogTable";
 import { Header } from "@/components/Header";
 import { LogTable } from "@/components/LogTable";
 import { NightChargePlanLogTable } from "@/components/NightChargePlanLogTable";
+import { NightChargeSummaryTable } from "@/components/NightChargeSummaryTable";
 import { SolarForecastPanel } from "@/components/SolarForecastPanel";
 import { StatusCards } from "@/components/StatusCards";
 import { TariffSummaryPanel } from "@/components/TariffSummaryPanel";
@@ -16,11 +17,12 @@ import {
   fetchLogs,
   fetchLogsPage,
   fetchNightChargePlanLogsPage,
+  fetchNightChargeSummariesPage,
   fetchSolarForecast,
   fetchStatus,
   fetchTariffSummary
 } from "@/lib/api";
-import type { EnergyMeterLog, EnergyStatus, NightChargePlanLog, PowerLog, SolarForecastSummary, TariffSummary } from "@/lib/types";
+import type { EnergyMeterLog, EnergyStatus, NightChargeDailySummary, NightChargePlanLog, PowerLog, SolarForecastSummary, TariffSummary } from "@/lib/types";
 
 type LogRange = {
   label: string;
@@ -43,6 +45,7 @@ const forecastRanges = [
 const logPageSize = 25;
 const energyMeterLogPageSize = 25;
 const nightChargePlanLogPageSize = 25;
+const nightChargeSummaryPageSize = 25;
 const dryRunPlanLimit = 10;
 
 const initialStatus: EnergyStatus = {
@@ -70,6 +73,13 @@ export function Dashboard() {
   const [nightChargePlanLogs, setNightChargePlanLogs] = useState<NightChargePlanLog[]>([]);
   const [nightChargePlanPage, setNightChargePlanPage] = useState(1);
   const [nightChargePlanTotal, setNightChargePlanTotal] = useState(0);
+  const [nightChargeSummaries, setNightChargeSummaries] = useState<NightChargeDailySummary[]>([]);
+  const [nightChargeSummaryPage, setNightChargeSummaryPage] = useState(1);
+  const [nightChargeSummaryFromInput, setNightChargeSummaryFromInput] = useState("");
+  const [nightChargeSummaryToInput, setNightChargeSummaryToInput] = useState("");
+  const [appliedNightChargeSummaryFrom, setAppliedNightChargeSummaryFrom] = useState("");
+  const [appliedNightChargeSummaryTo, setAppliedNightChargeSummaryTo] = useState("");
+  const [nightChargeSummaryTotal, setNightChargeSummaryTotal] = useState(0);
   const [logPage, setLogPage] = useState(1);
   const [logSearchInput, setLogSearchInput] = useState("");
   const [logFromInput, setLogFromInput] = useState("");
@@ -99,6 +109,7 @@ export function Dashboard() {
   const [dryRunPlanError, setDryRunPlanError] = useState<string | null>(null);
   const [nightDryRunPlanError, setNightDryRunPlanError] = useState<string | null>(null);
   const [nightChargePlanError, setNightChargePlanError] = useState<string | null>(null);
+  const [nightChargeSummaryError, setNightChargeSummaryError] = useState<string | null>(null);
   const [energyMeterError, setEnergyMeterError] = useState<string | null>(null);
   const [tariffError, setTariffError] = useState<string | null>(null);
   const [solarForecastError, setSolarForecastError] = useState<string | null>(null);
@@ -258,6 +269,41 @@ export function Dashboard() {
   useEffect(() => {
     let cancelled = false;
 
+    async function loadNightChargeSummaryPage() {
+      try {
+        const nextPage = await fetchNightChargeSummariesPage({
+          limit: nightChargeSummaryPageSize,
+          offset: (nightChargeSummaryPage - 1) * nightChargeSummaryPageSize,
+          from: datetimeLocalToISOString(appliedNightChargeSummaryFrom),
+          to: datetimeLocalToISOString(appliedNightChargeSummaryTo)
+        });
+        if (!cancelled) {
+          setNightChargeSummaries(nextPage.items);
+          setNightChargeSummaryTotal(nextPage.total);
+          setNightChargeSummaryError(null);
+          const totalPages = Math.max(1, Math.ceil(nextPage.total / nightChargeSummaryPageSize));
+          if (nightChargeSummaryPage > totalPages) {
+            setNightChargeSummaryPage(totalPages);
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setNightChargeSummaryError(err instanceof Error ? err.message : "night charge summaries request failed");
+        }
+      }
+    }
+
+    loadNightChargeSummaryPage();
+    const timer = window.setInterval(loadNightChargeSummaryPage, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [nightChargeSummaryPage, appliedNightChargeSummaryFrom, appliedNightChargeSummaryTo]);
+
+  useEffect(() => {
+    let cancelled = false;
+
     async function loadEnergyMeterLogPage() {
       try {
         const nextPage = await fetchEnergyMeterLogsPage({
@@ -379,6 +425,20 @@ export function Dashboard() {
     setEnergyMeterPage(1);
   }
 
+  function submitNightChargeSummarySearch() {
+    setAppliedNightChargeSummaryFrom(nightChargeSummaryFromInput);
+    setAppliedNightChargeSummaryTo(nightChargeSummaryToInput);
+    setNightChargeSummaryPage(1);
+  }
+
+  function clearNightChargeSummarySearch() {
+    setNightChargeSummaryFromInput("");
+    setNightChargeSummaryToInput("");
+    setAppliedNightChargeSummaryFrom("");
+    setAppliedNightChargeSummaryTo("");
+    setNightChargeSummaryPage(1);
+  }
+
   function submitTariffSearch() {
     setAppliedTariffFrom(tariffFromInput);
     setAppliedTariffTo(tariffToInput);
@@ -409,6 +469,21 @@ export function Dashboard() {
         pageSize={nightChargePlanLogPageSize}
         total={nightChargePlanTotal}
         onPageChange={setNightChargePlanPage}
+      />
+      <NightChargeSummaryTable
+        summaries={nightChargeSummaries}
+        error={nightChargeSummaryError}
+        page={nightChargeSummaryPage}
+        pageSize={nightChargeSummaryPageSize}
+        total={nightChargeSummaryTotal}
+        from={nightChargeSummaryFromInput}
+        to={nightChargeSummaryToInput}
+        isFiltered={Boolean(appliedNightChargeSummaryFrom || appliedNightChargeSummaryTo)}
+        onFromChange={setNightChargeSummaryFromInput}
+        onToChange={setNightChargeSummaryToInput}
+        onSearchSubmit={submitNightChargeSummarySearch}
+        onSearchClear={clearNightChargeSummarySearch}
+        onPageChange={setNightChargeSummaryPage}
       />
       <DryRunPlanHistory logs={dryRunPlanLogs} error={dryRunPlanError} />
       <EnergyCharts logs={chartLogs} rangeLabel={logRange.label} ranges={logRanges} selectedRange={logRange} onRangeChange={setLogRange} />

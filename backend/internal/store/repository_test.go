@@ -407,6 +407,145 @@ func TestNightChargePlanRepositoryFiltersByDateRange(t *testing.T) {
 	}
 }
 
+func TestNightChargeSummaryRepositoryBuildsDailySummary(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewNightChargeSummaryRepositoryWithTimezone(db, "UTC")
+	base := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
+
+	insertNightSummaryPlanLog(t, db, base.Add(21*time.Hour+10*time.Minute), 70, 8.6, 0.4)
+	insertNightSummaryPlanLog(t, db, base.Add(22*time.Hour+30*time.Minute), 75, 9.2, 1.1)
+	for _, sample := range []struct {
+		at             time.Time
+		soc            int
+		importW        int
+		exportW        int
+		batteryInputW  int
+		batteryOutputW int
+	}{
+		{base.Add(23 * time.Hour), 80, 100, 0, 50, 250},
+		{base.Add(25 * time.Hour), 79, 100, 0, 50, 250},
+		{base.Add(27 * time.Hour), 78, 100, 0, 50, 250},
+		{base.Add(29 * time.Hour), 77, 100, 0, 50, 250},
+		{base.Add(31 * time.Hour), 76, 0, 300, 400, 100},
+		{base.Add(33 * time.Hour), 76, 0, 300, 400, 100},
+		{base.Add(35 * time.Hour), 77, 0, 300, 400, 100},
+		{base.Add(37 * time.Hour), 78, 0, 300, 400, 100},
+		{base.Add(39 * time.Hour), 79, 0, 300, 400, 100},
+		{base.Add(40 * time.Hour), 80, 0, 300, 400, 100},
+	} {
+		insertNightSummaryPowerLog(t, db, sample.at, sample.soc, sample.importW, sample.exportW, sample.batteryInputW, sample.batteryOutputW)
+	}
+
+	summaries, total, err := repo.ListNightChargeDailySummariesPage(context.Background(), base.Add(41*time.Hour), 10, 0, NightChargeSummaryPageFilter{})
+	if err != nil {
+		t.Fatalf("ListNightChargeDailySummariesPage failed: %v", err)
+	}
+	if total != 1 || len(summaries) != 1 {
+		t.Fatalf("total,len = %d,%d; want 1,1", total, len(summaries))
+	}
+	got := summaries[0]
+	if got.SummaryDate != "2026-05-19" {
+		t.Fatalf("SummaryDate = %s, want 2026-05-19", got.SummaryDate)
+	}
+	if got.PlannedTargetSoc == nil || *got.PlannedTargetSoc != 75 {
+		t.Fatalf("PlannedTargetSoc = %v, want latest 75", got.PlannedTargetSoc)
+	}
+	if got.NightStartSoc == nil || *got.NightStartSoc != 80 || got.NightEndSoc == nil || *got.NightEndSoc != 76 {
+		t.Fatalf("night start/end SOC = %v/%v, want 80/76", got.NightStartSoc, got.NightEndSoc)
+	}
+	if got.NightSocDelta == nil || *got.NightSocDelta != -4 {
+		t.Fatalf("NightSocDelta = %v, want -4", got.NightSocDelta)
+	}
+	if got.MinNightSoc == nil || *got.MinNightSoc != 76 || got.MaxNightSoc == nil || *got.MaxNightSoc != 80 {
+		t.Fatalf("min/max SOC = %v/%v, want 76/80", got.MinNightSoc, got.MaxNightSoc)
+	}
+	if got.NightImportKWh == nil || !floatAlmostEqual(*got.NightImportKWh, 0.8) {
+		t.Fatalf("NightImportKWh = %v, want 0.8", got.NightImportKWh)
+	}
+	if got.NightBatteryOutputKWh == nil || !floatAlmostEqual(*got.NightBatteryOutputKWh, 2.0) {
+		t.Fatalf("NightBatteryOutputKWh = %v, want 2.0", got.NightBatteryOutputKWh)
+	}
+	if got.DaytimeBatteryInputKWh == nil || got.DaytimeExportKWh == nil {
+		t.Fatalf("daytime follow-up = %v/%v, want non-nil", got.DaytimeBatteryInputKWh, got.DaytimeExportKWh)
+	}
+	if got.MorningStatus != "ok" || got.FinalResultStatus != "ok" {
+		t.Fatalf("statuses = %s/%s, want ok/ok", got.MorningStatus, got.FinalResultStatus)
+	}
+	if got.DataSource != "power-log" {
+		t.Fatalf("DataSource = %s, want power-log", got.DataSource)
+	}
+}
+
+func TestNightChargeSummaryRepositoryKeepsCurrentNightPending(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewNightChargeSummaryRepositoryWithTimezone(db, "UTC")
+	base := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
+
+	insertNightSummaryPlanLog(t, db, base.Add(21*time.Hour+30*time.Minute), 75, 9.2, 1.1)
+	insertNightSummaryPowerLog(t, db, base.Add(23*time.Hour), 80, 0, 0, 0, 250)
+
+	summaries, total, err := repo.ListNightChargeDailySummariesPage(context.Background(), base.Add(28*time.Hour), 10, 0, NightChargeSummaryPageFilter{})
+	if err != nil {
+		t.Fatalf("ListNightChargeDailySummariesPage failed: %v", err)
+	}
+	if total != 1 || len(summaries) != 1 {
+		t.Fatalf("total,len = %d,%d; want 1,1", total, len(summaries))
+	}
+	if summaries[0].MorningStatus != "pending" || summaries[0].FinalResultStatus != "pending" {
+		t.Fatalf("statuses = %s/%s, want pending/pending", summaries[0].MorningStatus, summaries[0].FinalResultStatus)
+	}
+	if summaries[0].NightEndSoc != nil {
+		t.Fatalf("NightEndSoc = %v, want nil before 07:00", summaries[0].NightEndSoc)
+	}
+}
+
+func insertNightSummaryPlanLog(t *testing.T, db *sql.DB, measuredAt time.Time, targetSoc int, targetKWh float64, requiredKWh float64) {
+	t.Helper()
+	targetDate := measuredAt.AddDate(0, 0, 1).Format("2006-01-02")
+	if err := NewNightChargePlanRepository(db).InsertNightChargePlanLog(context.Background(), domain.Status{
+		GridW:          100,
+		ImportW:        100,
+		BatterySoc:     80,
+		BatteryInputW:  50,
+		BatteryOutputW: 250,
+		UpdatedAt:      measuredAt,
+		NightChargePlan: &domain.NightChargePlan{
+			StrategyState:             "NIGHT_PLAN_READY",
+			RecommendedMode:           "tou",
+			RecommendedNightTargetSoc: targetSoc,
+			RecommendedNightTargetKWh: targetKWh,
+			CurrentBatteryEnergyKWh:   9.8,
+			RequiredNightChargeKWh:    requiredKWh,
+			ShouldChargeTonight:       requiredKWh > 0,
+			ActionSummary:             "sample night plan",
+			Reason:                    "sample night plan reason",
+			TargetForecast:            &domain.WeatherForecast{Date: targetDate},
+		},
+	}); err != nil {
+		t.Fatalf("InsertNightChargePlanLog failed: %v", err)
+	}
+}
+
+func insertNightSummaryPowerLog(t *testing.T, db *sql.DB, measuredAt time.Time, soc int, importW int, exportW int, batteryInputW int, batteryOutputW int) {
+	t.Helper()
+	if err := NewLogRepository(db).InsertPowerLog(context.Background(), domain.PowerLog{
+		MeasuredAt:     measuredAt,
+		GridW:          importW - exportW,
+		ImportW:        importW,
+		ExportW:        exportW,
+		BatterySoc:     &soc,
+		BatteryInputW:  &batteryInputW,
+		BatteryOutputW: &batteryOutputW,
+		TargetChargeW:  batteryInputW,
+		DecisionReason: "sample",
+		Mode:           "mock",
+		CommandSent:    false,
+		CreatedAt:      measuredAt,
+	}); err != nil {
+		t.Fatalf("InsertPowerLog failed: %v", err)
+	}
+}
+
 func TestEnergyMeterRepositoryIgnoresDuplicateReading(t *testing.T) {
 	db := openTestDB(t)
 	repo := NewEnergyMeterRepository(db)

@@ -227,6 +227,39 @@ export type NightChargePlanLogsPage = {
   offset: number;
 };
 
+export type NightChargeDailySummary = {
+  summaryDate: string;
+  planCreatedAt?: string | null;
+  targetForecastDate?: string | null;
+  plannedTargetSoc?: number | null;
+  plannedTargetKwh?: number | null;
+  plannedRequiredChargeKwh?: number | null;
+  plannedMode: string;
+  nightStartSoc?: number | null;
+  nightEndSoc?: number | null;
+  nightSocDelta?: number | null;
+  minNightSoc?: number | null;
+  maxNightSoc?: number | null;
+  nightImportKwh?: number | null;
+  nightExportKwh?: number | null;
+  nightBatteryInputKwh?: number | null;
+  nightBatteryOutputKwh?: number | null;
+  daytimeBatteryInputKwh?: number | null;
+  daytimeExportKwh?: number | null;
+  morningStatus: string;
+  morningReason: string;
+  finalResultStatus: string;
+  finalResultReason: string;
+  dataSource: string;
+};
+
+export type NightChargeDailySummariesPage = {
+  items: NightChargeDailySummary[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
 export type EnergyMeterLog = {
   id: number;
   measuredAt: string;

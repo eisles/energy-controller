@@ -1432,6 +1432,167 @@ UI:
 
 ---
 
+#### 夜間対象外負荷を考慮した深夜判定の実装計画
+
+夜間 23:00-07:00 はエコキュートの沸き上げなど、EcoFlow が制御できない家全体負荷が継続的に発生する。直近ログでも 05:00-06:00 台に 1.5kW 以上の買電が見えているため、Nature Remo の買電量だけを見て「EcoFlow が充電しすぎ」「夜間計画が失敗」と判定すると誤判定になる。
+
+目的:
+
+- 夜間買電のうち、エコキュート等の制御対象外負荷を明示的に分離して扱う
+- 夜間計画・夜間サマリー・将来の夜間制御判断で、家全体買電と EcoFlow 起因の充放電を混同しない
+- 翌日の PV 予測に基づく深夜充電抑制/充電実施の判断を、実態に近い負荷モデルで評価できるようにする
+- 実機 write を増やす前に、対象外負荷を含めた判定材料を read-only で確認できるようにする
+
+この段階の安全境界:
+
+- 実機 write は追加しない
+- EcoFlow mode / backup reserve / AC charge power の変更 API は追加しない
+- 夜間対象外負荷は判定・表示・dry-run 計画にだけ使う
+- 料金計算では実際の買電 kWh をそのまま使い、対象外負荷を差し引かない
+- 推定値で欠損データを埋めたように見せない。推定は `source` と理由を表示する
+
+対象外負荷の定義:
+
+```text
+nightUncontrollableLoadW
+  = 23:00-07:00 に EcoFlow 制御とは独立して発生する想定負荷
+  = 初期値 1500W
+  = 主にエコキュート沸き上げを想定
+
+nightGridImportW
+  = Nature Remo E で見える家全体の買電W
+
+nightControllableImportW
+  = max(0, nightGridImportW - nightUncontrollableLoadW)
+```
+
+判定方針:
+
+- 夜間の買電 1.5kW 程度は、まず対象外負荷として扱う
+- EcoFlow の夜間充電/放電状態は `batteryInputW` / `batteryOutputW` / `batterySoc` / `acChargeLimitW` を中心に判定する
+- `nightControllableImportW` が大きい場合だけ、EcoFlow 由来の余分な買電候補として扱う
+- 夜間計画の成否は、`07:00 SOC >= plannedTargetSoc - toleranceSoc` を主判定にする
+- 16:00 follow-up では、日中の `daytimeBatteryInputKWh` / `daytimeExportKWh` / `daytimeBatteryOutputKWh` を見て、深夜充電しすぎ・不足を評価する
+
+設定項目:
+
+- `nightUncontrollableLoadW`
+  - 初期値: `1500`
+  - UI表示名: `夜間対象外負荷W`
+  - 説明: `エコキュート等、EcoFlow制御対象外の夜間負荷`
+- `nightUncontrollableLoadSource`
+  - `default`
+  - `manual`
+  - `estimated`
+  - `disabled`
+  - 未設定時は `default` として `1500W` を使う。`manual` はユーザーが明示保存した値だけを表す
+- `nightUncontrollableLoadEstimateDays`
+  - 初期値: `7`
+  - 23:00-07:00 の過去ログから推定する日数
+- `nightUncontrollableLoadMinW`
+  - 初期値: `0`
+- `nightUncontrollableLoadMaxW`
+  - 初期値: `3000`
+
+推定ロジック:
+
+```text
+1. 過去 N 日の 23:00-07:00 の power_logs を読む
+2. batteryInputW が 0 または小さい時間帯を優先して、家全体買電の基礎負荷を推定する
+3. 外れ値を避けるため平均だけでなく中央値も計算する
+4. 推奨値は中央値を 100W 単位に丸める
+5. サンプル不足なら `insufficient-data` として、手動設定値があれば `manual`、なければ `default` の `1500W` を使う
+```
+
+初期実装では、推定値は自動反映せず UI に「推奨値」として表示する。ユーザーが手動設定した値だけを実際の判定に使う。
+
+追加 API:
+
+```text
+GET /api/analytics/night-uncontrollable-load?days=7
+```
+
+レスポンス案:
+
+```json
+{
+  "days": 7,
+  "startHour": 23,
+  "endHour": 7,
+  "sampleCount": 960,
+  "averageImportW": 1620,
+  "medianImportW": 1510,
+  "suggestedNightUncontrollableLoadW": 1500,
+  "source": "power-log",
+  "note": "23:00-07:00 の買電から EcoFlow 入力が小さい時間帯を優先して推定"
+}
+```
+
+既存 API / 表示への反映:
+
+- `/api/status`
+  - 既存値は維持する
+  - 将来必要なら `nightUncontrollableLoadW` と `nightControllableImportW` を追加する
+- `/api/night-charge/summaries`
+  - `nightUncontrollableLoadW`
+  - `nightEstimatedUncontrollableImportKWh`
+  - `nightControllableImportKWh`
+  - `nightUncontrollableLoadSource`
+  - `nightLoadAdjustedReason`
+  を追加する
+  - 既定値を使った場合は `nightUncontrollableLoadSource: "default"` とし、`nightLoadAdjustedReason` に `default 1500W used` 相当の理由を表示する
+- Dashboard
+  - 設定カードに `夜間対象外負荷W` を表示する
+  - 夜間サマリーに `買電kWh` と `対象外推定kWh` と `制御対象買電kWh` を並べる
+  - 推定値と手動値が違う場合は Badge で分かるようにする
+
+実装対象ファイル:
+
+- `backend/internal/domain/status.go`
+  - 夜間対象外負荷の summary / estimate 型を追加する
+- `backend/internal/store/night_uncontrollable_load_repository.go`
+  - 過去ログから夜間対象外負荷を read-only 推定する
+- `backend/internal/store/night_charge_summary_repository.go`
+  - 夜間サマリーに対象外負荷補正値を追加する
+- `backend/internal/api/night_uncontrollable_load_handler.go`
+  - 推定 API を追加する
+- `backend/internal/api/router.go`
+  - `GET /api/analytics/night-uncontrollable-load` を追加する
+- `frontend/lib/types.ts`
+  - 夜間対象外負荷の型を追加する
+- `frontend/lib/api.ts`
+  - fetch 関数を追加する
+- `frontend/components/NightChargeSummaryTable.tsx`
+  - 夜間対象外負荷・制御対象買電を表示する
+- `frontend/components/ControlPanel.tsx`
+  - 設定表示または設定 drawer に項目を追加する
+
+実装ステップ:
+
+1. 現在の `power_logs` から夜間 23:00-07:00 の買電分布を read-only 集計する repository を追加する
+2. `batteryInputW` が大きいサンプルを除外または重み下げし、エコキュート等の基礎負荷を推定する
+3. 推定値の API `GET /api/analytics/night-uncontrollable-load` を追加する
+4. repository / handler の unit test を追加する
+5. 夜間サマリーに手動設定値、または未設定時の `default` 値 `1500W` を使った補正値を追加する
+6. 夜間サマリー UI に `対象外推定kWh` と `制御対象買電kWh` を追加する
+7. 設定 UI に `夜間対象外負荷W` を表示し、初期実装では read-only または既存設定保存 API の範囲に留める
+8. `cd backend && go test ./...` と `cd frontend && npm run build` を通す
+9. 実データで、夜間買電 1.5kW 前後が `制御対象買電` として過大評価されないことを確認する
+
+完了条件:
+
+- 夜間買電と EcoFlow 充放電の判定が分離されている
+- 夜間 1.5kW 程度の買電が即座に「充電しすぎ」と判定されない
+- `night_charge_daily_summary` 相当の表示で、実買電・対象外推定・制御対象買電が比較できる
+- 対象外負荷の source が `default` / `manual` / `estimated` / `disabled` として分かる
+- 未設定時の既定値は `default` として表示され、ユーザーが明示保存した `manual` 値と混同されない
+- read-only API のみで、実機 write path が増えていない
+- 料金計算は実買電 kWh のまま維持される
+- `cd backend && go test ./...` が通る
+- `cd frontend && npm run build` が通る
+
+---
+
 ## 最初にCodexへ投げるプロンプト
 
 ```text
