@@ -3,6 +3,7 @@ import type {
   EcoFlowLoadEstimate,
   EnergyMeterLogsPage,
   EnergyStatus,
+  NightChargePlanLogsPage,
   PowerLog,
   PowerLogsPage,
   SolarForecastSummary,
@@ -93,6 +94,34 @@ export async function fetchEnergyMeterLogsPage({
   const response = await fetch(`/api/energy-meter/logs?${params.toString()}`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`energy meter logs request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function fetchNightChargePlanLogsPage({
+  limit,
+  offset,
+  from,
+  to
+}: {
+  limit: number;
+  offset: number;
+  from?: string;
+  to?: string;
+}): Promise<NightChargePlanLogsPage> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset)
+  });
+  if (from) {
+    params.set("from", from);
+  }
+  if (to) {
+    params.set("to", to);
+  }
+  const response = await fetch(`/api/night-charge/plans?${params.toString()}`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`night charge plan logs request failed: ${response.status}`);
   }
   return response.json();
 }

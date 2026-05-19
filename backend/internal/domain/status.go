@@ -205,6 +205,30 @@ type NightChargePlan struct {
 	TargetForecast              *WeatherForecast `json:"targetForecast,omitempty"`
 }
 
+type NightChargePlanLog struct {
+	ID                        int64     `json:"id"`
+	MeasuredAt                time.Time `json:"measuredAt"`
+	StrategyState             string    `json:"strategyState"`
+	RecommendedMode           string    `json:"recommendedMode"`
+	RecommendedNightTargetSoc int       `json:"recommendedNightTargetSoc"`
+	RecommendedNightTargetKWh float64   `json:"recommendedNightTargetKwh"`
+	CurrentBatteryEnergyKWh   float64   `json:"currentBatteryEnergyKwh"`
+	RequiredNightChargeKWh    float64   `json:"requiredNightChargeKwh"`
+	BatterySoc                int       `json:"batterySoc"`
+	BatteryInputW             int       `json:"batteryInputW"`
+	BatteryOutputW            int       `json:"batteryOutputW"`
+	GridW                     int       `json:"gridW"`
+	ImportW                   int       `json:"importW"`
+	ExportW                   int       `json:"exportW"`
+	ShouldChargeTonight       bool      `json:"shouldChargeTonight"`
+	WouldWrite                bool      `json:"wouldWrite"`
+	CommandBlockReason        string    `json:"commandBlockReason"`
+	ActionSummary             string    `json:"actionSummary"`
+	Reason                    string    `json:"reason"`
+	TargetForecastDate        *string   `json:"targetForecastDate,omitempty"`
+	CreatedAt                 time.Time `json:"createdAt"`
+}
+
 type PowerLog struct {
 	ID             int64     `json:"id"`
 	MeasuredAt     time.Time `json:"measuredAt"`

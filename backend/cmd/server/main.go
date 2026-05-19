@@ -44,10 +44,11 @@ func main() {
 	statusRepository := store.NewStatusRepository(db)
 	logRepository := store.NewLogRepository(db)
 	energyMeterRepository := store.NewEnergyMeterRepository(db)
+	nightChargePlanRepository := store.NewNightChargePlanRepository(db)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	recordStatus(ctx, statusProvider, statusRepository, logRepository, energyMeterReader, energyMeterRepository, logger)
-	go runControlLoop(ctx, cfg.PollInterval, statusProvider, statusRepository, logRepository, energyMeterReader, energyMeterRepository, logger)
+	recordStatus(ctx, statusProvider, statusRepository, logRepository, nightChargePlanRepository, energyMeterReader, energyMeterRepository, logger)
+	go runControlLoop(ctx, cfg.PollInterval, statusProvider, statusRepository, logRepository, nightChargePlanRepository, energyMeterReader, energyMeterRepository, logger)
 
 	router := api.NewRouter(api.Dependencies{
 		Config:         cfg,
@@ -86,6 +87,10 @@ type statusWriter interface {
 
 type logWriter interface {
 	InsertPowerLog(ctx context.Context, log domain.PowerLog) error
+}
+
+type nightChargePlanLogWriter interface {
+	InsertNightChargePlanLog(ctx context.Context, status domain.Status) error
 }
 
 type energyMeterWriter interface {
@@ -149,7 +154,7 @@ func newWeatherReader(cfg config.Config, db *sql.DB) mock.WeatherReader {
 	return forecastClient
 }
 
-func runControlLoop(ctx context.Context, interval time.Duration, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
+func runControlLoop(ctx context.Context, interval time.Duration, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
@@ -160,12 +165,12 @@ func runControlLoop(ctx context.Context, interval time.Duration, provider api.St
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			recordStatus(ctx, provider, statusRepository, logRepository, meterReader, meterRepository, logger)
+			recordStatus(ctx, provider, statusRepository, logRepository, nightChargePlanRepository, meterReader, meterRepository, logger)
 		}
 	}
 }
 
-func recordStatus(ctx context.Context, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
+func recordStatus(ctx context.Context, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
 	status, err := provider.CurrentStatus(ctx)
 	if err != nil {
 		logger.Error("failed to evaluate current status", "error", err)
@@ -174,6 +179,11 @@ func recordStatus(ctx context.Context, provider api.StatusProvider, statusReposi
 	if err := logRepository.InsertPowerLog(ctx, powerLogFromStatus(status, lastCommandStatus(provider))); err != nil {
 		logger.Error("failed to save power log", "error", err)
 		return
+	}
+	if nightChargePlanRepository != nil {
+		if err := nightChargePlanRepository.InsertNightChargePlanLog(ctx, status); err != nil {
+			logger.Warn("failed to save night charge plan log", "error", err)
+		}
 	}
 	if err := statusRepository.UpdateCurrentStatus(ctx, status); err != nil {
 		logger.Error("failed to update current status", "error", err)

@@ -7,11 +7,20 @@ import { EnergyCharts } from "@/components/EnergyCharts";
 import { EnergyMeterLogTable } from "@/components/EnergyMeterLogTable";
 import { Header } from "@/components/Header";
 import { LogTable } from "@/components/LogTable";
+import { NightChargePlanLogTable } from "@/components/NightChargePlanLogTable";
 import { SolarForecastPanel } from "@/components/SolarForecastPanel";
 import { StatusCards } from "@/components/StatusCards";
 import { TariffSummaryPanel } from "@/components/TariffSummaryPanel";
-import { fetchEnergyMeterLogsPage, fetchLogs, fetchLogsPage, fetchSolarForecast, fetchStatus, fetchTariffSummary } from "@/lib/api";
-import type { EnergyMeterLog, EnergyStatus, PowerLog, SolarForecastSummary, TariffSummary } from "@/lib/types";
+import {
+  fetchEnergyMeterLogsPage,
+  fetchLogs,
+  fetchLogsPage,
+  fetchNightChargePlanLogsPage,
+  fetchSolarForecast,
+  fetchStatus,
+  fetchTariffSummary
+} from "@/lib/api";
+import type { EnergyMeterLog, EnergyStatus, NightChargePlanLog, PowerLog, SolarForecastSummary, TariffSummary } from "@/lib/types";
 
 type LogRange = {
   label: string;
@@ -33,6 +42,7 @@ const forecastRanges = [
 
 const logPageSize = 25;
 const energyMeterLogPageSize = 25;
+const nightChargePlanLogPageSize = 25;
 const dryRunPlanLimit = 10;
 
 const initialStatus: EnergyStatus = {
@@ -57,6 +67,9 @@ export function Dashboard() {
   const [tableLogs, setTableLogs] = useState<PowerLog[]>([]);
   const [dryRunPlanLogs, setDryRunPlanLogs] = useState<PowerLog[]>([]);
   const [nightDryRunPlanLogs, setNightDryRunPlanLogs] = useState<PowerLog[]>([]);
+  const [nightChargePlanLogs, setNightChargePlanLogs] = useState<NightChargePlanLog[]>([]);
+  const [nightChargePlanPage, setNightChargePlanPage] = useState(1);
+  const [nightChargePlanTotal, setNightChargePlanTotal] = useState(0);
   const [logPage, setLogPage] = useState(1);
   const [logSearchInput, setLogSearchInput] = useState("");
   const [logFromInput, setLogFromInput] = useState("");
@@ -85,6 +98,7 @@ export function Dashboard() {
   const [logsError, setLogsError] = useState<string | null>(null);
   const [dryRunPlanError, setDryRunPlanError] = useState<string | null>(null);
   const [nightDryRunPlanError, setNightDryRunPlanError] = useState<string | null>(null);
+  const [nightChargePlanError, setNightChargePlanError] = useState<string | null>(null);
   const [energyMeterError, setEnergyMeterError] = useState<string | null>(null);
   const [tariffError, setTariffError] = useState<string | null>(null);
   const [solarForecastError, setSolarForecastError] = useState<string | null>(null);
@@ -207,6 +221,39 @@ export function Dashboard() {
       window.clearInterval(timer);
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadNightChargePlanLogPage() {
+      try {
+        const nextPage = await fetchNightChargePlanLogsPage({
+          limit: nightChargePlanLogPageSize,
+          offset: (nightChargePlanPage - 1) * nightChargePlanLogPageSize
+        });
+        if (!cancelled) {
+          setNightChargePlanLogs(nextPage.items);
+          setNightChargePlanTotal(nextPage.total);
+          setNightChargePlanError(null);
+          const totalPages = Math.max(1, Math.ceil(nextPage.total / nightChargePlanLogPageSize));
+          if (nightChargePlanPage > totalPages) {
+            setNightChargePlanPage(totalPages);
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setNightChargePlanError(err instanceof Error ? err.message : "night charge plan logs request failed");
+        }
+      }
+    }
+
+    loadNightChargePlanLogPage();
+    const timer = window.setInterval(loadNightChargePlanLogPage, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [nightChargePlanPage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -354,6 +401,14 @@ export function Dashboard() {
         title="夜間制御 dry-run 履歴"
         marker="night dry-run plan:"
         emptyMessage="夜間制御 dry-run 計画はまだ記録されていません。"
+      />
+      <NightChargePlanLogTable
+        logs={nightChargePlanLogs}
+        error={nightChargePlanError}
+        page={nightChargePlanPage}
+        pageSize={nightChargePlanLogPageSize}
+        total={nightChargePlanTotal}
+        onPageChange={setNightChargePlanPage}
       />
       <DryRunPlanHistory logs={dryRunPlanLogs} error={dryRunPlanError} />
       <EnergyCharts logs={chartLogs} rangeLabel={logRange.label} ranges={logRanges} selectedRange={logRange} onRangeChange={setLogRange} />

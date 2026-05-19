@@ -18,7 +18,7 @@ func TestMigrateCreatesPhaseOneTables(t *testing.T) {
 		t.Fatalf("migrate failed: %v", err)
 	}
 
-	for _, table := range []string{"settings", "current_status", "power_logs"} {
+	for _, table := range []string{"settings", "current_status", "power_logs", "night_charge_plan_logs"} {
 		var name string
 		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name)
 		if err != nil {

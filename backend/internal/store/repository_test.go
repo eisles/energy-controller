@@ -325,6 +325,88 @@ func TestEnergyMeterRepositoryInsertsDeltaFromPreviousReading(t *testing.T) {
 	}
 }
 
+func TestNightChargePlanRepositoryInsertsAndListsNewestFirst(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewNightChargePlanRepository(db)
+	base := time.Date(2026, 5, 19, 22, 0, 0, 0, time.UTC)
+
+	for i := 0; i < 2; i++ {
+		measuredAt := base.Add(time.Duration(i) * time.Hour)
+		targetDate := "2026-05-20"
+		if err := repo.InsertNightChargePlanLog(context.Background(), domain.Status{
+			GridW:          100 + i,
+			ImportW:        100 + i,
+			BatterySoc:     80 + i,
+			BatteryInputW:  10,
+			BatteryOutputW: 200,
+			UpdatedAt:      measuredAt,
+			NightChargePlan: &domain.NightChargePlan{
+				StrategyState:             "NIGHT_PLAN_READY",
+				RecommendedMode:           "tou",
+				RecommendedNightTargetSoc: 60 + i,
+				RecommendedNightTargetKWh: 7.3,
+				CurrentBatteryEnergyKWh:   9.8,
+				RequiredNightChargeKWh:    0,
+				ShouldChargeTonight:       false,
+				WouldWrite:                false,
+				CommandBlockReason:        "outside night charge window",
+				ActionSummary:             "深夜充電は抑制",
+				Reason:                    "sunny forecast",
+				TargetForecast:            &domain.WeatherForecast{Date: targetDate},
+			},
+		}); err != nil {
+			t.Fatalf("InsertNightChargePlanLog failed: %v", err)
+		}
+	}
+
+	logs, total, err := repo.ListNightChargePlanLogsPage(context.Background(), 1, 0, NightChargePlanLogPageFilter{})
+	if err != nil {
+		t.Fatalf("ListNightChargePlanLogsPage failed: %v", err)
+	}
+	if total != 2 || len(logs) != 1 {
+		t.Fatalf("total,len = %d,%d; want 2,1", total, len(logs))
+	}
+	if logs[0].BatterySoc != 81 || logs[0].RecommendedNightTargetSoc != 61 {
+		t.Fatalf("unexpected newest log: %+v", logs[0])
+	}
+	if logs[0].TargetForecastDate == nil || *logs[0].TargetForecastDate != "2026-05-20" {
+		t.Fatalf("TargetForecastDate = %v, want 2026-05-20", logs[0].TargetForecastDate)
+	}
+}
+
+func TestNightChargePlanRepositoryFiltersByDateRange(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewNightChargePlanRepository(db)
+	base := time.Date(2026, 5, 19, 21, 0, 0, 0, time.UTC)
+
+	for i := 0; i < 3; i++ {
+		measuredAt := base.Add(time.Duration(i) * time.Hour)
+		if err := repo.InsertNightChargePlanLog(context.Background(), domain.Status{
+			BatterySoc: i,
+			UpdatedAt:  measuredAt,
+			NightChargePlan: &domain.NightChargePlan{
+				StrategyState:             "NIGHT_PLAN_READY",
+				RecommendedMode:           "observe",
+				RecommendedNightTargetSoc: i,
+				ActionSummary:             "sample",
+				Reason:                    "sample",
+			},
+		}); err != nil {
+			t.Fatalf("InsertNightChargePlanLog failed: %v", err)
+		}
+	}
+
+	from := base.Add(30 * time.Minute)
+	to := base.Add(90 * time.Minute)
+	logs, total, err := repo.ListNightChargePlanLogsPage(context.Background(), 25, 0, NightChargePlanLogPageFilter{From: &from, To: &to})
+	if err != nil {
+		t.Fatalf("ListNightChargePlanLogsPage failed: %v", err)
+	}
+	if total != 1 || len(logs) != 1 || logs[0].BatterySoc != 1 {
+		t.Fatalf("logs,total = %+v,%d; want only middle log", logs, total)
+	}
+}
+
 func TestEnergyMeterRepositoryIgnoresDuplicateReading(t *testing.T) {
 	db := openTestDB(t)
 	repo := NewEnergyMeterRepository(db)

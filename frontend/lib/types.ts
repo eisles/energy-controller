@@ -196,6 +196,37 @@ export type PowerLogsPage = {
   offset: number;
 };
 
+export type NightChargePlanLog = {
+  id: number;
+  measuredAt: string;
+  strategyState: string;
+  recommendedMode: string;
+  recommendedNightTargetSoc: number;
+  recommendedNightTargetKwh: number;
+  currentBatteryEnergyKwh: number;
+  requiredNightChargeKwh: number;
+  batterySoc: number;
+  batteryInputW: number;
+  batteryOutputW: number;
+  gridW: number;
+  importW: number;
+  exportW: number;
+  shouldChargeTonight: boolean;
+  wouldWrite: boolean;
+  commandBlockReason: string;
+  actionSummary: string;
+  reason: string;
+  targetForecastDate?: string | null;
+  createdAt: string;
+};
+
+export type NightChargePlanLogsPage = {
+  items: NightChargePlanLog[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
 export type EnergyMeterLog = {
   id: number;
   measuredAt: string;

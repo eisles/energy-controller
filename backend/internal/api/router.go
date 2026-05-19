@@ -49,6 +49,7 @@ func NewRouter(deps Dependencies) http.Handler {
 		mux.HandleFunc("GET /api/analytics/daytime-consumption", daytimeConsumptionHandler(store.NewDaytimeConsumptionRepository(deps.DB), deps.Logger))
 		mux.HandleFunc("GET /api/analytics/ecoflow-load", ecoFlowLoadHandler(store.NewEcoFlowLoadRepositoryWithTimezone(deps.DB, deps.Config.WeatherTimezone), deps.Logger))
 		mux.HandleFunc("GET /api/energy-meter/logs", energyMeterLogsHandler(store.NewEnergyMeterRepository(deps.DB), deps.Logger))
+		mux.HandleFunc("GET /api/night-charge/plans", nightChargePlanLogsHandler(store.NewNightChargePlanRepository(deps.DB), deps.Logger))
 		mux.HandleFunc("GET /api/tariff/summary", tariffSummaryHandler(tariffRepository, deps.Logger))
 		mux.HandleFunc("GET /api/settings/tariff-plans", getTariffPlansHandler(tariffRepository, deps.Logger))
 		mux.HandleFunc("POST /api/settings/tariff-plans", postTariffPlanHandler(tariffRepository, deps.Logger))
