@@ -131,6 +131,7 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 		result.Decision.Reason += "; EcoFlow mock write adapter recorded would-send command"
 	}
 	nightChargePlan := control.PlanNightCharging(control.NightChargePlanInput{
+		Now:                 now,
 		BatterySoc:          batteryStatus.Soc,
 		BackupReserveSoc:    batteryStatus.BackupReserveSoc,
 		BatteryFullEnergyWh: batteryStatus.FullEnergyWh,
@@ -140,6 +141,9 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 		EnableRealControl:   p.realControl,
 		AutoControl:         p.autoControl,
 	}, p.settings)
+	if nightChargePlan.ActionSummary != "" {
+		result.Decision.Reason += "; night dry-run plan: " + nightChargePlan.ActionSummary
+	}
 
 	return domain.Status{
 		GridW:               result.GridPower.GridW,

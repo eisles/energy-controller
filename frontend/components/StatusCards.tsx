@@ -107,6 +107,7 @@ function NightChargePlanCard({ plan }: { plan?: NightChargePlan | null }) {
       </CardHeader>
       <CardContent>
         <div className="detail-strip" aria-label="night charging planner detail">
+          <Detail label="状態" value={plan.strategyState || "-"} />
           <Detail label="PV期待度" value={`${plan.solarForecastScore}/100`} />
           <Detail label="推奨深夜SOC" value={`${plan.recommendedNightTargetSoc}%`} />
           <Detail label="最低確保SOC" value={`${plan.minimumReserveSoc}%`} />
@@ -118,9 +119,18 @@ function NightChargePlanCard({ plan }: { plan?: NightChargePlan | null }) {
           <Detail label="推定PV発電" value={`${formatDecimal(plan.estimatedPvKwh)} kWh`} />
           <Detail label="推定日中消費" value={`${formatDecimal(plan.estimatedDaytimeLoadKwh)} kWh`} />
           <Detail label="推定余剰" value={`${formatDecimal(plan.estimatedSurplusKwh)} kWh`} />
+          <Detail label="推定不足" value={`${formatDecimal(plan.estimatedDeficitKwh)} kWh`} />
+          <Detail label="PV充電見込" value={`${formatDecimal(plan.estimatedPvToBatteryKwh)} kWh`} />
           <Detail label="充電余地" value={`${formatDecimal(plan.batteryChargeHeadroomKwh)} kWh`} />
           <Detail label="容量ソース" value={capacitySourceLabel(plan.batteryCapacitySource)} />
           <Detail label="日射量" value={`${formatDecimal(plan.solarRadiationKwhPerM2)} kWh/m2`} />
+        </div>
+        <div className="detail-strip planner-secondary" aria-label="night charge energy detail">
+          <Detail label="現在残量" value={`${formatDecimal(plan.currentBatteryEnergyKwh)} kWh`} />
+          <Detail label="推奨残量" value={`${formatDecimal(plan.recommendedNightTargetKwh)} kWh`} />
+          <Detail label="最低確保" value={`${formatDecimal(plan.minimumReserveKwh)} kWh`} />
+          <Detail label="深夜必要量" value={`${formatDecimal(plan.requiredNightChargeKwh)} kWh`} />
+          <Detail label="容量" value={`${formatDecimal(plan.batteryCapacityKwh)} kWh`} />
         </div>
         <div className="detail-strip planner-secondary" aria-label="weather forecast detail">
           <Detail label="日照" value={plan.targetForecast ? `${formatDecimal(plan.targetForecast.sunshineDurationHours)} h` : "-"} />
@@ -130,6 +140,7 @@ function NightChargePlanCard({ plan }: { plan?: NightChargePlan | null }) {
           <Detail label="取得元" value={plan.targetForecast?.provider || "-"} />
           <Detail label="天気コード" value={plan.targetForecast ? `${plan.targetForecast.weatherCode}` : "-"} />
         </div>
+        {plan.actionSummary ? <p className="planner-reason">Dry-run計画: {plan.actionSummary}</p> : null}
         <p className="planner-reason">{plan.reason || "-"}</p>
       </CardContent>
     </Card>

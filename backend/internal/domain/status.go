@@ -168,17 +168,26 @@ type DailyDaytimeConsumptionEstimate struct {
 
 type NightChargePlan struct {
 	Mode                      string           `json:"mode"`
+	StrategyState             string           `json:"strategyState"`
 	SolarForecastScore        int              `json:"solarForecastScore"`
 	SolarRadiationKWhPerM2    float64          `json:"solarRadiationKwhPerM2"`
 	EstimatedPVKWh            float64          `json:"estimatedPvKwh"`
 	EstimatedDaytimeLoadKWh   float64          `json:"estimatedDaytimeLoadKwh"`
 	EstimatedSurplusKWh       float64          `json:"estimatedSurplusKwh"`
+	EstimatedDeficitKWh       float64          `json:"estimatedDeficitKwh"`
+	EstimatedPVToBatteryKWh   float64          `json:"estimatedPvToBatteryKwh"`
+	BatteryCapacityKWh        float64          `json:"batteryCapacityKwh"`
+	CurrentBatteryEnergyKWh   float64          `json:"currentBatteryEnergyKwh"`
 	BatteryChargeHeadroomKWh  float64          `json:"batteryChargeHeadroomKwh"`
+	RecommendedNightTargetKWh float64          `json:"recommendedNightTargetKwh"`
+	MinimumReserveKWh         float64          `json:"minimumReserveKwh"`
+	RequiredNightChargeKWh    float64          `json:"requiredNightChargeKwh"`
 	BatteryCapacitySource     string           `json:"batteryCapacitySource"`
 	RecommendedNightTargetSoc int              `json:"recommendedNightTargetSoc"`
 	MinimumReserveSoc         int              `json:"minimumReserveSoc"`
 	ShouldChargeTonight       bool             `json:"shouldChargeTonight"`
 	WouldWrite                bool             `json:"wouldWrite"`
+	ActionSummary             string           `json:"actionSummary"`
 	Reason                    string           `json:"reason"`
 	TargetForecast            *WeatherForecast `json:"targetForecast,omitempty"`
 }

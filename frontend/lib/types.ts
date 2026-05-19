@@ -113,17 +113,26 @@ export type EcoFlowLoadEstimate = {
 
 export type NightChargePlan = {
   mode: string;
+  strategyState: string;
   solarForecastScore: number;
   solarRadiationKwhPerM2: number;
   estimatedPvKwh: number;
   estimatedDaytimeLoadKwh: number;
   estimatedSurplusKwh: number;
+  estimatedDeficitKwh: number;
+  estimatedPvToBatteryKwh: number;
+  batteryCapacityKwh: number;
+  currentBatteryEnergyKwh: number;
   batteryChargeHeadroomKwh: number;
+  recommendedNightTargetKwh: number;
+  minimumReserveKwh: number;
+  requiredNightChargeKwh: number;
   batteryCapacitySource: string;
   recommendedNightTargetSoc: number;
   minimumReserveSoc: number;
   shouldChargeTonight: boolean;
   wouldWrite: boolean;
+  actionSummary: string;
   reason: string;
   targetForecast?: WeatherForecast | null;
 };

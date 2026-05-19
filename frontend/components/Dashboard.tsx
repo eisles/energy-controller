@@ -56,6 +56,7 @@ export function Dashboard() {
   const [chartLogs, setChartLogs] = useState<PowerLog[]>([]);
   const [tableLogs, setTableLogs] = useState<PowerLog[]>([]);
   const [dryRunPlanLogs, setDryRunPlanLogs] = useState<PowerLog[]>([]);
+  const [nightDryRunPlanLogs, setNightDryRunPlanLogs] = useState<PowerLog[]>([]);
   const [logPage, setLogPage] = useState(1);
   const [logSearchInput, setLogSearchInput] = useState("");
   const [logFromInput, setLogFromInput] = useState("");
@@ -83,6 +84,7 @@ export function Dashboard() {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [logsError, setLogsError] = useState<string | null>(null);
   const [dryRunPlanError, setDryRunPlanError] = useState<string | null>(null);
+  const [nightDryRunPlanError, setNightDryRunPlanError] = useState<string | null>(null);
   const [energyMeterError, setEnergyMeterError] = useState<string | null>(null);
   const [tariffError, setTariffError] = useState<string | null>(null);
   const [solarForecastError, setSolarForecastError] = useState<string | null>(null);
@@ -172,18 +174,28 @@ export function Dashboard() {
 
     async function loadDryRunPlans() {
       try {
-        const nextPage = await fetchLogsPage({
-          limit: dryRunPlanLimit,
-          offset: 0,
-          q: "surplus dry-run plan"
-        });
+        const [surplusPage, nightPage] = await Promise.all([
+          fetchLogsPage({
+            limit: dryRunPlanLimit,
+            offset: 0,
+            q: "surplus dry-run plan"
+          }),
+          fetchLogsPage({
+            limit: dryRunPlanLimit,
+            offset: 0,
+            q: "night dry-run plan"
+          })
+        ]);
         if (!cancelled) {
-          setDryRunPlanLogs(nextPage.items);
+          setDryRunPlanLogs(surplusPage.items);
+          setNightDryRunPlanLogs(nightPage.items);
           setDryRunPlanError(null);
+          setNightDryRunPlanError(null);
         }
       } catch (err) {
         if (!cancelled) {
           setDryRunPlanError(err instanceof Error ? err.message : "dry-run plan logs request failed");
+          setNightDryRunPlanError(err instanceof Error ? err.message : "night dry-run plan logs request failed");
         }
       }
     }
@@ -336,6 +348,13 @@ export function Dashboard() {
     <main className="page-shell">
       <Header status={status} />
       <StatusCards status={status} fetchError={statusError} />
+      <DryRunPlanHistory
+        logs={nightDryRunPlanLogs}
+        error={nightDryRunPlanError}
+        title="夜間制御 dry-run 履歴"
+        marker="night dry-run plan:"
+        emptyMessage="夜間制御 dry-run 計画はまだ記録されていません。"
+      />
       <DryRunPlanHistory logs={dryRunPlanLogs} error={dryRunPlanError} />
       <EnergyCharts logs={chartLogs} rangeLabel={logRange.label} ranges={logRanges} selectedRange={logRange} onRangeChange={setLogRange} />
       <ControlPanel onTariffPlanSaved={() => setTariffRefreshToken((value) => value + 1)} />

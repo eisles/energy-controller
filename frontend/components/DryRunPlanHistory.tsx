@@ -8,18 +8,29 @@ import type { PowerLog } from "@/lib/types";
 type DryRunPlanHistoryProps = {
   logs: PowerLog[];
   error: string | null;
+  title?: string;
+  marker?: string;
+  emptyMessage?: string;
 };
 
-const dryRunMarker = "surplus dry-run plan:";
+const defaultDryRunMarker = "surplus dry-run plan:";
+const dryRunMarkers = ["surplus dry-run plan:", "night dry-run plan:"];
+const dryRunEndDelimiters = ["; EcoFlow"];
 
-export function DryRunPlanHistory({ logs, error }: DryRunPlanHistoryProps) {
+export function DryRunPlanHistory({
+  logs,
+  error,
+  title = "余剰追従 dry-run 履歴",
+  marker = defaultDryRunMarker,
+  emptyMessage = "dry-run 計画はまだ記録されていません。"
+}: DryRunPlanHistoryProps) {
   return (
     <Card className="section">
       <CardHeader>
         <div className="panel-title-row">
           <div>
             <CardDescription>Read-only audit</CardDescription>
-            <CardTitle>余剰追従 dry-run 履歴</CardTitle>
+            <CardTitle>{title}</CardTitle>
           </div>
           <Badge variant="secondary">no write</Badge>
         </div>
@@ -41,7 +52,7 @@ export function DryRunPlanHistory({ logs, error }: DryRunPlanHistoryProps) {
               {logs.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="empty-cell">
-                    dry-run 計画はまだ記録されていません。
+                    {emptyMessage}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -50,7 +61,7 @@ export function DryRunPlanHistory({ logs, error }: DryRunPlanHistoryProps) {
                     <TableCell>{formatDateTime(log.measuredAt)}</TableCell>
                     <TableCell>{formatGrid(log)}</TableCell>
                     <TableCell>{formatBattery(log)}</TableCell>
-                    <TableCell className="reason-cell">{extractDryRunPlan(log.decisionReason)}</TableCell>
+                    <TableCell className="reason-cell">{extractDryRunPlan(log.decisionReason, marker)}</TableCell>
                     <TableCell>
                       <Badge variant={log.commandSent ? "warning" : "success"}>{log.commandSent ? "sent" : "not sent"}</Badge>
                     </TableCell>
@@ -65,13 +76,25 @@ export function DryRunPlanHistory({ logs, error }: DryRunPlanHistoryProps) {
   );
 }
 
-function extractDryRunPlan(reason: string) {
-  const markerIndex = reason.indexOf(dryRunMarker);
+function extractDryRunPlan(reason: string, marker: string) {
+  const markerIndex = reason.indexOf(marker);
   if (markerIndex < 0) {
     return reason || "-";
   }
-  const plan = reason.slice(markerIndex + dryRunMarker.length).split("; EcoFlow")[0].trim();
+  const planStart = markerIndex + marker.length;
+  const planEnd = findDryRunPlanEnd(reason, marker, planStart);
+  const plan = reason.slice(planStart, planEnd).trim();
   return plan || "-";
+}
+
+function findDryRunPlanEnd(reason: string, currentMarker: string, planStart: number) {
+  const candidates = [...dryRunEndDelimiters, ...dryRunMarkers.filter((marker) => marker !== currentMarker).map((marker) => `; ${marker}`)]
+    .map((delimiter) => reason.indexOf(delimiter, planStart))
+    .filter((index) => index >= 0);
+  if (candidates.length === 0) {
+    return reason.length;
+  }
+  return Math.min(...candidates);
 }
 
 function formatGrid(log: PowerLog) {

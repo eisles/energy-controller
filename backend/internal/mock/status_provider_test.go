@@ -45,6 +45,19 @@ func (r staticBatteryReader) GetBatteryStatus(context.Context) (domain.BatterySt
 	return r.status, nil
 }
 
+type staticWeatherReader struct {
+	forecast domain.WeatherForecast
+	location domain.WeatherLocation
+}
+
+func (r staticWeatherReader) ForecastTargetDaytime(context.Context, time.Time) (domain.WeatherForecast, error) {
+	return r.forecast, nil
+}
+
+func (r staticWeatherReader) CurrentWeatherLocation(context.Context) (domain.WeatherLocation, error) {
+	return r.location, nil
+}
+
 type failingWriteClient struct{}
 
 func (failingWriteClient) SetACChargePower(context.Context, int) error {
@@ -102,6 +115,38 @@ func TestStatusProviderRecordsWouldSendWithoutMarkingCommandSent(t *testing.T) {
 	commands := writer.Snapshot()
 	if len(commands) != 1 || commands[0].Name != "set_ac_charge_power" || commands[0].Watts != 1400 {
 		t.Fatalf("recorded commands = %+v, want one set_ac_charge_power 1400", commands)
+	}
+}
+
+func TestStatusProviderAddsNightDryRunPlanToDecisionReason(t *testing.T) {
+	now := time.Date(2026, 5, 19, 22, 30, 0, 0, time.FixedZone("JST", 9*60*60))
+	fullEnergyWh := 12288
+	provider := NewStatusProviderWithReaders(
+		fixedClock{now: now},
+		control.DefaultSettings(),
+		false,
+		true,
+		false,
+		false,
+		staticGridReader{gridPower: domain.GridPower{GridW: 0, ImportW: 0, ExportW: 0}, updatedAt: now},
+		staticBatteryReader{status: domain.BatteryStatus{Soc: 55, FullEnergyWh: &fullEnergyWh, IsOnline: true}},
+		ecoflow.NewMockWriteClient(),
+		"ecoflow-read",
+		staticWeatherReader{
+			forecast: domain.WeatherForecast{ShortwaveRadiationMJPerM2: 3, SunshineDurationHours: 1, CloudCoverMeanPercent: 95, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 12},
+			location: domain.WeatherLocation{PVCapacityKW: 4, PVPerformanceRatio: 0.75, DailyBaseLoadKWh: 6, MinimumReserveSoc: 30},
+		},
+	)
+
+	status, err := provider.CurrentStatus(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentStatus failed: %v", err)
+	}
+	if status.NightChargePlan == nil || status.NightChargePlan.ActionSummary == "" {
+		t.Fatalf("NightChargePlan = %+v, want action summary", status.NightChargePlan)
+	}
+	if !strings.Contains(status.LastDecisionReason, "night dry-run plan: 深夜目標SOCを90%へ設定") {
+		t.Fatalf("LastDecisionReason = %q, want night dry-run plan marker", status.LastDecisionReason)
 	}
 }
 
