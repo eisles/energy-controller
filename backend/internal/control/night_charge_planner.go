@@ -11,10 +11,17 @@ import (
 type NightChargePlanInput struct {
 	Now                 time.Time
 	BatterySoc          int
+	ACChargeLimitW      int
 	BackupReserveSoc    *int
 	BatteryFullEnergyWh *int
+	TOUModeEnabled      *bool
+	SelfPoweredEnabled  *bool
+	ScheduledEnabled    *bool
+	IntelligentEnabled  *bool
 	Forecast            *domain.WeatherForecast
 	SolarSettings       *domain.WeatherLocation
+	Previous            PreviousDecision
+	MockMode            bool
 	SimulationMode      bool
 	EnableRealControl   bool
 	AutoControl         bool
@@ -43,8 +50,10 @@ func PlanNightCharging(input NightChargePlanInput, settings Settings) domain.Nig
 		applyBatteryEnergyEstimate(&plan, input)
 		plan.RequiredNightChargeKWh = requiredNightChargeKWh(plan.CurrentBatteryEnergyKWh, plan.RecommendedNightTargetKWh)
 		plan.StrategyState = nightChargeStrategyState(input.Now, plan.ShouldChargeTonight, input.BatterySoc, plan.RecommendedNightTargetSoc)
+		applyNightChargeCommandPlan(&plan, input, settings)
 		plan.ActionSummary = nightChargeActionSummary(plan)
 		plan.Reason = "weather forecast is not configured; keep a conservative night charge target"
+		applyNightChargeWriteGuard(&plan, input, settings)
 		return plan
 	}
 
@@ -57,6 +66,7 @@ func PlanNightCharging(input NightChargePlanInput, settings Settings) domain.Nig
 	applyBatteryEnergyEstimate(&plan, input)
 	plan.RequiredNightChargeKWh = requiredNightChargeKWh(plan.CurrentBatteryEnergyKWh, plan.RecommendedNightTargetKWh)
 	plan.StrategyState = nightChargeStrategyState(input.Now, plan.ShouldChargeTonight, input.BatterySoc, plan.RecommendedNightTargetSoc)
+	applyNightChargeCommandPlan(&plan, input, settings)
 	plan.ActionSummary = nightChargeActionSummary(plan)
 
 	switch {
@@ -73,16 +83,7 @@ func PlanNightCharging(input NightChargePlanInput, settings Settings) domain.Nig
 		plan.Reason += "; current SOC is already above the recommended night target"
 	}
 
-	switch {
-	case input.SimulationMode:
-		plan.Reason += "; simulation mode keeps EcoFlow write disabled"
-	case !input.EnableRealControl:
-		plan.Reason += "; ENABLE_REAL_CONTROL=false keeps EcoFlow write disabled"
-	case !input.AutoControl:
-		plan.Reason += "; auto control disabled keeps EcoFlow write disabled"
-	default:
-		plan.WouldWrite = plan.StrategyState == "NIGHT_CHARGE_WINDOW" && plan.ShouldChargeTonight
-	}
+	applyNightChargeWriteGuard(&plan, input, settings)
 	return plan
 }
 
@@ -168,7 +169,7 @@ func requiredNightChargeKWh(currentKWh, targetKWh float64) float64 {
 }
 
 func nightChargeActionSummary(plan domain.NightChargePlan) string {
-	actions := []string{}
+	actions := make([]string, 0, 4)
 	if plan.ShouldChargeTonight {
 		actions = append(actions, fmt.Sprintf("深夜目標SOCを%d%%へ設定", plan.RecommendedNightTargetSoc))
 		if plan.RequiredNightChargeKWh > 0 {
@@ -177,10 +178,83 @@ func nightChargeActionSummary(plan domain.NightChargePlan) string {
 	} else {
 		actions = append(actions, fmt.Sprintf("深夜充電は抑制し%d%%を維持", plan.RecommendedNightTargetSoc))
 	}
+	if plan.ShouldDisableEnergyModes {
+		actions = append(actions, "夜間充電前にenergy strategy modesを全OFF")
+	}
+	if plan.ShouldSetBackupReserve && plan.RecommendedBackupReserveSoc != nil {
+		actions = append(actions, fmt.Sprintf("バックアップリザーブを%d%%へ設定", *plan.RecommendedBackupReserveSoc))
+	}
+	if plan.ShouldSetACChargeLimit {
+		actions = append(actions, fmt.Sprintf("AC充電上限を%dWへ設定", plan.RecommendedACChargeLimitW))
+	}
 	if plan.EstimatedPVToBatteryKWh > 0 {
 		actions = append(actions, fmt.Sprintf("翌日日中PVで最大%.1fkWh充電見込み", plan.EstimatedPVToBatteryKWh))
 	}
 	return strings.Join(actions, "; ")
+}
+
+func applyNightChargeCommandPlan(plan *domain.NightChargePlan, input NightChargePlanInput, settings Settings) {
+	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" || !plan.ShouldChargeTonight {
+		return
+	}
+	plan.RecommendedACChargeLimitW = settings.MaxChargeW
+	plan.ShouldSetACChargeLimit = input.ACChargeLimitW <= 0 || abs(input.ACChargeLimitW-plan.RecommendedACChargeLimitW) >= settings.MinCommandDiffW
+	recommendedReserve := plan.RecommendedNightTargetSoc
+	plan.RecommendedBackupReserveSoc = &recommendedReserve
+	plan.ShouldSetBackupReserve = input.BackupReserveSoc == nil || *input.BackupReserveSoc != recommendedReserve
+	plan.ShouldDisableEnergyModes = hasEnabledEnergyMode(SurplusPlanInput{
+		TOUModeEnabled:     input.TOUModeEnabled,
+		SelfPoweredEnabled: input.SelfPoweredEnabled,
+		ScheduledEnabled:   input.ScheduledEnabled,
+		IntelligentEnabled: input.IntelligentEnabled,
+	})
+}
+
+func applyNightChargeWriteGuard(plan *domain.NightChargePlan, input NightChargePlanInput, settings Settings) {
+	if !plan.ShouldChargeTonight {
+		plan.CommandBlockReason = "current SOC is already above the recommended night target"
+		return
+	}
+	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" {
+		plan.CommandBlockReason = "outside night charge window"
+		return
+	}
+	if !plan.ShouldSetACChargeLimit && !plan.ShouldSetBackupReserve && !plan.ShouldDisableEnergyModes {
+		plan.CommandBlockReason = "night charge settings already match plan"
+		return
+	}
+	allowed, suppressed := nightChargeCommandGate(*plan, input, settings)
+	plan.CommandSuppressed = suppressed
+
+	switch {
+	case input.MockMode:
+		plan.CommandBlockReason = "mock mode keeps EcoFlow write disabled"
+	case input.SimulationMode:
+		plan.CommandBlockReason = "simulation mode keeps EcoFlow write disabled"
+	case !input.EnableRealControl:
+		plan.CommandBlockReason = "ENABLE_REAL_CONTROL=false keeps EcoFlow write disabled"
+	case !input.AutoControl:
+		plan.CommandBlockReason = "auto control disabled keeps EcoFlow write disabled"
+	case suppressed:
+		plan.CommandBlockReason = "command suppressed by minimum interval or command diff"
+	case allowed:
+		plan.WouldWrite = true
+		plan.CommandBlockReason = ""
+	}
+	if plan.CommandBlockReason != "" {
+		plan.Reason += "; " + plan.CommandBlockReason
+	}
+}
+
+func nightChargeCommandGate(plan domain.NightChargePlan, input NightChargePlanInput, settings Settings) (bool, bool) {
+	hasCandidateChange := plan.ShouldSetACChargeLimit || plan.ShouldSetBackupReserve || plan.ShouldDisableEnergyModes
+	if !hasCandidateChange {
+		return false, true
+	}
+	if !input.Previous.LastCommandAt.IsZero() && input.Now.Sub(input.Previous.LastCommandAt) < settings.MinCommandInterval {
+		return false, true
+	}
+	return true, false
 }
 
 func SolarForecastScore(forecast domain.WeatherForecast) int {

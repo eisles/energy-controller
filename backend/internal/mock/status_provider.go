@@ -133,10 +133,17 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 	nightChargePlan := control.PlanNightCharging(control.NightChargePlanInput{
 		Now:                 now,
 		BatterySoc:          batteryStatus.Soc,
+		ACChargeLimitW:      batteryStatus.ACChargeLimitW,
 		BackupReserveSoc:    batteryStatus.BackupReserveSoc,
 		BatteryFullEnergyWh: batteryStatus.FullEnergyWh,
+		TOUModeEnabled:      batteryStatus.TOUModeEnabled,
+		SelfPoweredEnabled:  batteryStatus.SelfPoweredEnabled,
+		ScheduledEnabled:    batteryStatus.ScheduledEnabled,
+		IntelligentEnabled:  batteryStatus.IntelligentEnabled,
 		Forecast:            weatherForecast,
 		SolarSettings:       solarSettings,
+		Previous:            p.previousDecisionSnapshot(),
+		MockMode:            p.mockMode,
 		SimulationMode:      p.simulationMode,
 		EnableRealControl:   p.realControl,
 		AutoControl:         p.autoControl,
@@ -176,6 +183,12 @@ func (p *StatusProvider) LastCommandActualW() *int {
 	}
 	value := *p.actualCommandW
 	return &value
+}
+
+func (p *StatusProvider) previousDecisionSnapshot() control.PreviousDecision {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.previous
 }
 
 func (p *StatusProvider) LastCommandSent() bool {

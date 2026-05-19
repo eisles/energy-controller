@@ -128,9 +128,16 @@ export type NightChargePlan = {
   minimumReserveKwh: number;
   requiredNightChargeKwh: number;
   batteryCapacitySource: string;
+  recommendedAcChargeLimitW: number;
+  recommendedBackupReserveSoc?: number | null;
   recommendedNightTargetSoc: number;
   minimumReserveSoc: number;
   shouldChargeTonight: boolean;
+  shouldSetAcChargeLimit: boolean;
+  shouldSetBackupReserve: boolean;
+  shouldDisableEnergyModes: boolean;
+  commandSuppressed: boolean;
+  commandBlockReason: string;
   wouldWrite: boolean;
   actionSummary: string;
   reason: string;

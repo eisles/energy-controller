@@ -200,6 +200,7 @@ func TestPlanNightChargingWouldWriteOnlyInsideNightChargeWindow(t *testing.T) {
 	forecast := &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 3, SunshineDurationHours: 1, CloudCoverMeanPercent: 95, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 12}
 	baseInput := NightChargePlanInput{
 		BatterySoc:        55,
+		ACChargeLimitW:    400,
 		Forecast:          forecast,
 		SimulationMode:    false,
 		EnableRealControl: true,
@@ -218,6 +219,158 @@ func TestPlanNightChargingWouldWriteOnlyInsideNightChargeWindow(t *testing.T) {
 	window := PlanNightCharging(windowInput, DefaultSettings())
 	if !window.WouldWrite {
 		t.Fatalf("WouldWrite = false during %s, want true", window.StrategyState)
+	}
+}
+
+func TestPlanNightChargingBuildsCommandPlanForNightChargeWindow(t *testing.T) {
+	forecast := &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 3, SunshineDurationHours: 1, CloudCoverMeanPercent: 95, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 12}
+	reserve := 30
+	tou := true
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:               time.Date(2026, 5, 19, 23, 30, 0, 0, jst),
+		BatterySoc:        55,
+		ACChargeLimitW:    400,
+		BackupReserveSoc:  &reserve,
+		TOUModeEnabled:    &tou,
+		Forecast:          forecast,
+		SimulationMode:    true,
+		EnableRealControl: false,
+		AutoControl:       false,
+	}, DefaultSettings())
+
+	if plan.RecommendedACChargeLimitW != DefaultSettings().MaxChargeW {
+		t.Fatalf("RecommendedACChargeLimitW = %d, want %d", plan.RecommendedACChargeLimitW, DefaultSettings().MaxChargeW)
+	}
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != DefaultSettings().TargetSoc {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want %d", plan.RecommendedBackupReserveSoc, DefaultSettings().TargetSoc)
+	}
+	if !plan.ShouldSetACChargeLimit || !plan.ShouldSetBackupReserve || !plan.ShouldDisableEnergyModes {
+		t.Fatalf("command plan flags = ac:%t reserve:%t modes:%t, want all true", plan.ShouldSetACChargeLimit, plan.ShouldSetBackupReserve, plan.ShouldDisableEnergyModes)
+	}
+	for _, want := range []string{"energy strategy modesを全OFF", "バックアップリザーブを90%へ設定", "AC充電上限を1500Wへ設定"} {
+		if !strings.Contains(plan.ActionSummary, want) {
+			t.Fatalf("ActionSummary = %q, want %q", plan.ActionSummary, want)
+		}
+	}
+}
+
+func TestPlanNightChargingBlocksWriteUnlessAllGuardsPass(t *testing.T) {
+	forecast := &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 3, SunshineDurationHours: 1, CloudCoverMeanPercent: 95, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 12}
+	tests := []struct {
+		name  string
+		input NightChargePlanInput
+		want  string
+	}{
+		{
+			name: "mock mode",
+			input: NightChargePlanInput{
+				MockMode:          true,
+				SimulationMode:    false,
+				EnableRealControl: true,
+				AutoControl:       true,
+			},
+			want: "mock mode",
+		},
+		{
+			name: "simulation mode",
+			input: NightChargePlanInput{
+				SimulationMode:    true,
+				EnableRealControl: true,
+				AutoControl:       true,
+			},
+			want: "simulation mode",
+		},
+		{
+			name: "real control disabled",
+			input: NightChargePlanInput{
+				SimulationMode:    false,
+				EnableRealControl: false,
+				AutoControl:       true,
+			},
+			want: "ENABLE_REAL_CONTROL=false",
+		},
+		{
+			name: "auto control disabled",
+			input: NightChargePlanInput{
+				SimulationMode:    false,
+				EnableRealControl: true,
+				AutoControl:       false,
+			},
+			want: "auto control disabled",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := tt.input
+			input.Now = time.Date(2026, 5, 19, 23, 30, 0, 0, jst)
+			input.BatterySoc = 55
+			input.ACChargeLimitW = 400
+			input.Forecast = forecast
+			plan := PlanNightCharging(input, DefaultSettings())
+			if plan.WouldWrite {
+				t.Fatal("WouldWrite = true, want false")
+			}
+			if !strings.Contains(plan.CommandBlockReason, tt.want) {
+				t.Fatalf("CommandBlockReason = %q, want contains %q", plan.CommandBlockReason, tt.want)
+			}
+		})
+	}
+}
+
+func TestPlanNightChargingSuppressesWithinMinimumInterval(t *testing.T) {
+	forecast := &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 3, SunshineDurationHours: 1, CloudCoverMeanPercent: 95, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 12}
+	now := time.Date(2026, 5, 19, 23, 30, 0, 0, jst)
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:               now,
+		BatterySoc:        55,
+		ACChargeLimitW:    400,
+		Forecast:          forecast,
+		Previous:          PreviousDecision{LastCommandAt: now.Add(-30 * time.Second), LastCommandTargetW: 1500},
+		SimulationMode:    false,
+		EnableRealControl: true,
+		AutoControl:       true,
+	}, DefaultSettings())
+
+	if plan.WouldWrite {
+		t.Fatal("WouldWrite = true, want false inside minimum interval")
+	}
+	if !plan.CommandSuppressed {
+		t.Fatal("CommandSuppressed = false, want true")
+	}
+	if !strings.Contains(plan.CommandBlockReason, "command suppressed") {
+		t.Fatalf("CommandBlockReason = %q, want command suppressed", plan.CommandBlockReason)
+	}
+}
+
+func TestPlanNightChargingDoesNotSuppressReserveOrModeChangeWhenACTargetIsUnchanged(t *testing.T) {
+	forecast := &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 3, SunshineDurationHours: 1, CloudCoverMeanPercent: 95, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 12}
+	now := time.Date(2026, 5, 19, 23, 30, 0, 0, jst)
+	reserve := 30
+	tou := true
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:               now,
+		BatterySoc:        55,
+		ACChargeLimitW:    DefaultSettings().MaxChargeW,
+		BackupReserveSoc:  &reserve,
+		TOUModeEnabled:    &tou,
+		Forecast:          forecast,
+		Previous:          PreviousDecision{LastCommandAt: now.Add(-2 * time.Minute), LastCommandTargetW: DefaultSettings().MaxChargeW},
+		SimulationMode:    false,
+		EnableRealControl: true,
+		AutoControl:       true,
+	}, DefaultSettings())
+
+	if plan.ShouldSetACChargeLimit {
+		t.Fatal("ShouldSetACChargeLimit = true, want false because current AC limit already matches")
+	}
+	if !plan.ShouldSetBackupReserve || !plan.ShouldDisableEnergyModes {
+		t.Fatalf("reserve/mode flags = reserve:%t modes:%t, want both true", plan.ShouldSetBackupReserve, plan.ShouldDisableEnergyModes)
+	}
+	if plan.CommandSuppressed {
+		t.Fatal("CommandSuppressed = true, want false for reserve/mode changes after interval")
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true for reserve/mode changes after interval")
 	}
 }
 

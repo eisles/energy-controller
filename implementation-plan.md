@@ -1034,6 +1034,177 @@ Phase 7 で実制御を入れる場合の優先制御軸:
 - 買電状態、売電不足、API 不確実、quota 不確実のときは送信せず `lastError` / log に残す
 - 最初の実制御は手動実行または短時間限定で確認し、自動連続制御は最後に有効化する
 
+#### kWhベース夜間充電制御の実装計画
+
+中部電力 Eライフプランのように 23:00-07:00 の電気料金が安い契約では、翌日の日中に太陽光で十分充電できるかを見て、深夜充電量を必要分だけに抑える。
+
+目的:
+
+- 翌日の太陽光発電予測が少ない日は、安い深夜時間帯に不足分を充電する
+- 翌日の太陽光発電予測が十分な日は、深夜満充電を避けて日中のPV充電余地を残す
+- Nature Remo E の全負荷ではなく、EcoFlow が供給する特定回路の消費を優先して夜間目標を決める
+- 目標SOCを天気スコアだけで決めず、kWh不足量から算出する
+
+基本式:
+
+```text
+翌日日中不足見込み kWh
+  = max(0, 予測日中消費 kWh - 予測PV発電 kWh)
+
+朝までの消費見込み kWh
+  = 23:00 以降のEcoFlow特定回路出力の平均 kWh
+  - 既に夜間時間帯で経過済みの消費見込み kWh
+
+夜間に確保したい残量 kWh
+  = 最低バックアップリザーブ kWh
+  + 朝までの消費見込み kWh
+  + 翌日日中不足見込み kWh
+  + 安全マージン kWh
+
+推奨深夜SOC %
+  = clamp(
+      ceil(夜間に確保したい残量 kWh / バッテリー容量 kWh * 100),
+      minimumReserveSoc,
+      targetSoc
+    )
+
+必要深夜充電 kWh
+  = max(0, 推奨深夜残量 kWh - 現在バッテリー残量 kWh)
+```
+
+入力データ:
+
+- `batterySoc`
+- `batteryFullEnergyWh`、取得できない場合は手動設定の `batteryCapacityKWh`
+- `minimumReserveSoc`
+- `targetSoc`
+- Open-Meteo の翌日日中 `shortwave_radiation`
+- 太陽光設定 `pvCapacityKw` / `pvPerformanceRatio`
+- EcoFlow 出力ログから推定した特定回路の日中消費 kWh
+- EcoFlow 夜間出力ログから推定した深夜-朝の消費 kWh
+- 料金時間帯 `nightStart=23:00` / `nightEnd=07:00`
+
+日中消費の優先順位:
+
+1. EcoFlow 出力ログの直近7日平均から計算した特定回路の日中消費
+2. データ不足時は手動設定の `dailyBaseLoadKWh`
+3. どちらも無い場合は保守的に夜間充電目標を高めにするが、理由を `nightChargePlan.reason` に残す
+
+状態遷移:
+
+```text
+DAYTIME_OBSERVE:
+  日中は観測のみ。翌日計画のためにPV実績、EcoFlow出力、Nature買電/売電を蓄積する。
+
+NIGHT_PLAN_READY:
+  21:00以降、翌日予報、直近ログ、23:00-07:00 の夜間消費見込みから推奨深夜SOCと必要深夜充電kWhを計算する。
+  この段階では write しない。
+
+NIGHT_CHARGE_WINDOW:
+  23:00-07:00 の安価時間帯。
+  夜間時間帯の経過に合わせて「朝までの残り消費見込み」を再計算する。
+  必要深夜充電kWh > 0 かつ SOC が推奨深夜SOC未満の場合だけ、候補操作を出す。
+  深夜料金が機器側TOUに設定されている場合は、TOU mode の挙動を優先し、必要に応じて self-powered mode へ切り替える候補を出す。
+
+NIGHT_RECOVER:
+  推奨深夜SOC到達、7:00到達、または充電不要時。
+  TOU/backup reserve を日中制御向けに戻す候補を出す。
+```
+
+夜間 mode 選択方針:
+
+```text
+TOU mode:
+  EcoFlow 側に 23:00-07:00 の安価時間帯が設定されている場合、深夜料金を考慮した pass-through / 充電維持に寄る。
+  backup reserve が低く、batterySoc が高い場合でも、TOU 設定に従って batteryInputW と batteryOutputW が近い pass-through 的な状態になることがある。
+  深夜時間帯に「放電せず、現状維持または小さく充電」でよい場合は TOU mode を優先する。
+
+self-powered mode:
+  backup reserve と現在SOCの関係を見て、EcoFlow が放電/充電を判断しやすい。
+  深夜時間帯でも、放電させたい場合や backup reserve を使って残量下限を明確に制御したい場合は self-powered mode を候補にする。
+
+mode選択:
+  pass-throughでよい:
+    TOU mode を維持し、backup reserve % で維持ラインを調整する。
+
+  放電する必要がある:
+    self-powered mode へ切り替え、backup reserve % を放電下限として制御する。
+
+  充電する必要がある:
+    TOU mode の深夜料金設定で充電できるなら TOU mode を優先する。
+    TOU mode で充電が始まらない場合のみ、energy strategy mode OFF + backup reserve引き上げ + AC充電上限の候補へ進む。
+```
+
+write候補:
+
+```text
+充電が必要:
+  - TOU mode が深夜料金設定に従って充電できるなら TOU mode 維持候補
+  - TOU mode で充電できない場合は energy strategy mode flags を全OFFにする候補
+  - backup reserve % を推奨深夜SOCへ上げる候補
+  - AC充電上限Wを夜間用の上限へ設定する候補
+
+放電が必要:
+  - self-powered mode へ切り替える候補
+  - backup reserve % を放電下限へ設定する候補
+  - TOU mode はOFF候補
+
+pass-throughでよい:
+  - TOU mode を維持する候補
+  - backup reserve % を維持ラインへ設定する候補
+  - AC充電上限Wは必要以上に上げない
+
+充電不要 / 目標到達:
+  - TOUをONへ戻す候補
+  - backup reserve % を defaultReserveSoc へ戻す候補
+  - AC充電上限Wは必要なら最小値または安全値へ戻す候補
+```
+
+安全条件:
+
+- Phase 7 の共通 guard を必ず通す
+  - `MOCK_MODE=false`
+  - `SIMULATION_MODE=false`
+  - `ENABLE_REAL_CONTROL=true`
+  - `AUTO_CONTROL_ENABLED=true`
+- `NIGHT_PLAN_READY` では絶対に送信しない
+- `NIGHT_CHARGE_WINDOW` 以外では充電開始系 command を送信しない
+- min command interval を適用する
+- AC充電Wだけでなく、backup reserve / energy strategy mode の変更も command差分として扱う
+- 送信前に現在値が想定と一致することを確認する
+- Open-Meteo 予報取得失敗時は、直近成功予報または保守的 fallback を使い、`lastError` と `decision_reason` に残す
+- 実 write 接続前は `nightChargePlan` と `decision_reason` の dry-run 表示だけで検証する
+- 夜間-朝消費見込みは、計画時点では 23:00-07:00 の平均消費として加算し、`NIGHT_CHARGE_WINDOW` 中は現在時刻から 07:00 までの残り消費見込みとして再計算する
+- TOU mode と self-powered mode は同時に有効にしない
+- mode切り替えは backup reserve / AC充電W より影響が大きいため、dry-run履歴で挙動を確認してから one-shot 検証へ進む
+- TOU mode の深夜料金設定が実機側で取れない場合は、アプリ側の料金時間帯設定を source of truth とし、実機挙動との差を `decision_reason` に残す
+
+実装ステップ:
+
+1. `NightChargePlan` の目標SOC計算を天気スコア中心から kWh不足量中心へ変更する
+2. EcoFlow出力ログから日中消費 kWh と夜間-朝消費 kWh を planner input に渡せるようにする
+3. `SafetyMarginKWh` と `NightToMorningLoadKWh` の推定値を計算する
+4. TOU mode / self-powered mode / energy strategy OFF の mode選択を planner output に追加する
+5. `NIGHT_PLAN_READY` で翌日計画を dry-run として記録する
+6. `NIGHT_CHARGE_WINDOW` では 07:00 までの残り消費見込みを再計算し、必要深夜充電kWhがある場合だけ `WouldWrite` 候補を出す
+7. `NIGHT_RECOVER` でTOU/backup reserveを戻す候補を出す
+8. unit test で晴天・曇天・雨天・予報失敗・容量未取得・SOC到達済み・夜間消費込みの必要量・深夜途中の残り消費再計算・TOU維持・self-powered切替候補を確認する
+9. UI に「翌日日中不足見込み」「朝までの消費見込み」「推奨深夜SOC」「必要深夜充電kWh」「予測PV発電」「消費ソース」「推奨mode」を表示する
+10. 実機 write 接続は dry-run 履歴が妥当と判断できてから別ステップで行う
+
+完了条件:
+
+- 翌日のPV予測が十分なとき、推奨深夜SOCが最低確保付近まで下がる
+- 翌日のPV予測が不足するとき、不足kWhに応じて推奨深夜SOCが上がる
+- 23:00時点では朝までの消費見込みを含め、深夜途中では07:00までの残り消費だけを含める
+- pass-throughで十分な深夜条件では TOU mode 維持候補が出る
+- 放電が必要な深夜条件では self-powered mode と backup reserve 制御候補が出る
+- 現在SOCが推奨深夜SOC以上なら、夜間充電は不要になる
+- 予報取得失敗時でもアプリは落ちず、判断理由がログに残る
+- default 起動では実 write されない
+- `cd backend && go test ./...` が通る
+- `cd frontend && npm run build` が通る
+
 ---
 
 ## 最初にCodexへ投げるプロンプト

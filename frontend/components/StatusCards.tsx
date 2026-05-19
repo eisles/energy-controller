@@ -132,6 +132,14 @@ function NightChargePlanCard({ plan }: { plan?: NightChargePlan | null }) {
           <Detail label="深夜必要量" value={`${formatDecimal(plan.requiredNightChargeKwh)} kWh`} />
           <Detail label="容量" value={`${formatDecimal(plan.batteryCapacityKwh)} kWh`} />
         </div>
+        <div className="detail-strip planner-secondary" aria-label="night charge command guard detail">
+          <Detail label="候補AC上限" value={plan.recommendedAcChargeLimitW > 0 ? `${plan.recommendedAcChargeLimitW} W` : "-"} />
+          <Detail label="候補リザーブ" value={nullablePercent(plan.recommendedBackupReserveSoc)} />
+          <Detail label="AC上限変更" value={yesNo(plan.shouldSetAcChargeLimit)} />
+          <Detail label="リザーブ変更" value={yesNo(plan.shouldSetBackupReserve)} />
+          <Detail label="TOU解除" value={yesNo(plan.shouldDisableEnergyModes)} />
+          <Detail label="抑制" value={yesNo(plan.commandSuppressed)} />
+        </div>
         <div className="detail-strip planner-secondary" aria-label="weather forecast detail">
           <Detail label="日照" value={plan.targetForecast ? `${formatDecimal(plan.targetForecast.sunshineDurationHours)} h` : "-"} />
           <Detail label="雲量" value={plan.targetForecast ? `${plan.targetForecast.cloudCoverMeanPercent}%` : "-"} />
@@ -141,6 +149,7 @@ function NightChargePlanCard({ plan }: { plan?: NightChargePlan | null }) {
           <Detail label="天気コード" value={plan.targetForecast ? `${plan.targetForecast.weatherCode}` : "-"} />
         </div>
         {plan.actionSummary ? <p className="planner-reason">Dry-run計画: {plan.actionSummary}</p> : null}
+        {plan.commandBlockReason ? <p className="planner-reason">Write guard: {plan.commandBlockReason}</p> : null}
         <p className="planner-reason">{plan.reason || "-"}</p>
       </CardContent>
     </Card>
