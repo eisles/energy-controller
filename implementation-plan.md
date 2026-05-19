@@ -1205,6 +1205,231 @@ pass-throughでよい:
 - `cd backend && go test ./...` が通る
 - `cd frontend && npm run build` が通る
 
+#### 夜間計画サマリーの実装計画
+
+`night_charge_plan_logs` でポーリングごとの計画スナップショットを保存できるようになったため、次は 1 夜単位で「計画が妥当だったか」を評価できる read-only サマリーを作る。
+
+目的:
+
+- 21:00 以降に作成した翌日向け夜間計画と、23:00-07:00 の実績を 1 夜単位で見られるようにする
+- 深夜充電を抑えた判断が、翌朝と翌日日中の実績から見て妥当だったかを確認する
+- 自動 write を強める前に、dry-run 計画の成否を監査できる材料を残す
+- 「翌日晴れ予測なので深夜充電を抑えた」「翌日雨予測なので深夜充電を増やした」という判断を、実SOC・買電/売電・日中PV充電見込みと突き合わせる
+
+この段階の安全境界:
+
+- 実機 write は追加しない
+- EcoFlow mode / backup reserve / AC charge power の変更 API は追加しない
+- `night_charge_plan_logs` と `power_logs` / `energy_meter_logs` を read-only 集計するだけにする
+- UI からの操作は追加しない。表示・検索・ページングに留める
+- 自動制御 ON/OFF や設定更新 API とは接続しない
+
+対象期間:
+
+```text
+夜間サマリー日
+  = 21:00-翌07:00 を 1 セッションとして扱う
+
+plan window
+  = 21:00-23:00
+
+charge window
+  = 23:00-07:00
+
+daytime follow-up window
+  = 翌日 07:00-16:00
+```
+
+保存または算出する値:
+
+- `summaryDate`
+  - 夜間セッションの日付。例: 2026-05-19 21:00 から 2026-05-20 07:00 までは `2026-05-19`
+- `planCreatedAt`
+  - 21:00-23:00 の代表計画時刻。初期実装では plan window 内の最新 `NIGHT_PLAN_READY` を採用する
+- `targetForecastDate`
+  - その夜間計画が対象にした日中予報日
+- `plannedTargetSoc`
+  - plan window の代表 `recommendedNightTargetSoc`
+- `plannedTargetKWh`
+  - plan window の代表 `recommendedNightTargetKWh`
+- `plannedRequiredChargeKWh`
+  - plan window の代表 `requiredNightChargeKWh`
+- `plannedMode`
+  - plan window の代表 `recommendedMode`
+- `nightStartSoc`
+  - 23:00 付近の実SOC
+- `nightEndSoc`
+  - 07:00 付近の実SOC
+- `nightSocDelta`
+  - `nightEndSoc - nightStartSoc`
+- `minNightSoc` / `maxNightSoc`
+  - 23:00-07:00 中のSOC最小/最大
+- `nightImportKWh` / `nightExportKWh`
+  - `energy_meter_logs` がある場合は累積差分から計算。無い場合は `power_logs` の W 積分で近似し、source を明示する
+- `nightBatteryInputKWh` / `nightBatteryOutputKWh`
+  - `power_logs.battery_input_w` / `battery_output_w` の W 積分で近似
+- `daytimeBatteryInputKWh`
+  - 翌日 07:00-16:00 の EcoFlow 充電実績
+- `daytimeExportKWh`
+  - 翌日 07:00-16:00 の売電実績。`energy_meter_logs` 優先、無い場合は `power_logs` 近似
+- `morningStatus`
+  - `pending`
+  - `ok`
+  - `undercharged`
+  - `insufficient-data`
+- `finalResultStatus`
+  - `pending`
+  - `ok`
+  - `undercharged`
+  - `overcharged`
+  - `insufficient-data`
+- `morningReason`
+  - 07:00 時点の夜間結果判定理由を短く保存/表示する
+- `finalResultReason`
+  - 16:00 以降の翌日日中 follow-up を含めた最終判定理由を短く保存/表示する
+
+基本判定:
+
+```text
+morningStatus:
+  pending:
+    07:00 以前で夜間結果がまだ確定していない
+
+  insufficient-data:
+    plan window または 07:00 付近のSOCが不足している
+
+  ok:
+    nightEndSoc >= plannedTargetSoc - toleranceSoc
+
+  undercharged:
+    nightEndSoc < plannedTargetSoc - toleranceSoc
+
+finalResultStatus:
+  pending:
+    16:00 以前で翌日日中 follow-up がまだ確定していない
+
+  insufficient-data:
+    morningStatus が insufficient-data、または 07:00-16:00 の日中評価データが不足している
+
+  ok:
+    morningStatus が ok
+    かつ、翌日 daytimeBatteryInputKWh または daytimeExportKWh が想定どおり確認できる
+
+  undercharged:
+    morningStatus が undercharged
+    または、翌日日中に買電が多くSOC不足が見える
+
+  overcharged:
+    nightEndSoc が plannedTargetSoc を大きく超え、かつ翌日日中にPV充電余地不足または売電過多が出ている
+```
+
+初期 tolerance:
+
+- `toleranceSoc = 3`
+- `overchargedThresholdSoc = 10`
+- `daytimeFollowUpEnd = 16:00`
+
+集計方針:
+
+1. まずは DB に集計テーブルを作らず、repository で `night_charge_plan_logs` / `power_logs` / `energy_meter_logs` から read-only 算出する
+2. 計算が重くなる、または履歴保存が必要になったら `night_charge_daily_summaries` テーブルへ materialize する
+3. UI には API レスポンスの source を表示し、`energy_meter_logs` 由来か `power_logs` 近似かを区別する
+4. 欠損データがある場合は推測で埋めず、`insufficient-data` と理由を表示する
+
+API:
+
+```text
+GET /api/night-charge/summaries?limit=30&offset=0
+GET /api/night-charge/summaries?from=2026-05-01T00:00:00+09:00&to=2026-05-31T23:59:59+09:00
+```
+
+レスポンス案:
+
+```json
+{
+  "items": [
+    {
+      "summaryDate": "2026-05-19",
+      "planCreatedAt": "2026-05-19T21:05:00+09:00",
+      "targetForecastDate": "2026-05-20",
+      "plannedTargetSoc": 45,
+      "plannedTargetKwh": 5.5,
+      "plannedRequiredChargeKwh": 0.8,
+      "plannedMode": "tou",
+      "nightStartSoc": 88,
+      "nightEndSoc": 84,
+      "nightSocDelta": -4,
+      "minNightSoc": 83,
+      "maxNightSoc": 89,
+      "nightImportKwh": 8.1,
+      "nightExportKwh": 0.0,
+      "nightBatteryInputKwh": 0.2,
+      "nightBatteryOutputKwh": 1.4,
+      "daytimeBatteryInputKwh": 4.0,
+      "daytimeExportKwh": 2.1,
+      "morningStatus": "ok",
+      "morningReason": "07:00 SOC stayed above the planned target",
+      "finalResultStatus": "ok",
+      "finalResultReason": "SOC stayed above target and daytime PV charge was available",
+      "dataSource": "energy-meter+power-log"
+    }
+  ],
+  "total": 1,
+  "limit": 30,
+  "offset": 0
+}
+```
+
+UI:
+
+- 「夜間計画・結果」スナップショットテーブルとは別に、「夜間サマリー」テーブルを追加する
+- 表示項目:
+  - 夜間日
+  - 計画SOC
+  - 23:00 SOC / 07:00 SOC
+  - SOC差分
+  - 推奨mode
+  - 深夜買電kWh / 売電kWh
+  - 夜間 Battery input/output kWh
+  - 翌日日中 Battery input kWh / 売電kWh
+  - 07:00 判定
+  - 16:00 最終判定
+  - 理由
+- 07:00 判定と 16:00 最終判定は Badge で表示する
+  - `pending`: secondary
+  - `ok`: success
+  - `undercharged`: warning
+  - `overcharged`: warning
+  - `insufficient-data`: secondary
+- ページングと期間検索を付ける
+
+実装ステップ:
+
+1. `domain.NightChargeDailySummary` を追加する
+2. `store.NightChargeSummaryRepository` を追加し、`night_charge_plan_logs` / `power_logs` / `energy_meter_logs` から 1 夜単位の集計を作る
+3. 代表計画は plan window 内の最新 `NIGHT_PLAN_READY` に固定する
+4. まずは直近 `limit` 件を summaryDate DESC で返す
+5. `from` / `to` の期間フィルタを追加する
+6. `GET /api/night-charge/summaries` handler を追加する
+7. repository / handler の unit test を追加する
+8. frontend `types.ts` / `api.ts` に型と fetch 関数を追加する
+9. `NightChargeSummaryTable` を追加し、Dashboard に配置する
+10. `cd backend && go test ./...` と `cd frontend && npm run build` を通す
+11. ブラウザで summary table が表示され、データ不足時に `insufficient-data` が分かることを確認する
+
+完了条件:
+
+- 1 夜単位で `plannedTargetSoc` と `nightEndSoc` を比較できる
+- 代表計画は plan window 内の最新 `NIGHT_PLAN_READY` として一意に決まる
+- 23:00-07:00 のSOC増減と battery input/output kWh が見える
+- 翌日 07:00-16:00 のPV充電・売電実績を並べて見られる
+- 07:00 時点の `morningStatus` と 16:00 後の `finalResultStatus` が分かれている
+- データ不足時に欠損理由が表示される
+- read-only API のみで、実機 write path が増えていない
+- 既存の `night_charge_plan_logs` 表示は維持される
+- `cd backend && go test ./...` が通る
+- `cd frontend && npm run build` が通る
+
 ---
 
 ## 最初にCodexへ投げるプロンプト
