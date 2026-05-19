@@ -8,26 +8,39 @@ type Metric = {
   label: string;
   value: number | string;
   unit?: string;
+  sideValue?: string;
   description?: string;
 };
 
-type MetricKey = "gridW" | "importW" | "exportW" | "batterySoc" | "targetChargeW" | "state";
+type MetricKey = "gridW" | "importW" | "exportW" | "batterySoc" | "netBatteryW" | "targetChargeW";
 
-const primaryMetrics: MetricKey[] = ["gridW", "importW", "exportW", "batterySoc", "targetChargeW", "state"];
+const primaryMetrics: MetricKey[] = ["gridW", "importW", "exportW", "batterySoc", "netBatteryW", "targetChargeW"];
 
 export function StatusCards({ status, fetchError }: { status: EnergyStatus; fetchError: string | null }) {
   const netBatteryW = status.batteryInputW - status.batteryOutputW;
+  const batteryEnergy = batteryEnergySummary(status.batteryFullEnergyWh, status.batterySoc);
   const metrics: Record<MetricKey, Metric> = {
     gridW: { label: "Grid", value: formatGridFlow(status.gridW) },
     importW: { label: "Import", value: status.importW, unit: "W", description: "現在の買電" },
     exportW: { label: "Export", value: status.exportW, unit: "W", description: "現在の売電" },
     batterySoc: {
-      label: "Battery",
-      value: formatNetBatteryFlow(netBatteryW),
-      description: `SOC ${status.batterySoc}% / 入力 ${status.batteryInputW}W / 出力 ${status.batteryOutputW}W`
+      label: "バッテリー残量",
+      value: status.batterySoc,
+      unit: "%",
+      sideValue: batteryEnergyLabel(batteryEnergy),
+      description: batterySocDescription(batteryEnergy, status.batteryOutputW, status.backupReserveSoc)
     },
-    targetChargeW: { label: "Target charge", value: status.targetChargeW, unit: "W", description: "推奨充電W" },
-    state: { label: "State", value: status.state || "-" }
+    netBatteryW: {
+      label: "Net battery",
+      value: formatNetBatteryFlow(netBatteryW),
+      description: `入力 ${status.batteryInputW}W / 出力 ${status.batteryOutputW}W`
+    },
+    targetChargeW: {
+      label: "充電推奨",
+      value: status.targetChargeW,
+      unit: "W",
+      description: chargeRecommendationDescription(status.exportW, status.targetChargeW)
+    }
   };
 
   return (
@@ -146,7 +159,9 @@ function SurplusPlanCard({ plan }: { plan?: SurplusPlan | null }) {
           <Detail label="推奨リザーブ" value={nullablePercent(plan.recommendedBackupReserveSoc)} />
           <Detail label="AC調整" value={yesNo(plan.shouldAdjustAcChargeLimit)} />
           <Detail label="リザーブ引上げ" value={yesNo(plan.shouldRaiseBackupReserve)} />
+          <Detail label="リザーブ戻し" value={yesNo(plan.shouldLowerBackupReserve)} />
         </div>
+        <p className="planner-reason">{surplusActionLabel(plan)}</p>
         <p className="planner-reason">{plan.reason || "-"}</p>
       </CardContent>
     </Card>
@@ -159,8 +174,11 @@ function MetricCard({ metric }: { metric: Metric }) {
       <CardHeader>
         <CardDescription>{metric.label}</CardDescription>
         <CardTitle className="metric-value">
-          {metric.value}
-          {metric.unit ? <span className="metric-unit">{metric.unit}</span> : null}
+          <span>
+            {metric.value}
+            {metric.unit ? <span className="metric-unit">{metric.unit}</span> : null}
+          </span>
+          {metric.sideValue ? <span className="metric-side-value">{metric.sideValue}</span> : null}
         </CardTitle>
       </CardHeader>
       {metric.description ? <CardContent className="metric-description">{metric.description}</CardContent> : null}
@@ -188,6 +206,45 @@ function formatNetBatteryFlow(netBatteryW: number) {
   return "待機中 0 W";
 }
 
+function chargeRecommendationDescription(exportW: number, targetChargeW: number) {
+  if (exportW > 0 && targetChargeW > 0) {
+    return `余剰あり: ${targetChargeW}W充電推奨 / read-onlyで未送信`;
+  }
+  if (targetChargeW > 0) {
+    return `${targetChargeW}W充電推奨 / read-onlyで未送信`;
+  }
+  if (exportW > 0) {
+    return "余剰あり / 充電推奨なし";
+  }
+  return "充電推奨なし";
+}
+
+function surplusActionLabel(plan: SurplusPlan) {
+  const reserveLabel =
+    plan.recommendedBackupReserveSoc !== null && plan.recommendedBackupReserveSoc !== undefined
+      ? `${plan.recommendedBackupReserveSoc}%`
+      : null;
+  if (plan.shouldRaiseBackupReserve && plan.shouldAdjustAcChargeLimit && reserveLabel) {
+    return `売電抑制: 充電開始にはリザーブを${reserveLabel}へ引き上げ、AC充電を${plan.recommendedAcChargeLimitW}Wへ調整する推奨です。read-onlyのため未送信です。`;
+  }
+  if (plan.shouldRaiseBackupReserve && reserveLabel) {
+    return `売電抑制: 充電開始にはリザーブを${reserveLabel}へ引き上げる推奨です。read-onlyのため未送信です。`;
+  }
+  if (plan.shouldLowerBackupReserve && reserveLabel) {
+    return `買電抑制: AC充電を下げ、リザーブをデフォルトの${reserveLabel}へ戻す推奨です。read-onlyのため未送信です。`;
+  }
+  if (plan.recommendedAcChargeLimitW === 0 && plan.shouldAdjustAcChargeLimit) {
+    return "買電抑制: AC充電を0Wへ下げる推奨です。read-onlyのため未送信です。";
+  }
+  if (plan.recommendedAcChargeLimitW > 0 && plan.shouldAdjustAcChargeLimit) {
+    return `売電抑制: ${plan.recommendedAcChargeLimitW}W充電に回す推奨です。read-onlyのため未送信です。`;
+  }
+  if (plan.recommendedAcChargeLimitW > 0) {
+    return `売電抑制: ${plan.recommendedAcChargeLimitW}W充電候補です。read-onlyのため未送信です。`;
+  }
+  return "売電抑制: 現在は追加充電の推奨はありません。";
+}
+
 function nullablePercent(value: number | null | undefined) {
   return value === null || value === undefined ? "-" : `${value}%`;
 }
@@ -212,6 +269,50 @@ function formatBatteryCapacity(value: number | null | undefined) {
     return "-";
   }
   return `${formatDecimal(value / 1000)} kWh`;
+}
+
+function batteryEnergySummary(fullEnergyWh: number | null | undefined, batterySoc: number) {
+  if (fullEnergyWh === null || fullEnergyWh === undefined || fullEnergyWh <= 0) {
+    return null;
+  }
+  const remainingWh = (fullEnergyWh * batterySoc) / 100;
+  return {
+    remainingWh,
+    fullEnergyWh
+  };
+}
+
+function batterySocDescription(
+  energy: { remainingWh: number; fullEnergyWh: number } | null,
+  batteryOutputW: number,
+  backupReserveSoc: number | null | undefined
+) {
+  const parts: string[] = [];
+  if (energy) {
+    parts.push(formatRemainingRuntime(energy.remainingWh, batteryOutputW));
+  }
+  if (backupReserveSoc !== null && backupReserveSoc !== undefined) {
+    parts.push(`確保 ${backupReserveSoc}%`);
+  }
+  return parts.length > 0 ? parts.join(" / ") : "容量未取得";
+}
+
+function batteryEnergyLabel(energy: { remainingWh: number; fullEnergyWh: number } | null) {
+  if (!energy) {
+    return undefined;
+  }
+  return `約 ${formatDecimal(energy.remainingWh / 1000)} / ${formatDecimal(energy.fullEnergyWh / 1000)} kWh`;
+}
+
+function formatRemainingRuntime(remainingWh: number, batteryOutputW: number) {
+  if (batteryOutputW <= 0) {
+    return "現在出力なし";
+  }
+  const hours = remainingWh / batteryOutputW;
+  if (hours >= 24) {
+    return `現在出力なら約 ${formatDecimal(hours / 24)}日`;
+  }
+  return `現在出力なら約 ${formatDecimal(hours)}時間`;
 }
 
 function capacitySourceLabel(value: string) {

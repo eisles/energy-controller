@@ -8,6 +8,7 @@ import (
 
 type WriteClient interface {
 	SetACChargePower(ctx context.Context, watts int) error
+	SetBackupReserveSoc(ctx context.Context, percent int) error
 	StopOrMinimizeCharging(ctx context.Context) error
 }
 
@@ -32,6 +33,16 @@ func (c *MockWriteClient) SetACChargePower(_ context.Context, watts int) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Commands = append(c.Commands, MockCommand{Name: "set_ac_charge_power", Watts: watts})
+	return nil
+}
+
+func (c *MockWriteClient) SetBackupReserveSoc(_ context.Context, percent int) error {
+	if percent < 0 || percent > 100 {
+		return fmt.Errorf("EcoFlow backup reserve SOC must be 0-100: %d", percent)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Commands = append(c.Commands, MockCommand{Name: "set_backup_reserve_soc", Watts: percent})
 	return nil
 }
 

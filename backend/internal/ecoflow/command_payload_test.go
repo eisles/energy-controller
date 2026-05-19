@@ -50,3 +50,49 @@ func TestBuildSetACChargePowerPayloadRejectsInvalidInput(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildSetBackupReservePayload(t *testing.T) {
+	payload, err := buildSetBackupReservePayload("DP3-SN", 82)
+	if err != nil {
+		t.Fatalf("buildSetBackupReservePayload failed: %v", err)
+	}
+
+	if payload.SN != "DP3-SN" {
+		t.Fatalf("SN = %q, want DP3-SN", payload.SN)
+	}
+	if payload.CmdID != 17 || payload.CmdFunc != 254 || payload.DirDest != 1 || payload.DirSrc != 1 || payload.Dest != 2 || !payload.NeedAck {
+		t.Fatalf("unexpected command envelope: %+v", payload)
+	}
+	if payload.Params[candidateBackupReserveParam] != 82 {
+		t.Fatalf("params[%q] = %d, want 82", candidateBackupReserveParam, payload.Params[candidateBackupReserveParam])
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	want := `{"sn":"DP3-SN","cmdId":17,"cmdFunc":254,"dirDest":1,"dirSrc":1,"dest":2,"needAck":true,"params":{"cfgBackupReverseSoc":82}}`
+	if string(body) != want {
+		t.Fatalf("json = %s, want %s", body, want)
+	}
+}
+
+func TestBuildSetBackupReservePayloadRejectsInvalidInput(t *testing.T) {
+	tests := []struct {
+		name     string
+		deviceSN string
+		percent  int
+	}{
+		{name: "empty serial", deviceSN: "", percent: 80},
+		{name: "negative percent", deviceSN: "DP3-SN", percent: -1},
+		{name: "over 100 percent", deviceSN: "DP3-SN", percent: 101},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := buildSetBackupReservePayload(tt.deviceSN, tt.percent); err == nil {
+				t.Fatal("buildSetBackupReservePayload returned nil error, want error")
+			}
+		})
+	}
+}

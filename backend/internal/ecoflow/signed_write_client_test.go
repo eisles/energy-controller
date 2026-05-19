@@ -174,6 +174,51 @@ func TestSignedWriteClientSendsOneSignedRequestWhenGuardsPass(t *testing.T) {
 	}
 }
 
+func TestSignedWriteClientSendsBackupReserveRequestWhenGuardsPass(t *testing.T) {
+	var gotBody string
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPut {
+			t.Fatalf("method = %s, want PUT", r.Method)
+		}
+		if r.URL.Path != "/iot-open/sign/device/quota" {
+			t.Fatalf("path = %s, want /iot-open/sign/device/quota", r.URL.Path)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll failed: %v", err)
+		}
+		gotBody = string(body)
+		_ = json.NewEncoder(w).Encode(map[string]string{"code": "0", "message": "Success"})
+	}))
+	defer server.Close()
+
+	client := NewSignedWriteClient(Config{
+		AccessKey: "access-key",
+		SecretKey: "secret-key",
+		DeviceSN:  "DP3-SN",
+		BaseURL:   server.URL,
+	}, WriteGuards{
+		MockMode:           false,
+		SimulationMode:     false,
+		EnableRealControl:  true,
+		AutoControlEnabled: true,
+	})
+
+	if err := client.SetBackupReserveSoc(context.Background(), 82); err != nil {
+		t.Fatalf("SetBackupReserveSoc failed: %v", err)
+	}
+
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+	wantBody := `{"sn":"DP3-SN","cmdId":17,"cmdFunc":254,"dirDest":1,"dirSrc":1,"dest":2,"needAck":true,"params":{"cfgBackupReverseSoc":82}}`
+	if gotBody != wantBody {
+		t.Fatalf("body = %s, want %s", gotBody, wantBody)
+	}
+}
+
 func TestSignedWriteClientReturnsAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"code": "500", "message": "device rejected command"})

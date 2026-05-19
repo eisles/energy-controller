@@ -9,6 +9,7 @@ type SurplusPlanInput struct {
 	BatteryOutputW    int
 	ACChargeLimitW    int
 	BackupReserveSoc  *int
+	DefaultReserveSoc int
 	TOUModeEnabled    *bool
 	SimulationMode    bool
 	EnableRealControl bool
@@ -25,7 +26,19 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		WouldWrite:  false,
 	}
 
+	defaultReserveSoc := normalizeReserveSoc(input.DefaultReserveSoc)
 	switch {
+	case gridPower.ImportW > 0:
+		plan.RecommendedACChargeLimitW = 0
+		plan.ShouldAdjustACChargeLimit = input.ACChargeLimitW >= settings.MinCommandDiffW
+		if input.BackupReserveSoc != nil && *input.BackupReserveSoc > defaultReserveSoc {
+			recommendedReserve := defaultReserveSoc
+			plan.RecommendedBackupReserveSoc = &recommendedReserve
+			plan.ShouldLowerBackupReserve = true
+		}
+		plan.Reason = "importing from grid; restore charging controls toward default reserve"
+		plan.WouldWrite = writeAllowed(input) && (plan.ShouldAdjustACChargeLimit || plan.ShouldLowerBackupReserve)
+		return plan
 	case gridPower.ExportW < settings.StartExportThresholdW:
 		plan.Reason = "export power is below start threshold"
 		return plan
@@ -60,4 +73,18 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		plan.Reason += "; EcoFlow TOU mode is enabled"
 	}
 	return plan
+}
+
+func normalizeReserveSoc(value int) int {
+	if value <= 0 {
+		return 30
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
+}
+
+func writeAllowed(input SurplusPlanInput) bool {
+	return !input.SimulationMode && input.EnableRealControl && input.AutoControl
 }

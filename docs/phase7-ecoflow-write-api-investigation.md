@@ -254,6 +254,18 @@ params.cfgPlugInInfoAcInChgPowMax=<watts>
 
 実際の変更設定を送るタイミングは、この CLI 差分のレビューと commit 後に、直前の状態確認と明示承認を行った後とする。
 
+## 追加確認: backup reserve one-shot 候補
+
+余剰を実際の充電に回すには、AC 充電上限 W だけでなく、バックアップリザーブ % を現在 SOC より上げる必要がある可能性が高い。
+
+2026-05-19 時点で、server / 管理画面 / 自動連続制御には接続せず、one-shot CLI と write adapter に限って backup reserve 候補 payload を追加した。
+
+```text
+params.cfgBackupReverseSoc=<percent>
+```
+
+この param は read-only quota の `backupReverseSoc` / `energyBackupStartSoc` と EcoFlow 系の隣接 document からの候補であり、DELTA Pro 3 実機での正式反映は one-shot で確認する必要がある。CLI は `--reserve-soc` 指定時に read-only API で現在の backup reserve が `--expected-current-reserve` と一致することを確認してから、AC 充電 W、backup reserve % の順で 1 回ずつ送る。
+
 ## 実機確認: AC 充電上限 1500W -> 1000W one-shot
 
 2026-05-18 に、one-shot CLI を使って DELTA Pro 3 の AC 充電上限を 1500W から 1000W へ 1 回だけ変更した。

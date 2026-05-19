@@ -2,7 +2,10 @@ package ecoflow
 
 import "fmt"
 
-const candidateACChargePowerParam = "cfgPlugInInfoAcInChgPowMax"
+const (
+	candidateACChargePowerParam = "cfgPlugInInfoAcInChgPowMax"
+	candidateBackupReserveParam = "cfgBackupReverseSoc"
+)
 
 type commandPayload struct {
 	SN      string         `json:"sn"`
@@ -26,6 +29,20 @@ func buildSetACChargePowerPayload(deviceSN string, watts int) (commandPayload, e
 		// Confirmed in EcoFlow DELTA Pro 3 Developer docs. Keep this builder
 		// disconnected from real PUT until a one-command device validation passes.
 		candidateACChargePowerParam: watts,
+	}), nil
+}
+
+func buildSetBackupReservePayload(deviceSN string, percent int) (commandPayload, error) {
+	if deviceSN == "" {
+		return commandPayload{}, fmt.Errorf("EcoFlow device SN is empty")
+	}
+	if percent < 0 || percent > 100 {
+		return commandPayload{}, fmt.Errorf("EcoFlow backup reserve SOC must be 0-100: %d", percent)
+	}
+	return newCommandPayload(deviceSN, map[string]int{
+		// Candidate inferred from EcoFlow quota naming and adjacent EcoFlow docs.
+		// Keep use behind the same real-control guards and validate with one-shot only.
+		candidateBackupReserveParam: percent,
 	}), nil
 }
 

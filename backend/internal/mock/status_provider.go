@@ -118,6 +118,7 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 		BatteryOutputW:    batteryStatus.OutputW,
 		ACChargeLimitW:    batteryStatus.ACChargeLimitW,
 		BackupReserveSoc:  batteryStatus.BackupReserveSoc,
+		DefaultReserveSoc: defaultReserveSoc(solarSettings),
 		TOUModeEnabled:    batteryStatus.TOUModeEnabled,
 		SimulationMode:    p.simulationMode,
 		EnableRealControl: p.realControl,
@@ -279,6 +280,13 @@ func combineErrors(first *string, second *string) *string {
 		combined := *first + "; " + *second
 		return &combined
 	}
+}
+
+func defaultReserveSoc(location *domain.WeatherLocation) int {
+	if location == nil || location.MinimumReserveSoc <= 0 {
+		return 30
+	}
+	return location.MinimumReserveSoc
 }
 
 func intPtr(value int) *int {

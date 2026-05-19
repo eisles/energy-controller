@@ -34,16 +34,49 @@ func TestPlanSurplusChargingRecommendsACAndReserve(t *testing.T) {
 	}
 }
 
-func TestPlanSurplusChargingDoesNothingWhenImporting(t *testing.T) {
+func TestPlanSurplusChargingRestoresDefaultReserveWhenImporting(t *testing.T) {
+	reserve := 90
 	plan := PlanSurplusCharging(SurplusPlanInput{
-		GridW:      900,
-		BatterySoc: 78,
+		GridW:             900,
+		BatterySoc:        78,
+		ACChargeLimitW:    1500,
+		BackupReserveSoc:  &reserve,
+		DefaultReserveSoc: 30,
+		SimulationMode:    true,
 	}, DefaultSettings())
 
 	if plan.RecommendedACChargeLimitW != 0 {
 		t.Fatalf("RecommendedACChargeLimitW = %d, want 0", plan.RecommendedACChargeLimitW)
 	}
-	if plan.ShouldRaiseBackupReserve || plan.ShouldAdjustACChargeLimit || plan.WouldWrite {
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 30 {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want 30", plan.RecommendedBackupReserveSoc)
+	}
+	if !plan.ShouldAdjustACChargeLimit {
+		t.Fatal("ShouldAdjustACChargeLimit = false, want true")
+	}
+	if !plan.ShouldLowerBackupReserve {
+		t.Fatal("ShouldLowerBackupReserve = false, want true")
+	}
+	if plan.ShouldRaiseBackupReserve || plan.WouldWrite {
+		t.Fatalf("unexpected write recommendation: %+v", plan)
+	}
+}
+
+func TestPlanSurplusChargingDoesNotLowerReserveBelowDefaultWhenImporting(t *testing.T) {
+	reserve := 30
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:             900,
+		BatterySoc:        78,
+		ACChargeLimitW:    0,
+		BackupReserveSoc:  &reserve,
+		DefaultReserveSoc: 30,
+		SimulationMode:    true,
+	}, DefaultSettings())
+
+	if plan.RecommendedBackupReserveSoc != nil {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want nil", plan.RecommendedBackupReserveSoc)
+	}
+	if plan.ShouldRaiseBackupReserve || plan.ShouldLowerBackupReserve || plan.ShouldAdjustACChargeLimit || plan.WouldWrite {
 		t.Fatalf("unexpected write recommendation: %+v", plan)
 	}
 }

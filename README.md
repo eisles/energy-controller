@@ -116,7 +116,18 @@ cd backend
 go run ./cmd/ecoflow-write-test --watts 1000 --expected-current-limit 1500
 ```
 
-実行時は read-only API で現在の AC 充電上限が `--expected-current-limit` と一致することを確認してから、1 回だけ `--watts` の設定を送ります。以下の環境変数が全て揃わない場合は送信しません。
+バックアップリザーブ%も同時に検証する場合:
+
+```bash
+cd backend
+go run ./cmd/ecoflow-write-test \
+  --watts 1000 \
+  --expected-current-limit 1500 \
+  --reserve-soc 90 \
+  --expected-current-reserve 88
+```
+
+実行時は read-only API で現在の AC 充電上限が `--expected-current-limit` と一致し、`--reserve-soc` を指定した場合は現在のバックアップリザーブが `--expected-current-reserve` と一致することを確認してから、1 回だけ設定を送ります。余剰を実際に充電へ回すには、AC充電上限Wだけでなく、バックアップリザーブ%を現在SOCより上へ引き上げる必要がある可能性があります。以下の環境変数が全て揃わない場合は送信しません。
 
 ```bash
 cd backend
@@ -130,6 +141,27 @@ ECOFLOW_SECRET_KEY=... \
 ECOFLOW_DEVICE_SN=... \
 ECOFLOW_BASE_URL=https://api-e.ecoflow.com \
 go run ./cmd/ecoflow-write-test --execute --watts 1000 --expected-current-limit 1500
+```
+
+バックアップリザーブ%も同時に送る場合:
+
+```bash
+cd backend
+MOCK_MODE=false \
+SIMULATION_MODE=false \
+ENABLE_REAL_CONTROL=true \
+AUTO_CONTROL_ENABLED=false \
+CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND \
+ECOFLOW_ACCESS_KEY=... \
+ECOFLOW_SECRET_KEY=... \
+ECOFLOW_DEVICE_SN=... \
+ECOFLOW_BASE_URL=https://api-e.ecoflow.com \
+go run ./cmd/ecoflow-write-test \
+  --execute \
+  --watts 1000 \
+  --expected-current-limit 1500 \
+  --reserve-soc 90 \
+  --expected-current-reserve 88
 ```
 
 実行後は EcoFlow app または read-only status で反映を確認し、`ENABLE_REAL_CONTROL` と `CONFIRM_ECOFLOW_WRITE` は継続運用用に残さないでください。自動連続制御、UI からの書き込み、server API からの書き込みはまだ有効化していません。

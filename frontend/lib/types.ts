@@ -26,6 +26,7 @@ export type SurplusPlan = {
   recommendedAcChargeLimitW: number;
   recommendedBackupReserveSoc?: number | null;
   shouldRaiseBackupReserve: boolean;
+  shouldLowerBackupReserve: boolean;
   shouldAdjustAcChargeLimit: boolean;
   wouldWrite: boolean;
   reason: string;

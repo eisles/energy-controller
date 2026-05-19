@@ -99,6 +99,10 @@ input {
 }
 
 .metric-value {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   overflow-wrap: anywhere;
 }
 
@@ -106,6 +110,12 @@ input {
   margin-left: 4px;
   color: var(--muted-foreground);
   font-size: 14px;
+  font-weight: 700;
+}
+
+.metric-side-value {
+  color: var(--muted-foreground);
+  font-size: 13px;
   font-weight: 700;
 }
 
