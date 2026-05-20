@@ -22,6 +22,9 @@ func TestOpenMeteoClientForecastTargetDaytimeUsesTodayBeforeNoon(t *testing.T) {
 		if r.URL.Query().Get("forecast_days") != "3" {
 			t.Fatalf("forecast_days = %q, want 3", r.URL.Query().Get("forecast_days"))
 		}
+		if r.URL.Query().Get("hourly") != "shortwave_radiation" {
+			t.Fatalf("hourly = %q, want shortwave_radiation", r.URL.Query().Get("hourly"))
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"daily": map[string]any{
 				"time":                          []string{"2026-05-19", "2026-05-20"},
@@ -31,6 +34,10 @@ func TestOpenMeteoClientForecastTargetDaytimeUsesTodayBeforeNoon(t *testing.T) {
 				"cloud_cover_mean":              []int{60, 20},
 				"precipitation_probability_max": []int{40, 5},
 				"precipitation_sum":             []float64{2.2, 0},
+			},
+			"hourly": map[string]any{
+				"time":                []string{"2026-05-19T07:00", "2026-05-19T08:00", "2026-05-20T07:00"},
+				"shortwave_radiation": []float64{205, 380, 140},
 			},
 		})
 	}))
@@ -54,6 +61,9 @@ func TestOpenMeteoClientForecastTargetDaytimeUsesTodayBeforeNoon(t *testing.T) {
 	}
 	if forecast.CloudCoverMeanPercent != 60 || forecast.PrecipitationProbabilityMax != 40 {
 		t.Fatalf("unexpected weather values: %+v", forecast)
+	}
+	if len(forecast.HourlyShortwaveRadiation) != 2 || forecast.HourlyShortwaveRadiation[0].ShortwaveRadiationWPerM2 != 205 {
+		t.Fatalf("unexpected hourly radiation: %+v", forecast.HourlyShortwaveRadiation)
 	}
 }
 
@@ -111,6 +121,29 @@ func TestOpenMeteoClientForecastDaysForLocationRequestsRequestedDays(t *testing.
 func TestForecastFromResponseRequiresDailyTime(t *testing.T) {
 	if _, err := forecastFromResponse(forecastResponse{}, time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)); err == nil {
 		t.Fatal("forecastFromResponse returned nil error without daily time")
+	}
+}
+
+func TestForecastsFromResponseAttachesHourlyRadiationPerDay(t *testing.T) {
+	payload := forecastResponse{
+		Daily: forecastDaily{
+			Time:                  []string{"2026-05-20", "2026-05-21"},
+			ShortwaveRadiationSum: []float64{18, 6},
+		},
+		Hourly: forecastHourly{
+			Time:               []string{"2026-05-20T07:00", "2026-05-20T08:00", "2026-05-21T10:00"},
+			ShortwaveRadiation: []float64{120, 450, 80},
+		},
+	}
+	forecasts, err := forecastsFromResponse(payload)
+	if err != nil {
+		t.Fatalf("forecastsFromResponse failed: %v", err)
+	}
+	if len(forecasts[0].HourlyShortwaveRadiation) != 2 {
+		t.Fatalf("day 1 hourly len = %d, want 2", len(forecasts[0].HourlyShortwaveRadiation))
+	}
+	if len(forecasts[1].HourlyShortwaveRadiation) != 1 {
+		t.Fatalf("day 2 hourly len = %d, want 1", len(forecasts[1].HourlyShortwaveRadiation))
 	}
 }
 

@@ -239,6 +239,8 @@ func (r *NightChargeSummaryRepository) latestPlanInWindow(ctx context.Context, s
 	rows, err := r.db.QueryContext(ctx, `SELECT
 		id, measured_at, strategy_state, recommended_mode, recommended_night_target_soc,
 		recommended_night_target_kwh, current_battery_energy_kwh, required_night_charge_kwh,
+		daily_estimated_pv_kwh, pv_effective_start_at, pv_effective_end_at, pv_effective_window_source,
+		morning_to_pv_start_load_kwh, forecast_daytime_deficit_kwh,
 		battery_soc, battery_input_w, battery_output_w, grid_w, import_w, export_w,
 		should_charge_tonight, would_write, command_block_reason, action_summary, reason,
 		target_forecast_date, created_at

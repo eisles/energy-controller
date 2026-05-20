@@ -29,6 +29,14 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	t.Setenv("MIN_COMMAND_INTERVAL_SEC", "120")
 	t.Setenv("MIN_COMMAND_DIFF_W", "200")
 	t.Setenv("NIGHT_SAFETY_MARGIN_KWH", "0.8")
+	t.Setenv("EFFECTIVE_CHARGE_THRESHOLD_W", "120")
+	t.Setenv("TARGET_EXPORT_BUFFER_W", "180")
+	t.Setenv("MAX_INCREASE_STEP_W", "300")
+	t.Setenv("MAX_DECREASE_STEP_W", "500")
+	t.Setenv("RESERVE_RAISE_STEP_PERCENT", "3")
+	t.Setenv("DEFAULT_RESERVE_SOC", "28")
+	t.Setenv("PASS_THROUGH_ENABLED", "true")
+	t.Setenv("PASS_THROUGH_COOLDOWN_SEC", "420")
 
 	cfg := Load()
 
@@ -97,5 +105,29 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	}
 	if cfg.ControlSettings.NightSafetyMarginKWh != 0.8 {
 		t.Fatalf("NightSafetyMarginKWh = %f, want 0.8", cfg.ControlSettings.NightSafetyMarginKWh)
+	}
+	if cfg.ControlSettings.EffectiveChargeThresholdW != 120 {
+		t.Fatalf("EffectiveChargeThresholdW = %d, want 120", cfg.ControlSettings.EffectiveChargeThresholdW)
+	}
+	if cfg.ControlSettings.TargetExportBufferW != 180 {
+		t.Fatalf("TargetExportBufferW = %d, want 180", cfg.ControlSettings.TargetExportBufferW)
+	}
+	if cfg.ControlSettings.MaxIncreaseStepW != 300 {
+		t.Fatalf("MaxIncreaseStepW = %d, want 300", cfg.ControlSettings.MaxIncreaseStepW)
+	}
+	if cfg.ControlSettings.MaxDecreaseStepW != 500 {
+		t.Fatalf("MaxDecreaseStepW = %d, want 500", cfg.ControlSettings.MaxDecreaseStepW)
+	}
+	if cfg.ControlSettings.ReserveRaiseStepPercent != 3 {
+		t.Fatalf("ReserveRaiseStepPercent = %d, want 3", cfg.ControlSettings.ReserveRaiseStepPercent)
+	}
+	if cfg.ControlSettings.DefaultReserveSoc != 28 {
+		t.Fatalf("DefaultReserveSoc = %d, want 28", cfg.ControlSettings.DefaultReserveSoc)
+	}
+	if !cfg.ControlSettings.PassThroughEnabled {
+		t.Fatal("PassThroughEnabled = false, want true")
+	}
+	if cfg.ControlSettings.PassThroughCooldown != 420*time.Second {
+		t.Fatalf("PassThroughCooldown = %s, want 420s", cfg.ControlSettings.PassThroughCooldown)
 	}
 }

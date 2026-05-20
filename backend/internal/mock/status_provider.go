@@ -115,6 +115,7 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 	p.setCommandStatus(commandSent, actualCommandW)
 	surplusPlan := control.PlanSurplusCharging(control.SurplusPlanInput{
 		GridW:              gridPower.GridW,
+		MockMode:           p.mockMode,
 		BatterySoc:         batteryStatus.Soc,
 		BatteryInputW:      batteryStatus.InputW,
 		BatteryOutputW:     batteryStatus.OutputW,

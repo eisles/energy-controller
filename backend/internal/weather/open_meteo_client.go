@@ -107,6 +107,7 @@ func (c *OpenMeteoClient) forecastPayload(ctx context.Context, latitude float64,
 	query.Set("latitude", strconv.FormatFloat(latitude, 'f', -1, 64))
 	query.Set("longitude", strconv.FormatFloat(longitude, 'f', -1, 64))
 	query.Set("daily", "weather_code,shortwave_radiation_sum,sunshine_duration,cloud_cover_mean,precipitation_probability_max,precipitation_sum")
+	query.Set("hourly", "shortwave_radiation")
 	query.Set("forecast_days", strconv.Itoa(days))
 	query.Set("timezone", timezone)
 	reqURL.RawQuery = query.Encode()
@@ -190,6 +191,7 @@ func forecastFromResponse(payload forecastResponse, targetDate time.Time) (domai
 		CloudCoverMeanPercent:       intAt(payload.Daily.CloudCoverMean, index),
 		PrecipitationProbabilityMax: intAt(payload.Daily.PrecipitationProbabilityMax, index),
 		PrecipitationSumMM:          floatAt(payload.Daily.PrecipitationSum, index),
+		HourlyShortwaveRadiation:    hourlyShortwaveRadiationForDate(payload.Hourly, stringAt(payload.Daily.Time, index)),
 	}
 	if forecast.Date == "" {
 		return domain.WeatherForecast{}, fmt.Errorf("Open-Meteo forecast response has no target date")
@@ -212,6 +214,7 @@ func forecastsFromResponse(payload forecastResponse) ([]domain.WeatherForecast, 
 			CloudCoverMeanPercent:       intAt(payload.Daily.CloudCoverMean, index),
 			PrecipitationProbabilityMax: intAt(payload.Daily.PrecipitationProbabilityMax, index),
 			PrecipitationSumMM:          floatAt(payload.Daily.PrecipitationSum, index),
+			HourlyShortwaveRadiation:    hourlyShortwaveRadiationForDate(payload.Hourly, stringAt(payload.Daily.Time, index)),
 		}
 		if forecast.Date == "" {
 			return nil, fmt.Errorf("Open-Meteo forecast response has no target date")
@@ -249,8 +252,26 @@ func floatAt(values []float64, index int) float64 {
 	return values[index]
 }
 
+func hourlyShortwaveRadiationForDate(hourly forecastHourly, date string) []domain.HourlyShortwaveRadiation {
+	if date == "" || len(hourly.Time) == 0 {
+		return nil
+	}
+	values := make([]domain.HourlyShortwaveRadiation, 0, 24)
+	for i, value := range hourly.Time {
+		if !strings.HasPrefix(value, date+"T") {
+			continue
+		}
+		values = append(values, domain.HourlyShortwaveRadiation{
+			Time:                     value,
+			ShortwaveRadiationWPerM2: floatAt(hourly.ShortwaveRadiation, i),
+		})
+	}
+	return values
+}
+
 type forecastResponse struct {
-	Daily forecastDaily `json:"daily"`
+	Daily  forecastDaily  `json:"daily"`
+	Hourly forecastHourly `json:"hourly"`
 }
 
 type forecastDaily struct {
@@ -261,4 +282,9 @@ type forecastDaily struct {
 	CloudCoverMean              []int     `json:"cloud_cover_mean"`
 	PrecipitationProbabilityMax []int     `json:"precipitation_probability_max"`
 	PrecipitationSum            []float64 `json:"precipitation_sum"`
+}
+
+type forecastHourly struct {
+	Time               []string  `json:"time"`
+	ShortwaveRadiation []float64 `json:"shortwave_radiation"`
 }

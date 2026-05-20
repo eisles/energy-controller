@@ -74,6 +74,12 @@ func TestSolarForecastHandlerReturnsPVEstimate(t *testing.T) {
 	if summary.Items[0].EstimatedPVKWh != 9.6 {
 		t.Fatalf("EstimatedPVKWh = %f, want 9.6", summary.Items[0].EstimatedPVKWh)
 	}
+	if summary.Items[0].PVEffectiveStartAt != "2026-05-20T09:00" || summary.Items[0].PVEffectiveEndAt != "2026-05-20T16:00" {
+		t.Fatalf("PV effective window = %s-%s, want fallback 09:00-16:00", summary.Items[0].PVEffectiveStartAt, summary.Items[0].PVEffectiveEndAt)
+	}
+	if summary.Items[0].PVEffectiveWindowSource != "fallback" {
+		t.Fatalf("PVEffectiveWindowSource = %q, want fallback", summary.Items[0].PVEffectiveWindowSource)
+	}
 	if summary.Items[0].EstimatedSurplusKWh != 7.199999999999999 {
 		t.Fatalf("EstimatedSurplusKWh = %f, want 7.2", summary.Items[0].EstimatedSurplusKWh)
 	}

@@ -81,6 +81,7 @@ export function SolarForecastPanel({ summary, error, ranges, selectedRange, load
                   <TableRow>
                     <TableHead>日付</TableHead>
                     <TableHead>推定PV</TableHead>
+                    <TableHead>PV有効時間</TableHead>
                     <TableHead>推定余剰</TableHead>
                     <TableHead>日射量</TableHead>
                     <TableHead>日照</TableHead>
@@ -94,6 +95,11 @@ export function SolarForecastPanel({ summary, error, ranges, selectedRange, load
                     <TableRow key={item.forecast.date}>
                       <TableCell>{formatDate(item.forecast.date)}</TableCell>
                       <TableCell>{formatKwh(item.estimatedPvKwh)} kWh</TableCell>
+                      <TableCell>
+                        {formatTimeWindow(item.pvEffectiveStartAt, item.pvEffectiveEndAt)}
+                        <br />
+                        <span className="readonly-note">{item.pvEffectiveWindowSource || "-"}</span>
+                      </TableCell>
                       <TableCell>{formatKwh(item.estimatedSurplusKwh)} kWh</TableCell>
                       <TableCell>{formatKwh(item.solarRadiationKwhPerM2)} kWh/m2</TableCell>
                       <TableCell>{formatKwh(item.forecast.sunshineDurationHours)} h</TableCell>
@@ -164,6 +170,18 @@ function formatDateLabel(value: string) {
     month: "2-digit",
     day: "2-digit"
   });
+}
+
+function formatTimeWindow(start?: string, end?: string) {
+  if (!start || !end) {
+    return "-";
+  }
+  return `${formatTimeOnly(start)}-${formatTimeOnly(end)}`;
+}
+
+function formatTimeOnly(value: string) {
+  const parts = value.split("T");
+  return parts[1]?.slice(0, 5) || value;
 }
 
 function formatDateRange(first?: string, last?: string) {

@@ -48,6 +48,10 @@ export type WeatherForecast = {
   cloudCoverMeanPercent: number;
   precipitationProbabilityMax: number;
   precipitationSumMm: number;
+  hourlyShortwaveRadiation?: Array<{
+    time: string;
+    shortwaveRadiationWPerM2: number;
+  }>;
 };
 
 export type WeatherLocation = {
@@ -121,6 +125,14 @@ export type NightChargePlan = {
   solarForecastScore: number;
   solarRadiationKwhPerM2: number;
   estimatedPvKwh: number;
+  dailyEstimatedPvKwh: number;
+  pvEffectiveStartAt?: string;
+  pvEffectiveEndAt?: string;
+  pvEffectiveWindowSource?: string;
+  pvEffectiveRadiationWPerM2?: number;
+  morningToPvStartLoadKwh: number;
+  pvUsableForEcoFlowKwh: number;
+  forecastDaytimeDeficitKwh: number;
   estimatedDaytimeLoadKwh: number;
   estimatedMorningLoadKwh: number;
   estimatedSurplusKwh: number;
@@ -159,6 +171,11 @@ export type SolarForecastEstimate = {
   solarForecastScore: number;
   solarRadiationKwhPerM2: number;
   estimatedPvKwh: number;
+  dailyEstimatedPvKwh: number;
+  pvEffectiveStartAt?: string;
+  pvEffectiveEndAt?: string;
+  pvEffectiveWindowSource?: string;
+  pvEffectiveRadiationWPerM2?: number;
   estimatedDaytimeLoadKwh: number;
   estimatedSurplusKwh: number;
   pvCapacityKw: number;
@@ -209,6 +226,12 @@ export type NightChargePlanLog = {
   recommendedNightTargetKwh: number;
   currentBatteryEnergyKwh: number;
   requiredNightChargeKwh: number;
+  dailyEstimatedPvKwh: number;
+  pvEffectiveStartAt: string;
+  pvEffectiveEndAt: string;
+  pvEffectiveWindowSource: string;
+  morningToPvStartLoadKwh: number;
+  forecastDaytimeDeficitKwh: number;
   batterySoc: number;
   batteryInputW: number;
   batteryOutputW: number;

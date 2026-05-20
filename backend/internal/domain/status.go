@@ -71,14 +71,20 @@ type SurplusPlan struct {
 }
 
 type WeatherForecast struct {
-	Provider                    string  `json:"provider"`
-	Date                        string  `json:"date"`
-	WeatherCode                 int     `json:"weatherCode"`
-	ShortwaveRadiationMJPerM2   float64 `json:"shortwaveRadiationMjPerM2"`
-	SunshineDurationHours       float64 `json:"sunshineDurationHours"`
-	CloudCoverMeanPercent       int     `json:"cloudCoverMeanPercent"`
-	PrecipitationProbabilityMax int     `json:"precipitationProbabilityMax"`
-	PrecipitationSumMM          float64 `json:"precipitationSumMm"`
+	Provider                    string                     `json:"provider"`
+	Date                        string                     `json:"date"`
+	WeatherCode                 int                        `json:"weatherCode"`
+	ShortwaveRadiationMJPerM2   float64                    `json:"shortwaveRadiationMjPerM2"`
+	SunshineDurationHours       float64                    `json:"sunshineDurationHours"`
+	CloudCoverMeanPercent       int                        `json:"cloudCoverMeanPercent"`
+	PrecipitationProbabilityMax int                        `json:"precipitationProbabilityMax"`
+	PrecipitationSumMM          float64                    `json:"precipitationSumMm"`
+	HourlyShortwaveRadiation    []HourlyShortwaveRadiation `json:"hourlyShortwaveRadiation,omitempty"`
+}
+
+type HourlyShortwaveRadiation struct {
+	Time                     string  `json:"time"`
+	ShortwaveRadiationWPerM2 float64 `json:"shortwaveRadiationWPerM2"`
 }
 
 type SolarForecastEstimate struct {
@@ -86,6 +92,11 @@ type SolarForecastEstimate struct {
 	SolarForecastScore          int             `json:"solarForecastScore"`
 	SolarRadiationKWhPerM2      float64         `json:"solarRadiationKwhPerM2"`
 	EstimatedPVKWh              float64         `json:"estimatedPvKwh"`
+	DailyEstimatedPVKWh         float64         `json:"dailyEstimatedPvKwh"`
+	PVEffectiveStartAt          string          `json:"pvEffectiveStartAt,omitempty"`
+	PVEffectiveEndAt            string          `json:"pvEffectiveEndAt,omitempty"`
+	PVEffectiveWindowSource     string          `json:"pvEffectiveWindowSource,omitempty"`
+	PVEffectiveRadiationWPerM2  float64         `json:"pvEffectiveRadiationWPerM2,omitempty"`
 	EstimatedDaytimeLoadKWh     float64         `json:"estimatedDaytimeLoadKwh"`
 	EstimatedSurplusKWh         float64         `json:"estimatedSurplusKwh"`
 	PVCapacityKW                float64         `json:"pvCapacityKw"`
@@ -176,6 +187,14 @@ type NightChargePlan struct {
 	SolarForecastScore          int              `json:"solarForecastScore"`
 	SolarRadiationKWhPerM2      float64          `json:"solarRadiationKwhPerM2"`
 	EstimatedPVKWh              float64          `json:"estimatedPvKwh"`
+	DailyEstimatedPVKWh         float64          `json:"dailyEstimatedPvKwh"`
+	PVEffectiveStartAt          string           `json:"pvEffectiveStartAt,omitempty"`
+	PVEffectiveEndAt            string           `json:"pvEffectiveEndAt,omitempty"`
+	PVEffectiveWindowSource     string           `json:"pvEffectiveWindowSource,omitempty"`
+	PVEffectiveRadiationWPerM2  float64          `json:"pvEffectiveRadiationWPerM2,omitempty"`
+	MorningToPVStartLoadKWh     float64          `json:"morningToPvStartLoadKwh"`
+	PVUsableForEcoFlowKWh       float64          `json:"pvUsableForEcoFlowKwh"`
+	ForecastDaytimeDeficitKWh   float64          `json:"forecastDaytimeDeficitKwh"`
 	EstimatedDaytimeLoadKWh     float64          `json:"estimatedDaytimeLoadKwh"`
 	EstimatedMorningLoadKWh     float64          `json:"estimatedMorningLoadKwh"`
 	EstimatedSurplusKWh         float64          `json:"estimatedSurplusKwh"`
@@ -218,6 +237,12 @@ type NightChargePlanLog struct {
 	RecommendedNightTargetKWh float64   `json:"recommendedNightTargetKwh"`
 	CurrentBatteryEnergyKWh   float64   `json:"currentBatteryEnergyKwh"`
 	RequiredNightChargeKWh    float64   `json:"requiredNightChargeKwh"`
+	DailyEstimatedPVKWh       float64   `json:"dailyEstimatedPvKwh"`
+	PVEffectiveStartAt        string    `json:"pvEffectiveStartAt"`
+	PVEffectiveEndAt          string    `json:"pvEffectiveEndAt"`
+	PVEffectiveWindowSource   string    `json:"pvEffectiveWindowSource"`
+	MorningToPVStartLoadKWh   float64   `json:"morningToPvStartLoadKwh"`
+	ForecastDaytimeDeficitKWh float64   `json:"forecastDaytimeDeficitKwh"`
 	BatterySoc                int       `json:"batterySoc"`
 	BatteryInputW             int       `json:"batteryInputW"`
 	BatteryOutputW            int       `json:"batteryOutputW"`

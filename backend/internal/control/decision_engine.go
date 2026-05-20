@@ -8,15 +8,23 @@ import (
 )
 
 type Settings struct {
-	StartExportThresholdW int
-	StopExportThresholdW  int
-	SafetyMarginW         int
-	MinChargeW            int
-	MaxChargeW            int
-	TargetSoc             int
-	MinCommandInterval    time.Duration
-	MinCommandDiffW       int
-	NightSafetyMarginKWh  float64
+	StartExportThresholdW     int
+	StopExportThresholdW      int
+	SafetyMarginW             int
+	MinChargeW                int
+	MaxChargeW                int
+	TargetSoc                 int
+	MinCommandInterval        time.Duration
+	MinCommandDiffW           int
+	NightSafetyMarginKWh      float64
+	EffectiveChargeThresholdW int
+	TargetExportBufferW       int
+	MaxIncreaseStepW          int
+	MaxDecreaseStepW          int
+	ReserveRaiseStepPercent   int
+	DefaultReserveSoc         int
+	PassThroughEnabled        bool
+	PassThroughCooldown       time.Duration
 }
 
 type Input struct {
@@ -47,15 +55,23 @@ type Result struct {
 
 func DefaultSettings() Settings {
 	return Settings{
-		StartExportThresholdW: 700,
-		StopExportThresholdW:  300,
-		SafetyMarginW:         150,
-		MinChargeW:            400,
-		MaxChargeW:            1500,
-		TargetSoc:             90,
-		MinCommandInterval:    60 * time.Second,
-		MinCommandDiffW:       100,
-		NightSafetyMarginKWh:  0.5,
+		StartExportThresholdW:     700,
+		StopExportThresholdW:      300,
+		SafetyMarginW:             150,
+		MinChargeW:                400,
+		MaxChargeW:                1500,
+		TargetSoc:                 90,
+		MinCommandInterval:        60 * time.Second,
+		MinCommandDiffW:           100,
+		NightSafetyMarginKWh:      0.5,
+		EffectiveChargeThresholdW: 100,
+		TargetExportBufferW:       150,
+		MaxIncreaseStepW:          400,
+		MaxDecreaseStepW:          600,
+		ReserveRaiseStepPercent:   2,
+		DefaultReserveSoc:         30,
+		PassThroughEnabled:        false,
+		PassThroughCooldown:       5 * time.Minute,
 	}
 }
 
@@ -177,6 +193,30 @@ func normalizeSettings(settings Settings) Settings {
 	}
 	if settings.NightSafetyMarginKWh < 0 {
 		settings.NightSafetyMarginKWh = defaults.NightSafetyMarginKWh
+	}
+	if settings.EffectiveChargeThresholdW <= 0 {
+		settings.EffectiveChargeThresholdW = defaults.EffectiveChargeThresholdW
+	}
+	if settings.TargetExportBufferW < 0 {
+		settings.TargetExportBufferW = defaults.TargetExportBufferW
+	}
+	if settings.MaxIncreaseStepW <= 0 {
+		settings.MaxIncreaseStepW = defaults.MaxIncreaseStepW
+	}
+	if settings.MaxDecreaseStepW <= 0 {
+		settings.MaxDecreaseStepW = defaults.MaxDecreaseStepW
+	}
+	if settings.ReserveRaiseStepPercent <= 0 {
+		settings.ReserveRaiseStepPercent = defaults.ReserveRaiseStepPercent
+	}
+	if settings.DefaultReserveSoc <= 0 {
+		settings.DefaultReserveSoc = defaults.DefaultReserveSoc
+	}
+	if settings.DefaultReserveSoc > 100 {
+		settings.DefaultReserveSoc = 100
+	}
+	if settings.PassThroughCooldown <= 0 {
+		settings.PassThroughCooldown = defaults.PassThroughCooldown
 	}
 	if settings.StopExportThresholdW > settings.StartExportThresholdW {
 		settings.StopExportThresholdW = settings.StartExportThresholdW

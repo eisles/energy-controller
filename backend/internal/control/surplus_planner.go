@@ -11,6 +11,7 @@ const minImportRecoveryChargeW = 400
 
 type SurplusPlanInput struct {
 	GridW              int
+	MockMode           bool
 	BatterySoc         int
 	BatteryInputW      int
 	BatteryOutputW     int
@@ -39,8 +40,7 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		WouldWrite:            false,
 	}
 
-	defaultReserveSoc := normalizeReserveSoc(input.DefaultReserveSoc)
-	passThroughCandidate := smallSurplusPassThroughCandidate(input, gridPower.ExportW, plan.RequiredStartExportW, settings)
+	defaultReserveSoc := defaultReserveSoc(input, settings)
 	switch {
 	case gridPower.ImportW > 0:
 		plan.StrategyState = "RECOVERING"
@@ -56,14 +56,6 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		plan.Reason = "importing from grid; recover by stopping surplus charge and restoring default reserve"
 		plan.WouldWrite = writeAllowed(input) && (plan.ShouldAdjustACChargeLimit || plan.ShouldLowerBackupReserve || plan.ShouldEnableTOUMode)
 		return plan
-	case passThroughCandidate:
-		plan.StrategyState = "PASSTHROUGH"
-		recommendedReserve := input.BatterySoc
-		plan.RecommendedBackupReserveSoc = &recommendedReserve
-		plan.ShouldAlignBackupReserve = input.BackupReserveSoc == nil || *input.BackupReserveSoc != recommendedReserve
-		plan.ActionSummary = surplusActionSummary(plan)
-		plan.Reason = fmt.Sprintf("small surplus is below normal charge start requirement; keep TOU on and align backup reserve to current SOC for pass-through behavior (%dW < %dW)", gridPower.ExportW, plan.RequiredStartExportW)
-		return plan
 	case input.BatterySoc >= settings.TargetSoc:
 		plan.StrategyState = "RECOVERING"
 		plan.ShouldEnableTOUMode = boolPtrFalse(input.TOUModeEnabled)
@@ -76,14 +68,23 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		plan.Reason = "battery soc is at or above target; stop surplus charge and restore default reserve"
 		plan.WouldWrite = writeAllowed(input) && (plan.ShouldLowerBackupReserve || plan.ShouldEnableTOUMode)
 		return plan
-	case gridPower.ExportW < settings.StopExportThresholdW:
+	case gridPower.ExportW < settings.StopExportThresholdW && !isSurplusTrackingCharge(input, settings):
 		plan.Reason = "export power is below stop threshold; keep TOU mode and wait"
 		return plan
 	}
 
-	if boolPtrFalse(input.TOUModeEnabled) || netBatteryW > 0 {
+	if isSurplusTrackingCharge(input, settings) {
 		plan.StrategyState = "CHARGING"
 	} else {
+		if smallSurplusPassThroughCandidate(input, gridPower.ExportW, plan.RequiredStartExportW, settings) {
+			plan.StrategyState = "PASSTHROUGH"
+			recommendedReserve := input.BatterySoc
+			plan.RecommendedBackupReserveSoc = &recommendedReserve
+			plan.ShouldAlignBackupReserve = input.BackupReserveSoc == nil || *input.BackupReserveSoc != recommendedReserve
+			plan.ActionSummary = surplusActionSummary(plan)
+			plan.Reason = fmt.Sprintf("small surplus is below normal charge start requirement; keep TOU on and align backup reserve to current SOC for pass-through behavior (%dW < %dW)", gridPower.ExportW, plan.RequiredStartExportW)
+			return plan
+		}
 		plan.StrategyState = "READY"
 		if gridPower.ExportW < plan.RequiredStartExportW {
 			plan.StrategyState = "IDLE"
@@ -92,12 +93,15 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		}
 	}
 
-	recommendedAC := calculateSurplusACChargeW(gridPower.ExportW, input.BatteryOutputW, settings)
+	recommendedAC := calculateStartACChargeW(gridPower.ExportW, input.BatteryOutputW, settings)
+	if plan.StrategyState == "CHARGING" {
+		recommendedAC = calculateTrackingACChargeW(input.ACChargeLimitW, gridPower.ExportW, settings)
+	}
 	plan.RecommendedACChargeLimitW = recommendedAC
 	plan.ShouldAdjustACChargeLimit = abs(recommendedAC-input.ACChargeLimitW) >= settings.MinCommandDiffW
 
 	if input.BackupReserveSoc != nil {
-		recommendedReserve := clamp(input.BatterySoc+2, *input.BackupReserveSoc, settings.TargetSoc)
+		recommendedReserve := clamp(input.BatterySoc+settings.ReserveRaiseStepPercent, *input.BackupReserveSoc, settings.TargetSoc)
 		plan.RecommendedBackupReserveSoc = &recommendedReserve
 		plan.ShouldRaiseBackupReserve = recommendedReserve > *input.BackupReserveSoc && recommendedReserve > input.BatterySoc
 	}
@@ -108,13 +112,15 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 
 	switch {
 	case input.SimulationMode:
-		plan.Reason = "conservative surplus condition met; simulation mode keeps EcoFlow write disabled"
+		plan.Reason = surplusPlanReason(plan.StrategyState, "simulation mode keeps EcoFlow write disabled")
+	case input.MockMode:
+		plan.Reason = surplusPlanReason(plan.StrategyState, "mock mode keeps EcoFlow write disabled")
 	case !input.EnableRealControl:
-		plan.Reason = "conservative surplus condition met; ENABLE_REAL_CONTROL=false keeps EcoFlow write disabled"
+		plan.Reason = surplusPlanReason(plan.StrategyState, "ENABLE_REAL_CONTROL=false keeps EcoFlow write disabled")
 	case !input.AutoControl:
-		plan.Reason = "conservative surplus condition met; auto control disabled keeps EcoFlow write disabled"
+		plan.Reason = surplusPlanReason(plan.StrategyState, "auto control disabled keeps EcoFlow write disabled")
 	default:
-		plan.Reason = "conservative surplus condition met; planner recommends charging adjustments"
+		plan.Reason = surplusPlanReason(plan.StrategyState, "planner recommends charging adjustments")
 		plan.WouldWrite = plan.ShouldAdjustACChargeLimit || plan.ShouldRaiseBackupReserve || plan.ShouldDisableEnergyModes
 	}
 
@@ -122,6 +128,13 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		plan.Reason += "; EcoFlow energy strategy mode blocks surplus charging until disabled"
 	}
 	return plan
+}
+
+func surplusPlanReason(strategyState string, suffix string) string {
+	if strategyState == "CHARGING" {
+		return "surplus tracking condition met; " + suffix
+	}
+	return "conservative surplus start condition met; " + suffix
 }
 
 func surplusActionSummary(plan domain.SurplusPlan) string {
@@ -155,7 +168,8 @@ func conservativeStartExportW(batteryOutputW int, settings Settings) int {
 }
 
 func smallSurplusPassThroughCandidate(input SurplusPlanInput, exportW int, requiredStartExportW int, settings Settings) bool {
-	return exportW > 0 &&
+	return settings.PassThroughEnabled &&
+		exportW > 0 &&
 		exportW < requiredStartExportW &&
 		input.BatteryOutputW > 0 &&
 		input.BackupReserveSoc != nil &&
@@ -163,10 +177,27 @@ func smallSurplusPassThroughCandidate(input SurplusPlanInput, exportW int, requi
 		boolPtrTrue(input.TOUModeEnabled)
 }
 
-func calculateSurplusACChargeW(exportW int, batteryOutputW int, settings Settings) int {
+func calculateStartACChargeW(exportW int, batteryOutputW int, settings Settings) int {
 	target := exportW - max(0, batteryOutputW) - settings.SafetyMarginW
 	target = clamp(target, settings.MinChargeW, settings.MaxChargeW)
 	return roundDownToHundred(target)
+}
+
+func calculateTrackingACChargeW(currentLimitW int, exportW int, settings Settings) int {
+	target := currentLimitW + exportW - settings.TargetExportBufferW
+	target = clamp(target, settings.MinChargeW, settings.MaxChargeW)
+	target = limitStep(currentLimitW, target, settings.MaxIncreaseStepW, settings.MaxDecreaseStepW)
+	return roundDownToHundred(target)
+}
+
+func limitStep(current int, target int, maxIncrease int, maxDecrease int) int {
+	if target > current+maxIncrease {
+		return current + maxIncrease
+	}
+	if target < current-maxDecrease {
+		return current - maxDecrease
+	}
+	return target
 }
 
 func calculateImportRecoveryChargeW(currentLimitW int, importW int, settings Settings) int {
@@ -187,6 +218,16 @@ func hasEnabledEnergyMode(input SurplusPlanInput) bool {
 		boolPtrTrue(input.IntelligentEnabled)
 }
 
+func isSurplusTrackingCharge(input SurplusPlanInput, settings Settings) bool {
+	netBatteryW := input.BatteryInputW - input.BatteryOutputW
+	if netBatteryW >= settings.EffectiveChargeThresholdW {
+		return true
+	}
+	return input.ACChargeLimitW >= settings.MinChargeW &&
+		input.BackupReserveSoc != nil &&
+		*input.BackupReserveSoc > input.BatterySoc
+}
+
 func boolPtrTrue(value *bool) bool {
 	return value != nil && *value
 }
@@ -205,6 +246,13 @@ func normalizeReserveSoc(value int) int {
 	return value
 }
 
+func defaultReserveSoc(input SurplusPlanInput, settings Settings) int {
+	if input.DefaultReserveSoc > 0 {
+		return normalizeReserveSoc(input.DefaultReserveSoc)
+	}
+	return normalizeReserveSoc(settings.DefaultReserveSoc)
+}
+
 func writeAllowed(input SurplusPlanInput) bool {
-	return !input.SimulationMode && input.EnableRealControl && input.AutoControl
+	return !input.MockMode && !input.SimulationMode && input.EnableRealControl && input.AutoControl
 }

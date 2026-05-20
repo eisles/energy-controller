@@ -47,6 +47,7 @@ export function NightChargePlanLogTable({ logs, error, page, pageSize, total, on
                 <TableHead>Mode</TableHead>
                 <TableHead>SOC</TableHead>
                 <TableHead>kWh</TableHead>
+                <TableHead>PV予測</TableHead>
                 <TableHead>Battery</TableHead>
                 <TableHead>Grid</TableHead>
                 <TableHead>判定</TableHead>
@@ -55,7 +56,7 @@ export function NightChargePlanLogTable({ logs, error, page, pageSize, total, on
             <TableBody>
               {logs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="empty-cell">
+                  <TableCell colSpan={9} className="empty-cell">
                     夜間計画ログはまだ記録されていません。
                   </TableCell>
                 </TableRow>
@@ -72,6 +73,17 @@ export function NightChargePlanLogTable({ logs, error, page, pageSize, total, on
                       {`${formatDecimal(log.currentBatteryEnergyKwh)} -> ${formatDecimal(log.recommendedNightTargetKwh)} kWh`}
                       <br />
                       <span className="readonly-note">必要 {formatDecimal(log.requiredNightChargeKwh)} kWh</span>
+                    </TableCell>
+                    <TableCell>
+                      {formatDecimal(log.dailyEstimatedPvKwh)} kWh
+                      <br />
+                      <span className="readonly-note">{formatTimeWindow(log.pvEffectiveStartAt, log.pvEffectiveEndAt)}</span>
+                      {log.forecastDaytimeDeficitKwh > 0 ? (
+                        <>
+                          <br />
+                          <span className="readonly-note">不足 {formatDecimal(log.forecastDaytimeDeficitKwh)} kWh</span>
+                        </>
+                      ) : null}
                     </TableCell>
                     <TableCell>{formatBattery(log)}</TableCell>
                     <TableCell>{formatGrid(log)}</TableCell>
@@ -160,6 +172,18 @@ function formatDateTime(value: string) {
     return "-";
   }
   return new Date(value).toLocaleString("ja-JP");
+}
+
+function formatTimeWindow(start?: string, end?: string) {
+  if (!start || !end) {
+    return "-";
+  }
+  return `${formatTimeOnly(start)}-${formatTimeOnly(end)}`;
+}
+
+function formatTimeOnly(value: string) {
+  const parts = value.split("T");
+  return parts[1]?.slice(0, 5) || value;
 }
 
 function formatDecimal(value: number) {

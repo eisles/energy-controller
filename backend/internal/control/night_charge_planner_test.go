@@ -130,6 +130,116 @@ func TestPlanNightChargingEstimatesPVGeneration(t *testing.T) {
 	}
 }
 
+func TestPlanNightChargingUsesHourlyRadiationForPVWindowAndMorningLoad(t *testing.T) {
+	fullEnergyWh := 10000
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                 time.Date(2026, 5, 19, 21, 30, 0, 0, jst),
+		BatterySoc:          40,
+		BatteryFullEnergyWh: &fullEnergyWh,
+		Forecast: &domain.WeatherForecast{
+			Date:                      "2026-05-20",
+			ShortwaveRadiationMJPerM2: 18,
+			SunshineDurationHours:     8,
+			CloudCoverMeanPercent:     20,
+			HourlyShortwaveRadiation: []domain.HourlyShortwaveRadiation{
+				{Time: "2026-05-20T07:00", ShortwaveRadiationWPerM2: 100},
+				{Time: "2026-05-20T08:00", ShortwaveRadiationWPerM2: 300},
+				{Time: "2026-05-20T09:00", ShortwaveRadiationWPerM2: 600},
+			},
+		},
+		SolarSettings: &domain.WeatherLocation{
+			PVCapacityKW:       4,
+			PVPerformanceRatio: 0.75,
+			DailyBaseLoadKWh:   4,
+			MinimumReserveSoc:  30,
+		},
+		EcoFlowLoadEstimate: &domain.EcoFlowLoadEstimate{
+			SampleCount:           24,
+			AverageDailyOutputKWh: 12,
+		},
+		SimulationMode: true,
+	}, DefaultSettings())
+
+	if !floatEqual(plan.DailyEstimatedPVKWh, 3) {
+		t.Fatalf("DailyEstimatedPVKWh = %f, want 3", plan.DailyEstimatedPVKWh)
+	}
+	if plan.PVEffectiveStartAt != "2026-05-20T08:00" || plan.PVEffectiveEndAt != "2026-05-20T09:00" {
+		t.Fatalf("PV effective window = %s-%s, want 08:00-09:00", plan.PVEffectiveStartAt, plan.PVEffectiveEndAt)
+	}
+	if plan.PVEffectiveWindowSource != "hourly-radiation" {
+		t.Fatalf("PVEffectiveWindowSource = %q, want hourly-radiation", plan.PVEffectiveWindowSource)
+	}
+	if !floatEqual(plan.MorningToPVStartLoadKWh, 0.5) {
+		t.Fatalf("MorningToPVStartLoadKWh = %f, want 0.5", plan.MorningToPVStartLoadKWh)
+	}
+	if !floatEqual(plan.ForecastDaytimeDeficitKWh, 1) {
+		t.Fatalf("ForecastDaytimeDeficitKWh = %f, want 1", plan.ForecastDaytimeDeficitKWh)
+	}
+	if plan.RecommendedNightTargetSoc != 50 {
+		t.Fatalf("RecommendedNightTargetSoc = %d, want 50", plan.RecommendedNightTargetSoc)
+	}
+}
+
+func TestEstimatePVForecastUsesStrongestContiguousRadiationSegment(t *testing.T) {
+	estimate := EstimatePVForecast(domain.WeatherForecast{
+		Date: "2026-05-20",
+		HourlyShortwaveRadiation: []domain.HourlyShortwaveRadiation{
+			{Time: "2026-05-20T08:00", ShortwaveRadiationWPerM2: 260},
+			{Time: "2026-05-20T09:00", ShortwaveRadiationWPerM2: 80},
+			{Time: "2026-05-20T10:00", ShortwaveRadiationWPerM2: 240},
+			{Time: "2026-05-20T11:00", ShortwaveRadiationWPerM2: 40},
+			{Time: "2026-05-20T12:00", ShortwaveRadiationWPerM2: 60},
+			{Time: "2026-05-20T13:00", ShortwaveRadiationWPerM2: 500},
+			{Time: "2026-05-20T14:00", ShortwaveRadiationWPerM2: 450},
+		},
+	}, domain.WeatherLocation{PVCapacityKW: 4, PVPerformanceRatio: 0.75})
+
+	if estimate.PVEffectiveStartAt != "2026-05-20T13:00" || estimate.PVEffectiveEndAt != "2026-05-20T14:00" {
+		t.Fatalf("PV effective window = %s-%s, want strongest contiguous segment 13:00-14:00", estimate.PVEffectiveStartAt, estimate.PVEffectiveEndAt)
+	}
+	if !floatEqual(estimate.DailyEstimatedPVKWh, 4.89) {
+		t.Fatalf("DailyEstimatedPVKWh = %f, want 4.89", estimate.DailyEstimatedPVKWh)
+	}
+}
+
+func TestPlanNightChargingUsesFallbackPVStartWhenHourlyRadiationHasNoEffectiveWindow(t *testing.T) {
+	fullEnergyWh := 10000
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                 time.Date(2026, 5, 19, 21, 30, 0, 0, jst),
+		BatterySoc:          40,
+		BatteryFullEnergyWh: &fullEnergyWh,
+		Forecast: &domain.WeatherForecast{
+			Date: "2026-05-20",
+			HourlyShortwaveRadiation: []domain.HourlyShortwaveRadiation{
+				{Time: "2026-05-20T07:00", ShortwaveRadiationWPerM2: 40},
+				{Time: "2026-05-20T08:00", ShortwaveRadiationWPerM2: 80},
+				{Time: "2026-05-20T09:00", ShortwaveRadiationWPerM2: 120},
+			},
+		},
+		SolarSettings: &domain.WeatherLocation{
+			PVCapacityKW:       4,
+			PVPerformanceRatio: 0.75,
+			DailyBaseLoadKWh:   4,
+			MinimumReserveSoc:  30,
+		},
+		EcoFlowLoadEstimate: &domain.EcoFlowLoadEstimate{
+			SampleCount:           24,
+			AverageDailyOutputKWh: 12,
+		},
+		SimulationMode: true,
+	}, DefaultSettings())
+
+	if plan.PVEffectiveWindowSource != "hourly-radiation-no-effective-window" {
+		t.Fatalf("PVEffectiveWindowSource = %q, want hourly-radiation-no-effective-window", plan.PVEffectiveWindowSource)
+	}
+	if plan.PVEffectiveStartAt != "2026-05-20T09:00" || plan.PVEffectiveEndAt != "2026-05-20T16:00" {
+		t.Fatalf("PV effective fallback window = %s-%s, want 09:00-16:00", plan.PVEffectiveStartAt, plan.PVEffectiveEndAt)
+	}
+	if !floatEqual(plan.MorningToPVStartLoadKWh, 1) {
+		t.Fatalf("MorningToPVStartLoadKWh = %f, want 1", plan.MorningToPVStartLoadKWh)
+	}
+}
+
 func TestPlanNightChargingShowsRequiredNightChargeEnergyForWeakForecast(t *testing.T) {
 	fullEnergyWh := 12288
 	reserve := 30

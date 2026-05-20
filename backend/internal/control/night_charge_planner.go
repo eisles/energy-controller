@@ -130,17 +130,22 @@ func applySolarEstimate(plan *domain.NightChargePlan, input NightChargePlanInput
 		applyBatteryEnergyEstimate(plan, input)
 		return
 	}
-	ratio := input.SolarSettings.PVPerformanceRatio
-	if ratio <= 0 {
-		ratio = 0.75
-	}
-	plan.EstimatedPVKWh = plan.SolarRadiationKWhPerM2 * input.SolarSettings.PVCapacityKW * ratio
+	pvEstimate := EstimatePVForecast(*input.Forecast, *input.SolarSettings)
+	plan.SolarRadiationKWhPerM2 = pvEstimate.SolarRadiationKWhPerM2
+	plan.EstimatedPVKWh = pvEstimate.DailyEstimatedPVKWh
+	plan.DailyEstimatedPVKWh = pvEstimate.DailyEstimatedPVKWh
+	plan.PVEffectiveStartAt = pvEstimate.PVEffectiveStartAt
+	plan.PVEffectiveEndAt = pvEstimate.PVEffectiveEndAt
+	plan.PVEffectiveWindowSource = pvEstimate.PVEffectiveWindowSource
+	plan.PVEffectiveRadiationWPerM2 = pvEstimate.PVEffectiveRadiationWPerM2
 	applyConsumptionEstimate(plan, input)
+	plan.PVUsableForEcoFlowKWh = plan.EstimatedPVKWh
 	plan.EstimatedSurplusKWh = plan.EstimatedPVKWh - plan.EstimatedDaytimeLoadKWh
 	if plan.EstimatedSurplusKWh < 0 {
 		plan.EstimatedDeficitKWh = -plan.EstimatedSurplusKWh
 		plan.EstimatedSurplusKWh = 0
 	}
+	plan.ForecastDaytimeDeficitKWh = plan.EstimatedDeficitKWh
 	applyBatteryEnergyEstimate(plan, input)
 	if plan.BatteryChargeHeadroomKWh > 0 && plan.EstimatedSurplusKWh > 0 {
 		plan.EstimatedPVToBatteryKWh = minFloat(plan.EstimatedSurplusKWh, plan.BatteryChargeHeadroomKWh)
@@ -160,6 +165,7 @@ func applyConsumptionEstimate(plan *domain.NightChargePlan, input NightChargePla
 	if input.EcoFlowLoadEstimate != nil && input.EcoFlowLoadEstimate.SampleCount > 0 && input.EcoFlowLoadEstimate.AverageNightOutputKWh > 0 {
 		plan.EstimatedMorningLoadKWh = input.EcoFlowLoadEstimate.AverageNightOutputKWh * remainingNightLoadRatio(input.Now)
 	}
+	plan.MorningToPVStartLoadKWh = expectedMorningToPVStartLoadKWh(input, plan.PVEffectiveStartAt)
 }
 
 func applyBatteryEnergyEstimate(plan *domain.NightChargePlan, input NightChargePlanInput) {
@@ -188,7 +194,7 @@ func applyNightEnergyTarget(plan *domain.NightChargePlan, input NightChargePlanI
 	if plan.SafetyMarginKWh < 0 {
 		plan.SafetyMarginKWh = 0
 	}
-	targetKWh := plan.MinimumReserveKWh + plan.EstimatedMorningLoadKWh + plan.EstimatedDeficitKWh + plan.SafetyMarginKWh
+	targetKWh := plan.MinimumReserveKWh + plan.EstimatedMorningLoadKWh + plan.MorningToPVStartLoadKWh + plan.EstimatedDeficitKWh + plan.SafetyMarginKWh
 	if targetKWh > plan.BatteryCapacityKWh {
 		targetKWh = plan.BatteryCapacityKWh
 	}
@@ -203,7 +209,7 @@ func nightTargetSocForEnergy(plan domain.NightChargePlan, input NightChargePlanI
 	if batteryCapacityKWh <= 0 {
 		return nightTargetSocForSolarScore(score, settings.TargetSoc)
 	}
-	targetKWh := plan.MinimumReserveKWh + plan.EstimatedMorningLoadKWh + plan.EstimatedDeficitKWh + settings.NightSafetyMarginKWh
+	targetKWh := plan.MinimumReserveKWh + plan.EstimatedMorningLoadKWh + plan.MorningToPVStartLoadKWh + plan.EstimatedDeficitKWh + settings.NightSafetyMarginKWh
 	if targetKWh <= 0 {
 		return nightTargetSocForSolarScore(score, settings.TargetSoc)
 	}
@@ -289,6 +295,9 @@ func nightChargeActionSummary(plan domain.NightChargePlan) string {
 	}
 	if plan.EstimatedPVToBatteryKWh > 0 {
 		actions = append(actions, fmt.Sprintf("翌日日中PVで最大%.1fkWh充電見込み", plan.EstimatedPVToBatteryKWh))
+	}
+	if plan.PVEffectiveStartAt != "" && plan.PVEffectiveEndAt != "" {
+		actions = append(actions, fmt.Sprintf("PV有効時間帯%s-%s", timeLabel(plan.PVEffectiveStartAt), timeLabel(plan.PVEffectiveEndAt)))
 	}
 	return strings.Join(actions, "; ")
 }
@@ -433,4 +442,12 @@ func minFloat(a, b float64) float64 {
 		return a
 	}
 	return b
+}
+
+func timeLabel(value string) string {
+	parts := strings.Split(value, "T")
+	if len(parts) != 2 || len(parts[1]) < 5 {
+		return value
+	}
+	return parts[1][:5]
 }

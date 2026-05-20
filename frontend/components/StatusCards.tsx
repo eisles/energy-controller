@@ -117,9 +117,14 @@ function NightChargePlanCard({ plan }: { plan?: NightChargePlan | null }) {
           <Detail label="日射量" value={plan.targetForecast ? `${formatDecimal(plan.targetForecast.shortwaveRadiationMjPerM2)} MJ/m2` : "-"} />
         </div>
         <div className="detail-strip planner-secondary" aria-label="weather forecast detail">
-          <Detail label="推定PV発電" value={`${formatDecimal(plan.estimatedPvKwh)} kWh`} />
+          <Detail label="推定PV発電" value={`${formatDecimal(plan.dailyEstimatedPvKwh || plan.estimatedPvKwh)} kWh`} />
+          <Detail label="PV有効時間" value={formatTimeWindow(plan.pvEffectiveStartAt, plan.pvEffectiveEndAt)} />
+          <Detail label="PV時間ソース" value={plan.pvEffectiveWindowSource || "-"} />
+          <Detail label="PVしきい値" value={plan.pvEffectiveRadiationWPerM2 ? `${formatDecimal(plan.pvEffectiveRadiationWPerM2)} W/m2` : "-"} />
           <Detail label="推定日中消費" value={`${formatDecimal(plan.estimatedDaytimeLoadKwh)} kWh`} />
           <Detail label="朝まで消費" value={`${formatDecimal(plan.estimatedMorningLoadKwh)} kWh`} />
+          <Detail label="7時-PV開始" value={`${formatDecimal(plan.morningToPvStartLoadKwh)} kWh`} />
+          <Detail label="PV不足見込" value={`${formatDecimal(plan.forecastDaytimeDeficitKwh)} kWh`} />
           <Detail label="推定余剰" value={`${formatDecimal(plan.estimatedSurplusKwh)} kWh`} />
           <Detail label="推定不足" value={`${formatDecimal(plan.estimatedDeficitKwh)} kWh`} />
           <Detail label="PV充電見込" value={`${formatDecimal(plan.estimatedPvToBatteryKwh)} kWh`} />
@@ -226,6 +231,18 @@ function formatGridFlow(value: number) {
     return `売電 ${Math.abs(value)} W`;
   }
   return "買電/売電 0 W";
+}
+
+function formatTimeWindow(start?: string, end?: string) {
+  if (!start || !end) {
+    return "-";
+  }
+  return `${formatTimeOnly(start)}-${formatTimeOnly(end)}`;
+}
+
+function formatTimeOnly(value: string) {
+  const parts = value.split("T");
+  return parts[1]?.slice(0, 5) || value;
 }
 
 function formatNetBatteryFlow(netBatteryW: number) {

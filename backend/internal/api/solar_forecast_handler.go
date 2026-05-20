@@ -61,12 +61,12 @@ func parseForecastDays(r *http.Request) (int, bool) {
 func solarForecastSummary(location domain.WeatherLocation, forecasts []domain.WeatherForecast, days int) domain.SolarForecastSummary {
 	items := make([]domain.SolarForecastEstimate, 0, len(forecasts))
 	for _, forecast := range forecasts {
-		radiationKWhPerM2 := forecast.ShortwaveRadiationMJPerM2 / 3.6
 		ratio := location.PVPerformanceRatio
 		if ratio <= 0 {
 			ratio = 0.75
 		}
-		estimatedPVKWh := radiationKWhPerM2 * location.PVCapacityKW * ratio
+		pvEstimate := control.EstimatePVForecast(forecast, location)
+		estimatedPVKWh := pvEstimate.DailyEstimatedPVKWh
 		estimatedSurplusKWh := estimatedPVKWh - location.DailyBaseLoadKWh
 		if estimatedSurplusKWh < 0 {
 			estimatedSurplusKWh = 0
@@ -74,8 +74,13 @@ func solarForecastSummary(location domain.WeatherLocation, forecasts []domain.We
 		items = append(items, domain.SolarForecastEstimate{
 			Forecast:                    forecast,
 			SolarForecastScore:          control.SolarForecastScore(forecast),
-			SolarRadiationKWhPerM2:      radiationKWhPerM2,
+			SolarRadiationKWhPerM2:      pvEstimate.SolarRadiationKWhPerM2,
 			EstimatedPVKWh:              estimatedPVKWh,
+			DailyEstimatedPVKWh:         estimatedPVKWh,
+			PVEffectiveStartAt:          pvEstimate.PVEffectiveStartAt,
+			PVEffectiveEndAt:            pvEstimate.PVEffectiveEndAt,
+			PVEffectiveWindowSource:     pvEstimate.PVEffectiveWindowSource,
+			PVEffectiveRadiationWPerM2:  pvEstimate.PVEffectiveRadiationWPerM2,
 			EstimatedDaytimeLoadKWh:     location.DailyBaseLoadKWh,
 			EstimatedSurplusKWh:         estimatedSurplusKWh,
 			PVCapacityKW:                location.PVCapacityKW,

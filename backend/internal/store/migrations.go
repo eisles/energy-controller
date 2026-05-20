@@ -76,6 +76,12 @@ func migrate(db *sql.DB) error {
 			recommended_night_target_kwh REAL NOT NULL,
 			current_battery_energy_kwh REAL NOT NULL,
 			required_night_charge_kwh REAL NOT NULL,
+			daily_estimated_pv_kwh REAL NOT NULL DEFAULT 0,
+			pv_effective_start_at TEXT NOT NULL DEFAULT '',
+			pv_effective_end_at TEXT NOT NULL DEFAULT '',
+			pv_effective_window_source TEXT NOT NULL DEFAULT '',
+			morning_to_pv_start_load_kwh REAL NOT NULL DEFAULT 0,
+			forecast_daytime_deficit_kwh REAL NOT NULL DEFAULT 0,
 			battery_soc INTEGER NOT NULL,
 			battery_input_w INTEGER NOT NULL,
 			battery_output_w INTEGER NOT NULL,
@@ -171,6 +177,18 @@ func migrate(db *sql.DB) error {
 	if err := addKnownColumnIfMissing(db, "tariff_plans", "export_rate_yen"); err != nil {
 		return err
 	}
+	for _, column := range []string{
+		"daily_estimated_pv_kwh",
+		"pv_effective_start_at",
+		"pv_effective_end_at",
+		"pv_effective_window_source",
+		"morning_to_pv_start_load_kwh",
+		"forecast_daytime_deficit_kwh",
+	} {
+		if err := addKnownColumnIfMissing(db, "night_charge_plan_logs", column); err != nil {
+			return err
+		}
+	}
 	return seedDefaults(db, time.Now())
 }
 
@@ -231,6 +249,14 @@ var knownMigrationColumns = map[string]map[string]string{
 	},
 	"tariff_plans": {
 		"export_rate_yen": "REAL NOT NULL DEFAULT 7.0",
+	},
+	"night_charge_plan_logs": {
+		"daily_estimated_pv_kwh":       "REAL NOT NULL DEFAULT 0",
+		"pv_effective_start_at":        "TEXT NOT NULL DEFAULT ''",
+		"pv_effective_end_at":          "TEXT NOT NULL DEFAULT ''",
+		"pv_effective_window_source":   "TEXT NOT NULL DEFAULT ''",
+		"morning_to_pv_start_load_kwh": "REAL NOT NULL DEFAULT 0",
+		"forecast_daytime_deficit_kwh": "REAL NOT NULL DEFAULT 0",
 	},
 }
 

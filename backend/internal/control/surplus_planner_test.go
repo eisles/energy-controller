@@ -84,6 +84,8 @@ func TestPlanSurplusChargingWaitsBelowConservativeStartRequirement(t *testing.T)
 func TestPlanSurplusChargingUsesPassThroughForSmallSurplusWhenSocIsHigh(t *testing.T) {
 	tou := true
 	reserve := 85
+	settings := DefaultSettings()
+	settings.PassThroughEnabled = true
 	plan := PlanSurplusCharging(SurplusPlanInput{
 		GridW:             -768,
 		BatterySoc:        97,
@@ -94,7 +96,7 @@ func TestPlanSurplusChargingUsesPassThroughForSmallSurplusWhenSocIsHigh(t *testi
 		TOUModeEnabled:    &tou,
 		SimulationMode:    true,
 		EnableRealControl: false,
-	}, SettingsWithTargetSoc(100))
+	}, SettingsWithTargetSocAndPassThrough(100))
 
 	if plan.StrategyState != "PASSTHROUGH" {
 		t.Fatalf("StrategyState = %q, want PASSTHROUGH", plan.StrategyState)
@@ -132,7 +134,7 @@ func TestPlanSurplusChargingPassThroughDoesNothingWhenReserveAlreadyMatchesSoc(t
 		TOUModeEnabled:    &tou,
 		SimulationMode:    true,
 		EnableRealControl: false,
-	}, SettingsWithTargetSoc(100))
+	}, SettingsWithTargetSocAndPassThrough(100))
 
 	if plan.StrategyState != "PASSTHROUGH" {
 		t.Fatalf("StrategyState = %q, want PASSTHROUGH", plan.StrategyState)
@@ -226,6 +228,74 @@ func TestPlanSurplusChargingStartsAtMinimumWhenConservativeRequirementMet(t *tes
 	}
 	if !strings.Contains(plan.ActionSummary, "AC充電上限を400Wへ設定") {
 		t.Fatalf("ActionSummary = %q, want AC charge action", plan.ActionSummary)
+	}
+}
+
+func TestPlanSurplusChargingTracksExportWhileAlreadyCharging(t *testing.T) {
+	reserve := 79
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:             -488,
+		BatterySoc:        77,
+		BatteryInputW:     743,
+		BatteryOutputW:    246,
+		ACChargeLimitW:    500,
+		BackupReserveSoc:  &reserve,
+		SimulationMode:    true,
+		EnableRealControl: false,
+	}, DefaultSettings())
+
+	if plan.StrategyState != "CHARGING" {
+		t.Fatalf("StrategyState = %q, want CHARGING", plan.StrategyState)
+	}
+	if plan.RecommendedACChargeLimitW != 800 {
+		t.Fatalf("RecommendedACChargeLimitW = %d, want 800", plan.RecommendedACChargeLimitW)
+	}
+	if !plan.ShouldAdjustACChargeLimit {
+		t.Fatal("ShouldAdjustACChargeLimit = false, want true")
+	}
+	if strings.Contains(plan.Reason, "conservative surplus start") {
+		t.Fatalf("Reason = %q, want tracking reason", plan.Reason)
+	}
+}
+
+func TestPlanSurplusChargingLimitsTrackingIncreaseStep(t *testing.T) {
+	reserve := 79
+	settings := DefaultSettings()
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:             -1288,
+		BatterySoc:        77,
+		BatteryInputW:     740,
+		BatteryOutputW:    252,
+		ACChargeLimitW:    500,
+		BackupReserveSoc:  &reserve,
+		SimulationMode:    true,
+		EnableRealControl: false,
+	}, settings)
+
+	want := 500 + settings.MaxIncreaseStepW
+	if plan.RecommendedACChargeLimitW != want {
+		t.Fatalf("RecommendedACChargeLimitW = %d, want %d", plan.RecommendedACChargeLimitW, want)
+	}
+}
+
+func TestPlanSurplusChargingLimitsTrackingDecreaseStep(t *testing.T) {
+	reserve := 79
+	settings := DefaultSettings()
+	settings.TargetExportBufferW = 900
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:             -100,
+		BatterySoc:        77,
+		BatteryInputW:     900,
+		BatteryOutputW:    300,
+		ACChargeLimitW:    1500,
+		BackupReserveSoc:  &reserve,
+		SimulationMode:    true,
+		EnableRealControl: false,
+	}, settings)
+
+	want := 1500 - settings.MaxDecreaseStepW
+	if plan.RecommendedACChargeLimitW != want {
+		t.Fatalf("RecommendedACChargeLimitW = %d, want %d", plan.RecommendedACChargeLimitW, want)
 	}
 }
 
@@ -413,8 +483,35 @@ func TestPlanSurplusChargingDoesNotLowerReserveBelowDefaultWhenImporting(t *test
 	}
 }
 
+func TestPlanSurplusChargingWouldWriteBlockedInMockMode(t *testing.T) {
+	reserve := 85
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:             -1200,
+		MockMode:          true,
+		BatterySoc:        83,
+		ACChargeLimitW:    1000,
+		BackupReserveSoc:  &reserve,
+		SimulationMode:    false,
+		EnableRealControl: true,
+		AutoControl:       true,
+	}, DefaultSettings())
+
+	if plan.WouldWrite {
+		t.Fatal("WouldWrite = true, want false in mock mode")
+	}
+	if !strings.Contains(plan.Reason, "mock mode keeps EcoFlow write disabled") {
+		t.Fatalf("Reason = %q, want mock mode guard", plan.Reason)
+	}
+}
+
 func SettingsWithTargetSoc(targetSoc int) Settings {
 	settings := DefaultSettings()
 	settings.TargetSoc = targetSoc
+	return settings
+}
+
+func SettingsWithTargetSocAndPassThrough(targetSoc int) Settings {
+	settings := SettingsWithTargetSoc(targetSoc)
+	settings.PassThroughEnabled = true
 	return settings
 }
