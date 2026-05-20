@@ -64,6 +64,8 @@ export function SurplusControlCommandLogTable({ logs, error, page, pageSize, tot
                     <TableCell>{formatDateTime(log.measuredAt)}</TableCell>
                     <TableCell>
                       <Badge variant={log.wouldWrite ? "warning" : "secondary"}>{log.strategyState || "-"}</Badge>
+                      <br />
+                      <span className="readonly-note">{commandKindLabel(log.commandKind)}</span>
                     </TableCell>
                     <TableCell>{formatGrid(log)}</TableCell>
                     <TableCell>{formatBattery(log)}</TableCell>
@@ -74,6 +76,8 @@ export function SurplusControlCommandLogTable({ logs, error, page, pageSize, tot
                         {log.commandSent ? "sent" : log.dryRun ? "dry-run" : "no write"}
                       </Badge>
                       <p>{log.decisionReason || "-"}</p>
+                      <p className="readonly-note">{actionFlags(log)}</p>
+                      {log.modeGuardReason ? <p className="readonly-note">Mode: {log.modeGuardReason}</p> : null}
                       {log.suppressedReason ? <p className="readonly-note">Guard: {log.suppressedReason}</p> : null}
                       {log.errorMessage ? <p className="inline-error">{log.errorMessage}</p> : null}
                     </TableCell>
@@ -142,6 +146,31 @@ function formatChange(previous: number | null, target: number | null, unit: stri
     return `- -> ${target} ${unit}`;
   }
   return `${previous} -> ${target} ${unit}`;
+}
+
+function commandKindLabel(value: string) {
+  if (value === "ac_charge_limit") {
+    return "AC上限";
+  }
+  if (value === "backup_reserve") {
+    return "Reserve";
+  }
+  if (value === "energy_mode") {
+    return "Mode";
+  }
+  if (value === "mixed") {
+    return "複合";
+  }
+  return "候補なし";
+}
+
+function actionFlags(log: SurplusControlCommandLog) {
+  const actions: string[] = [];
+  if (log.shouldAdjustAcChargeLimit) actions.push("AC");
+  if (log.shouldSetBackupReserve) actions.push("Reserve");
+  if (log.shouldDisableEnergyModes) actions.push("Modes OFF");
+  if (log.shouldEnableTouMode) actions.push("TOU ON");
+  return actions.length > 0 ? actions.join(" / ") : "no action";
 }
 
 function formatDateTime(value: string) {

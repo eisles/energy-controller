@@ -21,30 +21,31 @@ func (realClock) Now() time.Time {
 }
 
 type Config struct {
-	AppEnv             string
-	HTTPPort           string
-	DBPath             string
-	FrontendDir        string
-	MockMode           bool
-	SimulationMode     bool
-	EnableRealControl  bool
-	AutoControlEnabled bool
-	NatureMode         string
-	NatureAccessToken  string
-	NatureApplianceID  string
-	NatureLocalBaseURL string
-	EcoFlowAccessKey   string
-	EcoFlowSecretKey   string
-	EcoFlowDeviceSN    string
-	EcoFlowBaseURL     string
-	WeatherEnabled     bool
-	WeatherLatitude    float64
-	WeatherLongitude   float64
-	WeatherTimezone    string
-	WeatherBaseURL     string
-	PollInterval       time.Duration
-	ControlSettings    control.Settings
-	Clock              Clock
+	AppEnv              string
+	HTTPPort            string
+	DBPath              string
+	FrontendDir         string
+	MockMode            bool
+	SimulationMode      bool
+	EnableRealControl   bool
+	AutoControlEnabled  bool
+	ConfirmEcoFlowWrite string
+	NatureMode          string
+	NatureAccessToken   string
+	NatureApplianceID   string
+	NatureLocalBaseURL  string
+	EcoFlowAccessKey    string
+	EcoFlowSecretKey    string
+	EcoFlowDeviceSN     string
+	EcoFlowBaseURL      string
+	WeatherEnabled      bool
+	WeatherLatitude     float64
+	WeatherLongitude    float64
+	WeatherTimezone     string
+	WeatherBaseURL      string
+	PollInterval        time.Duration
+	ControlSettings     control.Settings
+	Clock               Clock
 }
 
 func Load() Config {
@@ -52,28 +53,29 @@ func Load() Config {
 	weatherLatitudeRaw := env("WEATHER_LATITUDE", "")
 	weatherLongitudeRaw := env("WEATHER_LONGITUDE", "")
 	return Config{
-		AppEnv:             env("APP_ENV", "local"),
-		HTTPPort:           env("HTTP_PORT", "8080"),
-		DBPath:             env("DB_PATH", "./data/energy.db"),
-		FrontendDir:        env("FRONTEND_DIR", "../frontend/out"),
-		MockMode:           envBool("MOCK_MODE", true),
-		SimulationMode:     envBool("SIMULATION_MODE", true),
-		EnableRealControl:  envBool("ENABLE_REAL_CONTROL", false),
-		AutoControlEnabled: envBool("AUTO_CONTROL_ENABLED", false),
-		NatureMode:         env("NATURE_MODE", "cloud"),
-		NatureAccessToken:  env("NATURE_ACCESS_TOKEN", ""),
-		NatureApplianceID:  env("NATURE_APPLIANCE_ID", ""),
-		NatureLocalBaseURL: env("NATURE_LOCAL_BASE_URL", "http://remo-e.local"),
-		EcoFlowAccessKey:   env("ECOFLOW_ACCESS_KEY", ""),
-		EcoFlowSecretKey:   env("ECOFLOW_SECRET_KEY", ""),
-		EcoFlowDeviceSN:    env("ECOFLOW_DEVICE_SN", ""),
-		EcoFlowBaseURL:     env("ECOFLOW_BASE_URL", "https://api-e.ecoflow.com"),
-		WeatherEnabled:     envBool("WEATHER_FORECAST_ENABLED", weatherLatitudeRaw != "" && weatherLongitudeRaw != ""),
-		WeatherLatitude:    parseFloat(weatherLatitudeRaw, 0),
-		WeatherLongitude:   parseFloat(weatherLongitudeRaw, 0),
-		WeatherTimezone:    env("WEATHER_TIMEZONE", "Asia/Tokyo"),
-		WeatherBaseURL:     env("WEATHER_BASE_URL", "https://api.open-meteo.com"),
-		PollInterval:       time.Duration(envInt("POLL_INTERVAL_SEC", 30)) * time.Second,
+		AppEnv:              env("APP_ENV", "local"),
+		HTTPPort:            env("HTTP_PORT", "8080"),
+		DBPath:              env("DB_PATH", "./data/energy.db"),
+		FrontendDir:         env("FRONTEND_DIR", "../frontend/out"),
+		MockMode:            envBool("MOCK_MODE", true),
+		SimulationMode:      envBool("SIMULATION_MODE", true),
+		EnableRealControl:   envBool("ENABLE_REAL_CONTROL", false),
+		AutoControlEnabled:  envBool("AUTO_CONTROL_ENABLED", false),
+		ConfirmEcoFlowWrite: env("CONFIRM_ECOFLOW_WRITE", ""),
+		NatureMode:          env("NATURE_MODE", "cloud"),
+		NatureAccessToken:   env("NATURE_ACCESS_TOKEN", ""),
+		NatureApplianceID:   env("NATURE_APPLIANCE_ID", ""),
+		NatureLocalBaseURL:  env("NATURE_LOCAL_BASE_URL", "http://remo-e.local"),
+		EcoFlowAccessKey:    env("ECOFLOW_ACCESS_KEY", ""),
+		EcoFlowSecretKey:    env("ECOFLOW_SECRET_KEY", ""),
+		EcoFlowDeviceSN:     env("ECOFLOW_DEVICE_SN", ""),
+		EcoFlowBaseURL:      env("ECOFLOW_BASE_URL", "https://api-e.ecoflow.com"),
+		WeatherEnabled:      envBool("WEATHER_FORECAST_ENABLED", weatherLatitudeRaw != "" && weatherLongitudeRaw != ""),
+		WeatherLatitude:     parseFloat(weatherLatitudeRaw, 0),
+		WeatherLongitude:    parseFloat(weatherLongitudeRaw, 0),
+		WeatherTimezone:     env("WEATHER_TIMEZONE", "Asia/Tokyo"),
+		WeatherBaseURL:      env("WEATHER_BASE_URL", "https://api.open-meteo.com"),
+		PollInterval:        time.Duration(envInt("POLL_INTERVAL_SEC", 30)) * time.Second,
 		ControlSettings: control.Settings{
 			StartExportThresholdW:     envInt("START_EXPORT_THRESHOLD_W", 700),
 			StopExportThresholdW:      envInt("STOP_EXPORT_THRESHOLD_W", 300),

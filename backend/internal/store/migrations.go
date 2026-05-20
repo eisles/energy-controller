@@ -100,6 +100,8 @@ func migrate(db *sql.DB) error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			measured_at TEXT NOT NULL,
 			strategy_state TEXT NOT NULL,
+			command_kind TEXT NOT NULL DEFAULT 'none',
+			command_fingerprint TEXT NOT NULL DEFAULT '',
 			grid_w INTEGER NOT NULL,
 			import_w INTEGER NOT NULL,
 			export_w INTEGER NOT NULL,
@@ -113,6 +115,11 @@ func migrate(db *sql.DB) error {
 			command_sent INTEGER NOT NULL DEFAULT 0,
 			dry_run INTEGER NOT NULL DEFAULT 1,
 			would_write INTEGER NOT NULL DEFAULT 0,
+			should_adjust_ac_charge_limit INTEGER NOT NULL DEFAULT 0,
+			should_set_backup_reserve INTEGER NOT NULL DEFAULT 0,
+			should_disable_energy_modes INTEGER NOT NULL DEFAULT 0,
+			should_enable_tou_mode INTEGER NOT NULL DEFAULT 0,
+			mode_guard_reason TEXT NOT NULL DEFAULT '',
 			suppressed_reason TEXT NOT NULL DEFAULT '',
 			decision_reason TEXT NOT NULL,
 			error_message TEXT,
@@ -188,6 +195,9 @@ func migrate(db *sql.DB) error {
 		"backup_reserve_soc",
 		"energy_backup_enabled",
 		"tou_mode_enabled",
+		"self_powered_enabled",
+		"scheduled_enabled",
+		"intelligent_enabled",
 		"battery_full_energy_wh",
 		"surplus_plan_json",
 		"night_charge_plan_json",
@@ -208,6 +218,19 @@ func migrate(db *sql.DB) error {
 		"forecast_daytime_deficit_kwh",
 	} {
 		if err := addKnownColumnIfMissing(db, "night_charge_plan_logs", column); err != nil {
+			return err
+		}
+	}
+	for _, column := range []string{
+		"command_kind",
+		"command_fingerprint",
+		"should_adjust_ac_charge_limit",
+		"should_set_backup_reserve",
+		"should_disable_energy_modes",
+		"should_enable_tou_mode",
+		"mode_guard_reason",
+	} {
+		if err := addKnownColumnIfMissing(db, "surplus_control_command_logs", column); err != nil {
 			return err
 		}
 	}
@@ -265,6 +288,9 @@ var knownMigrationColumns = map[string]map[string]string{
 		"backup_reserve_soc":     "INTEGER",
 		"energy_backup_enabled":  "INTEGER",
 		"tou_mode_enabled":       "INTEGER",
+		"self_powered_enabled":   "INTEGER",
+		"scheduled_enabled":      "INTEGER",
+		"intelligent_enabled":    "INTEGER",
 		"battery_full_energy_wh": "INTEGER",
 		"surplus_plan_json":      "TEXT",
 		"night_charge_plan_json": "TEXT",
@@ -279,6 +305,15 @@ var knownMigrationColumns = map[string]map[string]string{
 		"pv_effective_window_source":   "TEXT NOT NULL DEFAULT ''",
 		"morning_to_pv_start_load_kwh": "REAL NOT NULL DEFAULT 0",
 		"forecast_daytime_deficit_kwh": "REAL NOT NULL DEFAULT 0",
+	},
+	"surplus_control_command_logs": {
+		"command_kind":                  "TEXT NOT NULL DEFAULT 'none'",
+		"command_fingerprint":           "TEXT NOT NULL DEFAULT ''",
+		"should_adjust_ac_charge_limit": "INTEGER NOT NULL DEFAULT 0",
+		"should_set_backup_reserve":     "INTEGER NOT NULL DEFAULT 0",
+		"should_disable_energy_modes":   "INTEGER NOT NULL DEFAULT 0",
+		"should_enable_tou_mode":        "INTEGER NOT NULL DEFAULT 0",
+		"mode_guard_reason":             "TEXT NOT NULL DEFAULT ''",
 	},
 }
 

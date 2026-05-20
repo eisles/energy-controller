@@ -40,6 +40,9 @@ type Status struct {
 	BackupReserveSoc    *int             `json:"backupReserveSoc,omitempty"`
 	EnergyBackupEnabled *bool            `json:"energyBackupEnabled,omitempty"`
 	TOUModeEnabled      *bool            `json:"touModeEnabled,omitempty"`
+	SelfPoweredEnabled  *bool            `json:"selfPoweredEnabled,omitempty"`
+	ScheduledEnabled    *bool            `json:"scheduledEnabled,omitempty"`
+	IntelligentEnabled  *bool            `json:"intelligentEnabled,omitempty"`
 	BatteryFullEnergyWh *int             `json:"batteryFullEnergyWh,omitempty"`
 	SurplusPlan         *SurplusPlan     `json:"surplusPlan,omitempty"`
 	NightChargePlan     *NightChargePlan `json:"nightChargePlan,omitempty"`
@@ -304,26 +307,33 @@ type PowerLog struct {
 }
 
 type SurplusControlCommandLog struct {
-	ID                       int64     `json:"id"`
-	MeasuredAt               time.Time `json:"measuredAt"`
-	StrategyState            string    `json:"strategyState"`
-	GridW                    int       `json:"gridW"`
-	ImportW                  int       `json:"importW"`
-	ExportW                  int       `json:"exportW"`
-	BatterySoc               int       `json:"batterySoc"`
-	BatteryInputW            int       `json:"batteryInputW"`
-	BatteryOutputW           int       `json:"batteryOutputW"`
-	PreviousACChargeLimitW   *int      `json:"previousAcChargeLimitW"`
-	TargetACChargeLimitW     *int      `json:"targetAcChargeLimitW"`
-	PreviousBackupReserveSoc *int      `json:"previousBackupReserveSoc"`
-	TargetBackupReserveSoc   *int      `json:"targetBackupReserveSoc"`
-	CommandSent              bool      `json:"commandSent"`
-	DryRun                   bool      `json:"dryRun"`
-	WouldWrite               bool      `json:"wouldWrite"`
-	SuppressedReason         string    `json:"suppressedReason"`
-	DecisionReason           string    `json:"decisionReason"`
-	ErrorMessage             *string   `json:"errorMessage"`
-	CreatedAt                time.Time `json:"createdAt"`
+	ID                        int64     `json:"id"`
+	MeasuredAt                time.Time `json:"measuredAt"`
+	StrategyState             string    `json:"strategyState"`
+	CommandKind               string    `json:"commandKind"`
+	CommandFingerprint        string    `json:"commandFingerprint"`
+	GridW                     int       `json:"gridW"`
+	ImportW                   int       `json:"importW"`
+	ExportW                   int       `json:"exportW"`
+	BatterySoc                int       `json:"batterySoc"`
+	BatteryInputW             int       `json:"batteryInputW"`
+	BatteryOutputW            int       `json:"batteryOutputW"`
+	PreviousACChargeLimitW    *int      `json:"previousAcChargeLimitW"`
+	TargetACChargeLimitW      *int      `json:"targetAcChargeLimitW"`
+	PreviousBackupReserveSoc  *int      `json:"previousBackupReserveSoc"`
+	TargetBackupReserveSoc    *int      `json:"targetBackupReserveSoc"`
+	CommandSent               bool      `json:"commandSent"`
+	DryRun                    bool      `json:"dryRun"`
+	WouldWrite                bool      `json:"wouldWrite"`
+	ShouldAdjustACChargeLimit bool      `json:"shouldAdjustAcChargeLimit"`
+	ShouldSetBackupReserve    bool      `json:"shouldSetBackupReserve"`
+	ShouldDisableEnergyModes  bool      `json:"shouldDisableEnergyModes"`
+	ShouldEnableTOUMode       bool      `json:"shouldEnableTouMode"`
+	ModeGuardReason           string    `json:"modeGuardReason"`
+	SuppressedReason          string    `json:"suppressedReason"`
+	DecisionReason            string    `json:"decisionReason"`
+	ErrorMessage              *string   `json:"errorMessage"`
+	CreatedAt                 time.Time `json:"createdAt"`
 }
 
 type EnergyMeterLog struct {

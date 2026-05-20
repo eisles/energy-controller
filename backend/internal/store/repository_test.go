@@ -415,23 +415,27 @@ func TestSurplusControlCommandRepositoryInsertsAndListsNewestFirst(t *testing.T)
 
 	for i := 0; i < 2; i++ {
 		measuredAt := base.Add(time.Duration(i) * time.Minute)
-		if err := repo.InsertSurplusControlCommandLog(context.Background(), domain.Status{
-			GridW:            -500 - i,
-			ImportW:          0,
-			ExportW:          500 + i,
-			BatterySoc:       77,
-			BatteryInputW:    740,
-			BatteryOutputW:   250,
-			ACChargeLimitW:   500,
-			BackupReserveSoc: &reserve,
-			UpdatedAt:        measuredAt,
-			SurplusPlan: &domain.SurplusPlan{
-				StrategyState:             "CHARGING",
-				RecommendedACChargeLimitW: 800 + i*100,
-				ShouldAdjustACChargeLimit: true,
-				ActionSummary:             "AC充電上限を調整",
-				Reason:                    "surplus tracking condition met",
-			},
+		previousAC := 500
+		targetAC := 800 + i*100
+		if err := repo.InsertSurplusControlCommandLog(context.Background(), domain.SurplusControlCommandLog{
+			MeasuredAt:                measuredAt,
+			StrategyState:             "CHARGING",
+			CommandKind:               "ac_charge_limit",
+			CommandFingerprint:        "sample",
+			GridW:                     -500 - i,
+			ImportW:                   0,
+			ExportW:                   500 + i,
+			BatterySoc:                77,
+			BatteryInputW:             740,
+			BatteryOutputW:            250,
+			PreviousACChargeLimitW:    &previousAC,
+			TargetACChargeLimitW:      &targetAC,
+			PreviousBackupReserveSoc:  &reserve,
+			DryRun:                    true,
+			WouldWrite:                i == 0,
+			ShouldAdjustACChargeLimit: true,
+			DecisionReason:            "AC充電上限を調整",
+			CreatedAt:                 measuredAt,
 		}); err != nil {
 			t.Fatalf("InsertSurplusControlCommandLog failed: %v", err)
 		}
@@ -449,6 +453,20 @@ func TestSurplusControlCommandRepositoryInsertsAndListsNewestFirst(t *testing.T)
 	}
 	if !logs[0].DryRun || logs[0].CommandSent {
 		t.Fatalf("DryRun,CommandSent = %v,%v; want true,false", logs[0].DryRun, logs[0].CommandSent)
+	}
+	latest, err := repo.LatestSurplusControlCommandLog(context.Background())
+	if err != nil {
+		t.Fatalf("LatestSurplusControlCommandLog failed: %v", err)
+	}
+	if latest == nil || latest.TargetACChargeLimitW == nil || *latest.TargetACChargeLimitW != 900 {
+		t.Fatalf("latest = %+v, want target AC 900", latest)
+	}
+	latestCandidate, err := repo.LatestSurplusControlWriteCandidateLog(context.Background())
+	if err != nil {
+		t.Fatalf("LatestSurplusControlWriteCandidateLog failed: %v", err)
+	}
+	if latestCandidate == nil || latestCandidate.TargetACChargeLimitW == nil || *latestCandidate.TargetACChargeLimitW != 800 {
+		t.Fatalf("latestCandidate = %+v, want target AC 800", latestCandidate)
 	}
 }
 

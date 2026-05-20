@@ -20,14 +20,15 @@ func NewStatusRepository(db *sql.DB) *StatusRepository {
 func (r *StatusRepository) CurrentStatus(ctx context.Context) (domain.Status, error) {
 	var status domain.Status
 	var updatedAt string
-	var batterySoc, batteryInputW, batteryOutputW, acChargeLimitW, backupReserveSoc, energyBackupEnabled, touModeEnabled, batteryFullEnergyWh sql.NullInt64
+	var batterySoc, batteryInputW, batteryOutputW, acChargeLimitW, backupReserveSoc, energyBackupEnabled, touModeEnabled, selfPoweredEnabled, scheduledEnabled, intelligentEnabled, batteryFullEnergyWh sql.NullInt64
 	var lastError, surplusPlanJSON, nightChargePlanJSON sql.NullString
 
 	err := r.db.QueryRowContext(ctx, `SELECT
 		grid_w, import_w, export_w, battery_soc, battery_input_w,
 		battery_output_w, ac_charge_limit_w, target_charge_w, state, mode,
 		last_decision_reason, last_error, updated_at, backup_reserve_soc,
-		energy_backup_enabled, tou_mode_enabled, battery_full_energy_wh, surplus_plan_json, night_charge_plan_json
+		energy_backup_enabled, tou_mode_enabled, self_powered_enabled, scheduled_enabled,
+		intelligent_enabled, battery_full_energy_wh, surplus_plan_json, night_charge_plan_json
 		FROM current_status WHERE id = 1`,
 	).Scan(
 		&status.GridW,
@@ -46,6 +47,9 @@ func (r *StatusRepository) CurrentStatus(ctx context.Context) (domain.Status, er
 		&backupReserveSoc,
 		&energyBackupEnabled,
 		&touModeEnabled,
+		&selfPoweredEnabled,
+		&scheduledEnabled,
+		&intelligentEnabled,
 		&batteryFullEnergyWh,
 		&surplusPlanJSON,
 		&nightChargePlanJSON,
@@ -61,6 +65,9 @@ func (r *StatusRepository) CurrentStatus(ctx context.Context) (domain.Status, er
 	status.BackupReserveSoc = intPtrFromNull(backupReserveSoc)
 	status.EnergyBackupEnabled = boolPtrFromNull(energyBackupEnabled)
 	status.TOUModeEnabled = boolPtrFromNull(touModeEnabled)
+	status.SelfPoweredEnabled = boolPtrFromNull(selfPoweredEnabled)
+	status.ScheduledEnabled = boolPtrFromNull(scheduledEnabled)
+	status.IntelligentEnabled = boolPtrFromNull(intelligentEnabled)
 	status.BatteryFullEnergyWh = intPtrFromNull(batteryFullEnergyWh)
 	if surplusPlanJSON.Valid && surplusPlanJSON.String != "" {
 		var plan domain.SurplusPlan
@@ -91,9 +98,10 @@ func (r *StatusRepository) UpdateCurrentStatus(ctx context.Context, status domai
 	_, err := r.db.ExecContext(ctx, `INSERT INTO current_status (
 		id, grid_w, import_w, export_w, battery_soc, battery_input_w,
 		battery_output_w, ac_charge_limit_w, target_charge_w, state, mode, last_decision_reason,
-		last_error, updated_at, backup_reserve_soc, energy_backup_enabled, tou_mode_enabled, battery_full_energy_wh, surplus_plan_json,
+		last_error, updated_at, backup_reserve_soc, energy_backup_enabled, tou_mode_enabled,
+		self_powered_enabled, scheduled_enabled, intelligent_enabled, battery_full_energy_wh, surplus_plan_json,
 		night_charge_plan_json
-	) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		grid_w = excluded.grid_w,
 		import_w = excluded.import_w,
@@ -110,6 +118,9 @@ func (r *StatusRepository) UpdateCurrentStatus(ctx context.Context, status domai
 		backup_reserve_soc = excluded.backup_reserve_soc,
 		energy_backup_enabled = excluded.energy_backup_enabled,
 		tou_mode_enabled = excluded.tou_mode_enabled,
+		self_powered_enabled = excluded.self_powered_enabled,
+		scheduled_enabled = excluded.scheduled_enabled,
+		intelligent_enabled = excluded.intelligent_enabled,
 		battery_full_energy_wh = excluded.battery_full_energy_wh,
 		surplus_plan_json = excluded.surplus_plan_json,
 		night_charge_plan_json = excluded.night_charge_plan_json,
@@ -130,6 +141,9 @@ func (r *StatusRepository) UpdateCurrentStatus(ctx context.Context, status domai
 		nullableInt(status.BackupReserveSoc),
 		nullableBool(status.EnergyBackupEnabled),
 		nullableBool(status.TOUModeEnabled),
+		nullableBool(status.SelfPoweredEnabled),
+		nullableBool(status.ScheduledEnabled),
+		nullableBool(status.IntelligentEnabled),
 		nullableInt(status.BatteryFullEnergyWh),
 		nullableJSON(status.SurplusPlan),
 		nullableJSON(status.NightChargePlan),

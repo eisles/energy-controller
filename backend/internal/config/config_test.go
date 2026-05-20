@@ -19,6 +19,7 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	t.Setenv("WEATHER_TIMEZONE", "Asia/Tokyo")
 	t.Setenv("WEATHER_BASE_URL", "https://api.open-meteo.test")
 	t.Setenv("AUTO_CONTROL_ENABLED", "true")
+	t.Setenv("CONFIRM_ECOFLOW_WRITE", "I_UNDERSTAND")
 	t.Setenv("POLL_INTERVAL_SEC", "45")
 	t.Setenv("START_EXPORT_THRESHOLD_W", "900")
 	t.Setenv("STOP_EXPORT_THRESHOLD_W", "450")
@@ -75,6 +76,9 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	}
 	if !cfg.AutoControlEnabled {
 		t.Fatal("AutoControlEnabled = false, want true")
+	}
+	if cfg.ConfirmEcoFlowWrite != "I_UNDERSTAND" {
+		t.Fatalf("ConfirmEcoFlowWrite = %q, want I_UNDERSTAND", cfg.ConfirmEcoFlowWrite)
 	}
 	if cfg.PollInterval != 45*time.Second {
 		t.Fatalf("PollInterval = %s, want 45s", cfg.PollInterval)

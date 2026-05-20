@@ -9,6 +9,9 @@ export type EnergyStatus = {
   backupReserveSoc?: number | null;
   energyBackupEnabled?: boolean | null;
   touModeEnabled?: boolean | null;
+  selfPoweredEnabled?: boolean | null;
+  scheduledEnabled?: boolean | null;
+  intelligentEnabled?: boolean | null;
   batteryFullEnergyWh?: number | null;
   surplusPlan?: SurplusPlan | null;
   nightChargePlan?: NightChargePlan | null;
@@ -258,6 +261,8 @@ export type SurplusControlCommandLog = {
   id: number;
   measuredAt: string;
   strategyState: string;
+  commandKind: string;
+  commandFingerprint: string;
   gridW: number;
   importW: number;
   exportW: number;
@@ -271,6 +276,11 @@ export type SurplusControlCommandLog = {
   commandSent: boolean;
   dryRun: boolean;
   wouldWrite: boolean;
+  shouldAdjustAcChargeLimit: boolean;
+  shouldSetBackupReserve: boolean;
+  shouldDisableEnergyModes: boolean;
+  shouldEnableTouMode: boolean;
+  modeGuardReason: string;
   suppressedReason: string;
   decisionReason: string;
   errorMessage: string | null;

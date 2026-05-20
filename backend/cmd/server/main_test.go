@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eisles/energy-controller/backend/internal/config"
 	"github.com/eisles/energy-controller/backend/internal/domain"
 	"github.com/eisles/energy-controller/backend/internal/store"
 )
@@ -55,6 +56,7 @@ func TestRecordStatusPersistsWouldSendLogWithoutCommandSent(t *testing.T) {
 
 	recordStatus(
 		context.Background(),
+		config.Config{},
 		provider,
 		store.NewStatusRepository(db),
 		store.NewLogRepository(db),

@@ -13,6 +13,7 @@ import (
 
 	"github.com/eisles/energy-controller/backend/internal/api"
 	"github.com/eisles/energy-controller/backend/internal/config"
+	"github.com/eisles/energy-controller/backend/internal/control"
 	"github.com/eisles/energy-controller/backend/internal/domain"
 	"github.com/eisles/energy-controller/backend/internal/ecoflow"
 	"github.com/eisles/energy-controller/backend/internal/mock"
@@ -48,8 +49,8 @@ func main() {
 	surplusControlCommandRepository := store.NewSurplusControlCommandRepository(db)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	recordStatus(ctx, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, energyMeterReader, energyMeterRepository, logger)
-	go runControlLoop(ctx, cfg.PollInterval, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, energyMeterReader, energyMeterRepository, logger)
+	recordStatus(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, energyMeterReader, energyMeterRepository, logger)
+	go runControlLoop(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, energyMeterReader, energyMeterRepository, logger)
 
 	router := api.NewRouter(api.Dependencies{
 		Config:         cfg,
@@ -95,7 +96,9 @@ type nightChargePlanLogWriter interface {
 }
 
 type surplusControlCommandLogWriter interface {
-	InsertSurplusControlCommandLog(ctx context.Context, status domain.Status) error
+	InsertSurplusControlCommandLog(ctx context.Context, log domain.SurplusControlCommandLog) error
+	LatestSurplusControlCommandLog(ctx context.Context) (*domain.SurplusControlCommandLog, error)
+	LatestSurplusControlWriteCandidateLog(ctx context.Context) (*domain.SurplusControlCommandLog, error)
 }
 
 type energyMeterWriter interface {
@@ -159,7 +162,8 @@ func newWeatherReader(cfg config.Config, db *sql.DB) mock.WeatherReader {
 	return forecastClient
 }
 
-func runControlLoop(ctx context.Context, interval time.Duration, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
+func runControlLoop(ctx context.Context, cfg config.Config, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
+	interval := cfg.PollInterval
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
@@ -170,12 +174,12 @@ func runControlLoop(ctx context.Context, interval time.Duration, provider api.St
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			recordStatus(ctx, provider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, meterReader, meterRepository, logger)
+			recordStatus(ctx, cfg, provider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, meterReader, meterRepository, logger)
 		}
 	}
 }
 
-func recordStatus(ctx context.Context, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
+func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
 	status, err := provider.CurrentStatus(ctx)
 	if err != nil {
 		logger.Error("failed to evaluate current status", "error", err)
@@ -191,8 +195,22 @@ func recordStatus(ctx context.Context, provider api.StatusProvider, statusReposi
 		}
 	}
 	if surplusControlCommandRepository != nil {
-		if err := surplusControlCommandRepository.InsertSurplusControlCommandLog(ctx, status); err != nil {
-			logger.Warn("failed to save surplus control command log", "error", err)
+		previous, err := surplusControlCommandRepository.LatestSurplusControlWriteCandidateLog(ctx)
+		if err != nil {
+			logger.Warn("failed to load latest surplus control write candidate log", "error", err)
+		} else {
+			commandLog := control.EvaluateSurplusCommandGuard(control.SurplusCommandGuardInput{
+				Status:              status,
+				MockMode:            cfg.MockMode,
+				SimulationMode:      cfg.SimulationMode,
+				EnableRealControl:   cfg.EnableRealControl,
+				AutoControl:         cfg.AutoControlEnabled,
+				ConfirmEcoFlowWrite: cfg.ConfirmEcoFlowWrite,
+				Previous:            previous,
+			}, cfg.ControlSettings)
+			if err := surplusControlCommandRepository.InsertSurplusControlCommandLog(ctx, commandLog); err != nil {
+				logger.Warn("failed to save surplus control command log", "error", err)
+			}
 		}
 	}
 	if err := statusRepository.UpdateCurrentStatus(ctx, status); err != nil {
