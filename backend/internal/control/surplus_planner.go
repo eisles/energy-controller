@@ -46,7 +46,7 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		plan.StrategyState = "RECOVERING"
 		plan.RecommendedACChargeLimitW = calculateImportRecoveryChargeW(input.ACChargeLimitW, gridPower.ImportW, settings)
 		plan.ShouldAdjustACChargeLimit = abs(input.ACChargeLimitW-plan.RecommendedACChargeLimitW) >= settings.MinCommandDiffW
-		plan.ShouldEnableTOUMode = boolPtrFalse(input.TOUModeEnabled)
+		applyRecoveryModePlan(&plan, input)
 		if input.BackupReserveSoc != nil && *input.BackupReserveSoc > defaultReserveSoc {
 			recommendedReserve := defaultReserveSoc
 			plan.RecommendedBackupReserveSoc = &recommendedReserve
@@ -54,11 +54,11 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		}
 		plan.ActionSummary = surplusActionSummary(plan)
 		plan.Reason = "importing from grid; recover by stopping surplus charge and restoring default reserve"
-		plan.WouldWrite = writeAllowed(input) && (plan.ShouldAdjustACChargeLimit || plan.ShouldLowerBackupReserve || plan.ShouldEnableTOUMode)
+		plan.WouldWrite = writeAllowed(input) && (plan.ShouldAdjustACChargeLimit || plan.ShouldLowerBackupReserve || plan.ShouldDisableEnergyModes || plan.ShouldEnableTOUMode)
 		return plan
 	case input.BatterySoc >= settings.TargetSoc:
 		plan.StrategyState = "RECOVERING"
-		plan.ShouldEnableTOUMode = boolPtrFalse(input.TOUModeEnabled)
+		applyRecoveryModePlan(&plan, input)
 		if input.BackupReserveSoc != nil && *input.BackupReserveSoc > defaultReserveSoc {
 			recommendedReserve := defaultReserveSoc
 			plan.RecommendedBackupReserveSoc = &recommendedReserve
@@ -66,7 +66,7 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		}
 		plan.ActionSummary = surplusActionSummary(plan)
 		plan.Reason = "battery soc is at or above target; stop surplus charge and restore default reserve"
-		plan.WouldWrite = writeAllowed(input) && (plan.ShouldLowerBackupReserve || plan.ShouldEnableTOUMode)
+		plan.WouldWrite = writeAllowed(input) && (plan.ShouldLowerBackupReserve || plan.ShouldDisableEnergyModes || plan.ShouldEnableTOUMode)
 		return plan
 	case gridPower.ExportW < settings.StopExportThresholdW && !isSurplusTrackingCharge(input, settings):
 		plan.Reason = "export power is below stop threshold; keep TOU mode and wait"
@@ -160,6 +160,17 @@ func surplusActionSummary(plan domain.SurplusPlan) string {
 	return strings.Join(actions, "; ")
 }
 
+func applyRecoveryModePlan(plan *domain.SurplusPlan, input SurplusPlanInput) {
+	if boolPtrTrue(input.TOUModeEnabled) {
+		return
+	}
+	if hasEnabledNonTOUEnergyMode(input) {
+		plan.ShouldDisableEnergyModes = true
+		return
+	}
+	plan.ShouldEnableTOUMode = boolPtrFalse(input.TOUModeEnabled)
+}
+
 func conservativeStartExportW(batteryOutputW int, settings Settings) int {
 	if batteryOutputW < 0 {
 		batteryOutputW = 0
@@ -214,6 +225,12 @@ func calculateImportRecoveryChargeW(currentLimitW int, importW int, settings Set
 func hasEnabledEnergyMode(input SurplusPlanInput) bool {
 	return boolPtrTrue(input.TOUModeEnabled) ||
 		boolPtrTrue(input.SelfPoweredEnabled) ||
+		boolPtrTrue(input.ScheduledEnabled) ||
+		boolPtrTrue(input.IntelligentEnabled)
+}
+
+func hasEnabledNonTOUEnergyMode(input SurplusPlanInput) bool {
+	return boolPtrTrue(input.SelfPoweredEnabled) ||
 		boolPtrTrue(input.ScheduledEnabled) ||
 		boolPtrTrue(input.IntelligentEnabled)
 }

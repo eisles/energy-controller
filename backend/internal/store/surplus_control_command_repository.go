@@ -68,7 +68,7 @@ func (r *SurplusControlCommandRepository) LatestSurplusControlCommandLog(ctx con
 }
 
 func (r *SurplusControlCommandRepository) LatestSurplusControlWriteCandidateLog(ctx context.Context) (*domain.SurplusControlCommandLog, error) {
-	return r.latestSurplusControlCommandLog(ctx, "WHERE would_write = 1 OR command_sent = 1")
+	return r.latestSurplusControlCommandLog(ctx, "WHERE would_write = 1 OR command_sent = 1 OR (error_message IS NOT NULL AND error_message <> '')")
 }
 
 func (r *SurplusControlCommandRepository) latestSurplusControlCommandLog(ctx context.Context, whereClause string) (*domain.SurplusControlCommandLog, error) {

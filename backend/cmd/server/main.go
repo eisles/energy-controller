@@ -47,10 +47,11 @@ func main() {
 	energyMeterRepository := store.NewEnergyMeterRepository(db)
 	nightChargePlanRepository := store.NewNightChargePlanRepository(db)
 	surplusControlCommandRepository := store.NewSurplusControlCommandRepository(db)
+	surplusWriteClient := newSurplusWriteClient(cfg)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	recordStatus(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, energyMeterReader, energyMeterRepository, logger)
-	go runControlLoop(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, energyMeterReader, energyMeterRepository, logger)
+	recordStatus(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, surplusWriteClient, energyMeterReader, energyMeterRepository, logger)
+	go runControlLoop(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, surplusWriteClient, energyMeterReader, energyMeterRepository, logger)
 
 	router := api.NewRouter(api.Dependencies{
 		Config:         cfg,
@@ -93,12 +94,20 @@ type logWriter interface {
 
 type nightChargePlanLogWriter interface {
 	InsertNightChargePlanLog(ctx context.Context, status domain.Status) error
+	LatestNightChargePlanWriteCandidateLog(ctx context.Context) (*domain.NightChargePlanLog, error)
 }
 
 type surplusControlCommandLogWriter interface {
 	InsertSurplusControlCommandLog(ctx context.Context, log domain.SurplusControlCommandLog) error
 	LatestSurplusControlCommandLog(ctx context.Context) (*domain.SurplusControlCommandLog, error)
 	LatestSurplusControlWriteCandidateLog(ctx context.Context) (*domain.SurplusControlCommandLog, error)
+}
+
+type surplusWriteClient interface {
+	SetACChargePower(ctx context.Context, watts int) error
+	SetBackupReserveSoc(ctx context.Context, percent int) error
+	SetTOUMode(ctx context.Context, enabled bool) error
+	SetSelfPoweredMode(ctx context.Context, enabled bool) error
 }
 
 type energyMeterWriter interface {
@@ -146,6 +155,24 @@ func newStatusProvider(cfg config.Config, db *sql.DB) (api.StatusProvider, energ
 	return provider, nil
 }
 
+func newSurplusWriteClient(cfg config.Config) surplusWriteClient {
+	if cfg.MockMode {
+		return nil
+	}
+	return ecoflow.NewSignedWriteClient(ecoflow.Config{
+		AccessKey: cfg.EcoFlowAccessKey,
+		SecretKey: cfg.EcoFlowSecretKey,
+		DeviceSN:  cfg.EcoFlowDeviceSN,
+		BaseURL:   cfg.EcoFlowBaseURL,
+	}, ecoflow.WriteGuards{
+		MockMode:           cfg.MockMode,
+		SimulationMode:     cfg.SimulationMode,
+		EnableRealControl:  cfg.EnableRealControl,
+		AutoControlEnabled: cfg.AutoControlEnabled,
+		ManualOneShot:      false,
+	})
+}
+
 func newWeatherReader(cfg config.Config, db *sql.DB) mock.WeatherReader {
 	forecastClient := weather.NewOpenMeteoClient(weather.OpenMeteoConfig{
 		Latitude:  cfg.WeatherLatitude,
@@ -162,7 +189,7 @@ func newWeatherReader(cfg config.Config, db *sql.DB) mock.WeatherReader {
 	return forecastClient
 }
 
-func runControlLoop(ctx context.Context, cfg config.Config, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
+func runControlLoop(ctx context.Context, cfg config.Config, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, writeClient surplusWriteClient, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
 	interval := cfg.PollInterval
 	if interval <= 0 {
 		interval = 30 * time.Second
@@ -174,12 +201,12 @@ func runControlLoop(ctx context.Context, cfg config.Config, provider api.StatusP
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			recordStatus(ctx, cfg, provider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, meterReader, meterRepository, logger)
+			recordStatus(ctx, cfg, provider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, writeClient, meterReader, meterRepository, logger)
 		}
 	}
 }
 
-func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
+func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, writeClient surplusWriteClient, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
 	status, err := provider.CurrentStatus(ctx)
 	if err != nil {
 		logger.Error("failed to evaluate current status", "error", err)
@@ -189,25 +216,36 @@ func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusPro
 		logger.Error("failed to save power log", "error", err)
 		return
 	}
+	var previousNightPlan *domain.NightChargePlanLog
+	if nightChargePlanRepository != nil {
+		var err error
+		previousNightPlan, err = nightChargePlanRepository.LatestNightChargePlanWriteCandidateLog(ctx)
+		if err != nil {
+			logger.Warn("failed to load latest night charge write candidate log", "error", err)
+		}
+	}
+	nightPlanOwnsControl := applyNightChargePlanControl(ctx, cfg, &status, writeClient, previousNightPlan)
 	if nightChargePlanRepository != nil {
 		if err := nightChargePlanRepository.InsertNightChargePlanLog(ctx, status); err != nil {
 			logger.Warn("failed to save night charge plan log", "error", err)
 		}
 	}
-	if surplusControlCommandRepository != nil {
+	if surplusControlCommandRepository != nil && !nightPlanOwnsControl {
 		previous, err := surplusControlCommandRepository.LatestSurplusControlWriteCandidateLog(ctx)
 		if err != nil {
 			logger.Warn("failed to load latest surplus control write candidate log", "error", err)
 		} else {
 			commandLog := control.EvaluateSurplusCommandGuard(control.SurplusCommandGuardInput{
-				Status:              status,
-				MockMode:            cfg.MockMode,
-				SimulationMode:      cfg.SimulationMode,
-				EnableRealControl:   cfg.EnableRealControl,
-				AutoControl:         cfg.AutoControlEnabled,
-				ConfirmEcoFlowWrite: cfg.ConfirmEcoFlowWrite,
-				Previous:            previous,
+				Status:                 status,
+				MockMode:               cfg.MockMode,
+				SimulationMode:         cfg.SimulationMode,
+				EnableRealControl:      cfg.EnableRealControl,
+				AutoControl:            cfg.AutoControlEnabled,
+				ConfirmEcoFlowWrite:    cfg.ConfirmEcoFlowWrite,
+				RealControlTrialActive: realControlTrialActive(cfg),
+				Previous:               previous,
 			}, cfg.ControlSettings)
+			commandLog = control.ExecuteSurplusCommand(ctx, commandLog, writeClient)
 			if err := surplusControlCommandRepository.InsertSurplusControlCommandLog(ctx, commandLog); err != nil {
 				logger.Warn("failed to save surplus control command log", "error", err)
 			}
@@ -219,6 +257,59 @@ func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusPro
 	}
 	recordEnergyMeterReading(ctx, meterReader, meterRepository, logger)
 	logger.Info("control decision saved", "mode", status.Mode, "state", status.State, "gridW", status.GridW, "targetChargeW", status.TargetChargeW, "reason", status.LastDecisionReason)
+}
+
+func applyNightChargePlanControl(ctx context.Context, cfg config.Config, status *domain.Status, writeClient surplusWriteClient, previous *domain.NightChargePlanLog) bool {
+	if status == nil || status.NightChargePlan == nil {
+		return false
+	}
+	if previous != nil && previous.MeasuredAt.Equal(status.UpdatedAt) {
+		previous = nil
+	}
+	plan := control.GuardNightChargeCommand(control.NightChargeCommandGuardInput{
+		Plan:                   *status.NightChargePlan,
+		MockMode:               cfg.MockMode,
+		SimulationMode:         cfg.SimulationMode,
+		EnableRealControl:      cfg.EnableRealControl,
+		AutoControl:            cfg.AutoControlEnabled,
+		ConfirmEcoFlowWrite:    cfg.ConfirmEcoFlowWrite,
+		RealControlTrialActive: realControlTrialActive(cfg),
+		Previous:               previous,
+		Now:                    controlClockNow(cfg),
+		Settings:               cfg.ControlSettings,
+	})
+	plan = control.ExecuteNightChargeCommand(ctx, plan, writeClient)
+	status.NightChargePlan = &plan
+	return nightPlanOwnsEnergyControl(plan, status.UpdatedAt)
+}
+
+func nightPlanOwnsEnergyControl(plan domain.NightChargePlan, measuredAt time.Time) bool {
+	if plan.StrategyState == "NIGHT_CHARGE_WINDOW" {
+		return true
+	}
+	if plan.StrategyState != "NIGHT_RECOVER" {
+		return false
+	}
+	if measuredAt.IsZero() {
+		measuredAt = time.Now()
+	}
+	hour := measuredAt.Hour()
+	return hour >= 23 || hour < 7
+}
+
+func realControlTrialActive(cfg config.Config) bool {
+	if cfg.RealControlTrialUntil.IsZero() {
+		return false
+	}
+	now := controlClockNow(cfg)
+	return now.Before(cfg.RealControlTrialUntil)
+}
+
+func controlClockNow(cfg config.Config) time.Time {
+	if cfg.Clock == nil {
+		return time.Now()
+	}
+	return cfg.Clock.Now()
 }
 
 func recordEnergyMeterReading(ctx context.Context, reader energyMeterReader, repository energyMeterWriter, logger *slog.Logger) {

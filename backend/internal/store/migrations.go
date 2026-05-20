@@ -90,6 +90,9 @@ func migrate(db *sql.DB) error {
 			export_w INTEGER NOT NULL,
 			should_charge_tonight INTEGER NOT NULL,
 			would_write INTEGER NOT NULL,
+			command_fingerprint TEXT NOT NULL DEFAULT 'none',
+			command_sent INTEGER NOT NULL DEFAULT 0,
+			command_error TEXT,
 			command_block_reason TEXT NOT NULL,
 			action_summary TEXT NOT NULL,
 			reason TEXT NOT NULL,
@@ -216,6 +219,9 @@ func migrate(db *sql.DB) error {
 		"pv_effective_window_source",
 		"morning_to_pv_start_load_kwh",
 		"forecast_daytime_deficit_kwh",
+		"command_fingerprint",
+		"command_sent",
+		"command_error",
 	} {
 		if err := addKnownColumnIfMissing(db, "night_charge_plan_logs", column); err != nil {
 			return err
@@ -305,6 +311,9 @@ var knownMigrationColumns = map[string]map[string]string{
 		"pv_effective_window_source":   "TEXT NOT NULL DEFAULT ''",
 		"morning_to_pv_start_load_kwh": "REAL NOT NULL DEFAULT 0",
 		"forecast_daytime_deficit_kwh": "REAL NOT NULL DEFAULT 0",
+		"command_fingerprint":          "TEXT NOT NULL DEFAULT 'none'",
+		"command_sent":                 "INTEGER NOT NULL DEFAULT 0",
+		"command_error":                "TEXT",
 	},
 	"surplus_control_command_logs": {
 		"command_kind":                  "TEXT NOT NULL DEFAULT 'none'",

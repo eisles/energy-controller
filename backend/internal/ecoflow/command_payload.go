@@ -6,6 +6,7 @@ const (
 	candidateACChargePowerParam = "cfgPlugInInfoAcInChgPowMax"
 	candidateBackupReserveParam = "cfgBackupReverseSoc"
 	candidateTOUModeParam       = "cfgEnergyStrategyOperateMode.operateTouModeOpen"
+	candidateSelfPoweredParam   = "cfgEnergyStrategyOperateMode.operateSelfPoweredOpen"
 	candidateEnergyModeParam    = "cfgEnergyStrategyOperateMode"
 )
 
@@ -58,6 +59,22 @@ func buildSetTOUModePayload(deviceSN string, enabled bool) (commandPayload, erro
 		candidateEnergyModeParam: map[string]any{
 			"operateTouModeOpen":                 enabled,
 			"operateSelfPoweredOpen":             false,
+			"operateScheduledOpen":               false,
+			"operateIntelligentScheduleModeOpen": false,
+		},
+	}), nil
+}
+
+func buildSetSelfPoweredModePayload(deviceSN string, enabled bool) (commandPayload, error) {
+	if deviceSN == "" {
+		return commandPayload{}, fmt.Errorf("EcoFlow device SN is empty")
+	}
+	return newCommandPayload(deviceSN, map[string]any{
+		// Candidate inferred from observed DELTA Pro 3 read quota naming and
+		// the same energy strategy control envelope used for TOU mode.
+		candidateEnergyModeParam: map[string]any{
+			"operateTouModeOpen":                 false,
+			"operateSelfPoweredOpen":             enabled,
 			"operateScheduledOpen":               false,
 			"operateIntelligentScheduleModeOpen": false,
 		},

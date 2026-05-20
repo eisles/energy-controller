@@ -10,6 +10,7 @@ type WriteClient interface {
 	SetACChargePower(ctx context.Context, watts int) error
 	SetBackupReserveSoc(ctx context.Context, percent int) error
 	SetTOUMode(ctx context.Context, enabled bool) error
+	SetSelfPoweredMode(ctx context.Context, enabled bool) error
 	StopOrMinimizeCharging(ctx context.Context) error
 }
 
@@ -55,6 +56,17 @@ func (c *MockWriteClient) SetTOUMode(_ context.Context, enabled bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Commands = append(c.Commands, MockCommand{Name: "set_tou_mode", Watts: watts})
+	return nil
+}
+
+func (c *MockWriteClient) SetSelfPoweredMode(_ context.Context, enabled bool) error {
+	watts := 0
+	if enabled {
+		watts = 1
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Commands = append(c.Commands, MockCommand{Name: "set_self_powered_mode", Watts: watts})
 	return nil
 }
 

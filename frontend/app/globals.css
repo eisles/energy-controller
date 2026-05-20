@@ -113,6 +113,14 @@ input {
   font-weight: 700;
 }
 
+.metric-grid-import {
+  color: #dc2626;
+}
+
+.metric-grid-export {
+  color: #2563eb;
+}
+
 .metric-side-value {
   color: var(--muted-foreground);
   font-size: 13px;

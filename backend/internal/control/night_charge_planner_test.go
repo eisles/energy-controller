@@ -380,6 +380,37 @@ func TestPlanNightChargingRecommendsSelfPoweredWhenDischargeIsNeeded(t *testing.
 	}
 }
 
+func TestPlanNightChargingWouldWriteSelfPoweredRecoveryDuringNight(t *testing.T) {
+	fullEnergyWh := 12288
+	tou := true
+	reserve := 30
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                 time.Date(2026, 5, 20, 3, 0, 0, 0, jst),
+		BatterySoc:          83,
+		BatteryFullEnergyWh: &fullEnergyWh,
+		BackupReserveSoc:    &reserve,
+		TOUModeEnabled:      &tou,
+		Forecast:            &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 22, SunshineDurationHours: 10, CloudCoverMeanPercent: 10},
+		SolarSettings:       &domain.WeatherLocation{PVCapacityKW: 5, PVPerformanceRatio: 0.8, DailyBaseLoadKWh: 3, MinimumReserveSoc: 30},
+		SimulationMode:      false,
+		EnableRealControl:   true,
+		AutoControl:         true,
+	}, DefaultSettings())
+
+	if plan.StrategyState != "NIGHT_RECOVER" {
+		t.Fatalf("StrategyState = %q, want NIGHT_RECOVER", plan.StrategyState)
+	}
+	if plan.RecommendedMode != "self-powered" {
+		t.Fatalf("RecommendedMode = %q, want self-powered", plan.RecommendedMode)
+	}
+	if !plan.ShouldSetBackupReserve || !plan.ShouldEnableSelfPoweredMode {
+		t.Fatalf("write flags = reserve:%t self-powered:%t, want both true", plan.ShouldSetBackupReserve, plan.ShouldEnableSelfPoweredMode)
+	}
+	if !plan.WouldWrite {
+		t.Fatalf("WouldWrite = false, block reason = %q", plan.CommandBlockReason)
+	}
+}
+
 func TestPlanNightChargingStrategyStatesByTime(t *testing.T) {
 	forecast := &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 3, SunshineDurationHours: 1, CloudCoverMeanPercent: 95, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 12}
 	settings := DefaultSettings()

@@ -1,6 +1,9 @@
 package control
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -13,12 +16,13 @@ func TestEvaluateSurplusCommandGuardAllowsDryRunCandidateWhenAllGuardsPass(t *te
 	status := surplusGuardStatus(now)
 
 	log := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
-		Status:              status,
-		MockMode:            false,
-		SimulationMode:      false,
-		EnableRealControl:   true,
-		AutoControl:         true,
-		ConfirmEcoFlowWrite: confirmEcoFlowWriteValue,
+		Status:                 status,
+		MockMode:               false,
+		SimulationMode:         false,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
 	}, DefaultSettings())
 
 	if !log.WouldWrite {
@@ -81,15 +85,23 @@ func TestEvaluateSurplusCommandGuardBlocksUnsafeModes(t *testing.T) {
 			},
 			want: "CONFIRM_ECOFLOW_WRITE",
 		},
+		{
+			name: "trial inactive",
+			mutate: func(input *SurplusCommandGuardInput) {
+				input.RealControlTrialActive = false
+			},
+			want: "real control trial window inactive",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			input := SurplusCommandGuardInput{
-				Status:              base,
-				EnableRealControl:   true,
-				AutoControl:         true,
-				ConfirmEcoFlowWrite: confirmEcoFlowWriteValue,
+				Status:                 base,
+				EnableRealControl:      true,
+				AutoControl:            true,
+				ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+				RealControlTrialActive: true,
 			}
 			tt.mutate(&input)
 
@@ -104,16 +116,105 @@ func TestEvaluateSurplusCommandGuardBlocksUnsafeModes(t *testing.T) {
 	}
 }
 
+func TestExecuteSurplusCommandSendsCommandsAndMarksLog(t *testing.T) {
+	now := time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC)
+	log := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
+		Status:                 surplusGuardStatus(now),
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
+	}, DefaultSettings())
+	writer := &stubSurplusWriteClient{}
+
+	log = ExecuteSurplusCommand(context.Background(), log, writer)
+
+	if !log.CommandSent || log.DryRun || log.ErrorMessage != nil {
+		t.Fatalf("log = %+v, want command sent, non-dry-run, no error", log)
+	}
+	want := []string{"tou:false", "ac:800", "reserve:79"}
+	if strings.Join(writer.commands, ",") != strings.Join(want, ",") {
+		t.Fatalf("commands = %v, want %v", writer.commands, want)
+	}
+}
+
+func TestExecuteSurplusCommandRecordsErrorAfterPartialSend(t *testing.T) {
+	now := time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC)
+	log := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
+		Status:                 surplusGuardStatus(now),
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
+	}, DefaultSettings())
+	writer := &stubSurplusWriteClient{reserveErr: errors.New("reserve rejected")}
+
+	log = ExecuteSurplusCommand(context.Background(), log, writer)
+
+	if !log.CommandSent {
+		t.Fatal("CommandSent = false, want true because AC command was sent before reserve failure")
+	}
+	if log.DryRun {
+		t.Fatal("DryRun = true, want false after execution attempt")
+	}
+	if log.WouldWrite {
+		t.Fatal("WouldWrite = true, want false after execution error")
+	}
+	if log.ErrorMessage == nil || !strings.Contains(*log.ErrorMessage, "reserve rejected") {
+		t.Fatalf("ErrorMessage = %v, want reserve rejected", log.ErrorMessage)
+	}
+}
+
+func TestEvaluateSurplusCommandGuardAllowsRetryAfterErroredCandidateInterval(t *testing.T) {
+	now := time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC)
+	status := surplusGuardStatus(now)
+	errorMessage := "set backup reserve SOC: transient"
+	previous := domain.SurplusControlCommandLog{
+		MeasuredAt:         now.Add(-30 * time.Second),
+		CommandKind:        "mixed",
+		CommandFingerprint: "kind=mixed;ac=800;reserve=79;adjust_ac=true;set_reserve=true;disable_modes=true;enable_tou=false",
+		CommandSent:        true,
+		WouldWrite:         false,
+		ErrorMessage:       &errorMessage,
+	}
+
+	suppressed := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
+		Status:                 status,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
+		Previous:               &previous,
+	}, DefaultSettings())
+	if suppressed.WouldWrite || suppressed.SuppressedReason != "command retry suppressed after previous error" {
+		t.Fatalf("suppressed = %+v, want retry interval suppression", suppressed)
+	}
+
+	previous.MeasuredAt = now.Add(-2 * time.Minute)
+	retry := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
+		Status:                 status,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
+		Previous:               &previous,
+	}, DefaultSettings())
+	if !retry.WouldWrite {
+		t.Fatalf("WouldWrite = false, want retry after interval: %+v", retry)
+	}
+}
+
 func TestEvaluateSurplusCommandGuardRequiresModeStatusForModeActions(t *testing.T) {
 	now := time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC)
 	status := surplusGuardStatus(now)
 	status.ScheduledEnabled = nil
 
 	log := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
-		Status:              status,
-		EnableRealControl:   true,
-		AutoControl:         true,
-		ConfirmEcoFlowWrite: confirmEcoFlowWriteValue,
+		Status:                 status,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
 	}, DefaultSettings())
 
 	if log.WouldWrite {
@@ -141,10 +242,11 @@ func TestEvaluateSurplusCommandGuardRequiresExpectedModeState(t *testing.T) {
 		}
 
 		log := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
-			Status:              status,
-			EnableRealControl:   true,
-			AutoControl:         true,
-			ConfirmEcoFlowWrite: confirmEcoFlowWriteValue,
+			Status:                 status,
+			EnableRealControl:      true,
+			AutoControl:            true,
+			ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+			RealControlTrialActive: true,
 		}, DefaultSettings())
 		if log.WouldWrite {
 			t.Fatal("WouldWrite = true, want false")
@@ -163,10 +265,11 @@ func TestEvaluateSurplusCommandGuardRequiresExpectedModeState(t *testing.T) {
 		status.SurplusPlan.ShouldDisableEnergyModes = true
 
 		log := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
-			Status:              status,
-			EnableRealControl:   true,
-			AutoControl:         true,
-			ConfirmEcoFlowWrite: confirmEcoFlowWriteValue,
+			Status:                 status,
+			EnableRealControl:      true,
+			AutoControl:            true,
+			ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+			RealControlTrialActive: true,
 		}, DefaultSettings())
 		if log.WouldWrite {
 			t.Fatal("WouldWrite = true, want false")
@@ -181,18 +284,20 @@ func TestEvaluateSurplusCommandGuardSuppressesDuplicateAndInterval(t *testing.T)
 	now := time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC)
 	status := surplusGuardStatus(now)
 	first := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
-		Status:              status,
-		EnableRealControl:   true,
-		AutoControl:         true,
-		ConfirmEcoFlowWrite: confirmEcoFlowWriteValue,
+		Status:                 status,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
 	}, DefaultSettings())
 
 	duplicate := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
-		Status:              status,
-		EnableRealControl:   true,
-		AutoControl:         true,
-		ConfirmEcoFlowWrite: confirmEcoFlowWriteValue,
-		Previous:            &first,
+		Status:                 status,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
+		Previous:               &first,
 	}, DefaultSettings())
 	if duplicate.WouldWrite || duplicate.SuppressedReason != "duplicate command candidate" {
 		t.Fatalf("duplicate = %+v, want duplicate suppression", duplicate)
@@ -201,11 +306,12 @@ func TestEvaluateSurplusCommandGuardSuppressesDuplicateAndInterval(t *testing.T)
 	status.SurplusPlan.RecommendedACChargeLimitW = 900
 	status.UpdatedAt = now.Add(30 * time.Second)
 	interval := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
-		Status:              status,
-		EnableRealControl:   true,
-		AutoControl:         true,
-		ConfirmEcoFlowWrite: confirmEcoFlowWriteValue,
-		Previous:            &first,
+		Status:                 status,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
+		Previous:               &first,
 	}, DefaultSettings())
 	if interval.WouldWrite || interval.SuppressedReason != "command suppressed by minimum interval" {
 		t.Fatalf("interval = %+v, want interval suppression", interval)
@@ -225,11 +331,12 @@ func TestEvaluateSurplusCommandGuardIgnoresPreviousNonWriteLogForSuppression(t *
 	}
 
 	log := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
-		Status:              status,
-		EnableRealControl:   true,
-		AutoControl:         true,
-		ConfirmEcoFlowWrite: confirmEcoFlowWriteValue,
-		Previous:            &previous,
+		Status:                 status,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
+		Previous:               &previous,
 	}, DefaultSettings())
 	if !log.WouldWrite {
 		t.Fatalf("WouldWrite = false, want true when previous log was not a write candidate: %+v", log)
@@ -240,10 +347,11 @@ func TestEvaluateSurplusCommandGuardKeepsSuppressingAfterSuppressedLogWhenPrevio
 	now := time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC)
 	status := surplusGuardStatus(now)
 	first := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
-		Status:              status,
-		EnableRealControl:   true,
-		AutoControl:         true,
-		ConfirmEcoFlowWrite: confirmEcoFlowWriteValue,
+		Status:                 status,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
 	}, DefaultSettings())
 	if !first.WouldWrite {
 		t.Fatalf("first WouldWrite = false, want true: %+v", first)
@@ -251,11 +359,12 @@ func TestEvaluateSurplusCommandGuardKeepsSuppressingAfterSuppressedLogWhenPrevio
 
 	status.UpdatedAt = now.Add(30 * time.Second)
 	second := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
-		Status:              status,
-		EnableRealControl:   true,
-		AutoControl:         true,
-		ConfirmEcoFlowWrite: confirmEcoFlowWriteValue,
-		Previous:            &first,
+		Status:                 status,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
+		Previous:               &first,
 	}, DefaultSettings())
 	if second.WouldWrite || second.SuppressedReason != "duplicate command candidate" {
 		t.Fatalf("second = %+v, want duplicate suppression", second)
@@ -263,11 +372,12 @@ func TestEvaluateSurplusCommandGuardKeepsSuppressingAfterSuppressedLogWhenPrevio
 
 	status.UpdatedAt = now.Add(60 * time.Second)
 	third := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
-		Status:              status,
-		EnableRealControl:   true,
-		AutoControl:         true,
-		ConfirmEcoFlowWrite: confirmEcoFlowWriteValue,
-		Previous:            &first,
+		Status:                 status,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
+		Previous:               &first,
 	}, DefaultSettings())
 	if third.WouldWrite || third.SuppressedReason != "duplicate command candidate" {
 		t.Fatalf("third = %+v, want duplicate suppression based on latest write candidate, not suppressed log", third)
@@ -285,17 +395,19 @@ func TestEvaluateSurplusCommandGuardFingerprintIncludesActionSet(t *testing.T) {
 		ActionSummary:             "AC",
 	}
 	previous := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
-		Status:              acOnly,
-		EnableRealControl:   true,
-		AutoControl:         true,
-		ConfirmEcoFlowWrite: confirmEcoFlowWriteValue,
+		Status:                 acOnly,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
 	}, DefaultSettings())
 
 	mixed := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
-		Status:              status,
-		EnableRealControl:   true,
-		AutoControl:         true,
-		ConfirmEcoFlowWrite: confirmEcoFlowWriteValue,
+		Status:                 status,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
 		Previous: &domain.SurplusControlCommandLog{
 			MeasuredAt:         now.Add(-2 * time.Minute),
 			CommandKind:        previous.CommandKind,
@@ -346,4 +458,46 @@ func surplusGuardStatus(now time.Time) domain.Status {
 
 func boolPtr(value bool) *bool {
 	return &value
+}
+
+type stubSurplusWriteClient struct {
+	commands   []string
+	acErr      error
+	reserveErr error
+	touErr     error
+}
+
+func (c *stubSurplusWriteClient) SetACChargePower(_ context.Context, watts int) error {
+	if c.acErr != nil {
+		return c.acErr
+	}
+	c.commands = append(c.commands, "ac:"+formatInt(watts))
+	return nil
+}
+
+func (c *stubSurplusWriteClient) SetBackupReserveSoc(_ context.Context, percent int) error {
+	if c.reserveErr != nil {
+		return c.reserveErr
+	}
+	c.commands = append(c.commands, "reserve:"+formatInt(percent))
+	return nil
+}
+
+func (c *stubSurplusWriteClient) SetTOUMode(_ context.Context, enabled bool) error {
+	if c.touErr != nil {
+		return c.touErr
+	}
+	c.commands = append(c.commands, "tou:"+formatBool(enabled))
+	return nil
+}
+
+func formatInt(value int) string {
+	return fmt.Sprintf("%d", value)
+}
+
+func formatBool(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
 }

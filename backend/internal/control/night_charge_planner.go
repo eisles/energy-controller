@@ -56,6 +56,7 @@ func PlanNightCharging(input NightChargePlanInput, settings Settings) domain.Nig
 		plan.RequiredNightChargeKWh = requiredNightChargeKWh(plan.CurrentBatteryEnergyKWh, plan.RecommendedNightTargetKWh)
 		applyNightModeRecommendation(&plan, input, settings)
 		applyNightChargeCommandPlan(&plan, input, settings)
+		plan.CommandFingerprint = NightChargeCommandFingerprint(plan)
 		plan.ActionSummary = nightChargeActionSummary(plan)
 		plan.Reason = "weather forecast is not configured; keep a conservative night charge target"
 		applyNightChargeWriteGuard(&plan, input, settings)
@@ -74,6 +75,7 @@ func PlanNightCharging(input NightChargePlanInput, settings Settings) domain.Nig
 	plan.RequiredNightChargeKWh = requiredNightChargeKWh(plan.CurrentBatteryEnergyKWh, plan.RecommendedNightTargetKWh)
 	applyNightModeRecommendation(&plan, input, settings)
 	applyNightChargeCommandPlan(&plan, input, settings)
+	plan.CommandFingerprint = NightChargeCommandFingerprint(plan)
 	plan.ActionSummary = nightChargeActionSummary(plan)
 
 	switch {
@@ -365,11 +367,11 @@ func isNightChargeTime(now time.Time) bool {
 }
 
 func applyNightChargeWriteGuard(plan *domain.NightChargePlan, input NightChargePlanInput, settings Settings) {
-	if !plan.ShouldChargeTonight {
+	if !plan.ShouldChargeTonight && !nightChargeHasCandidateChange(*plan) {
 		plan.CommandBlockReason = "current SOC is already above the recommended night target"
 		return
 	}
-	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" {
+	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" && !(plan.StrategyState == "NIGHT_RECOVER" && isNightChargeTime(input.Now)) {
 		plan.CommandBlockReason = "outside night charge window"
 		return
 	}
@@ -416,6 +418,29 @@ func nightChargeHasCandidateChange(plan domain.NightChargePlan) bool {
 		plan.ShouldDisableEnergyModes ||
 		plan.ShouldEnableTOUMode ||
 		plan.ShouldEnableSelfPoweredMode
+}
+
+func NightChargeCommandFingerprint(plan domain.NightChargePlan) string {
+	parts := make([]string, 0, 5)
+	if plan.ShouldDisableEnergyModes {
+		parts = append(parts, "energy-modes=off")
+	}
+	if plan.ShouldEnableTOUMode {
+		parts = append(parts, "tou=on")
+	}
+	if plan.ShouldEnableSelfPoweredMode {
+		parts = append(parts, "self-powered=on")
+	}
+	if plan.ShouldSetACChargeLimit {
+		parts = append(parts, fmt.Sprintf("ac=%d", plan.RecommendedACChargeLimitW))
+	}
+	if plan.ShouldSetBackupReserve && plan.RecommendedBackupReserveSoc != nil {
+		parts = append(parts, fmt.Sprintf("reserve=%d", *plan.RecommendedBackupReserveSoc))
+	}
+	if len(parts) == 0 {
+		return "none"
+	}
+	return strings.Join(parts, "|")
 }
 
 func SolarForecastScore(forecast domain.WeatherForecast) int {

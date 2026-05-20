@@ -224,7 +224,10 @@ type NightChargePlan struct {
 	ShouldEnableTOUMode         bool             `json:"shouldEnableTouMode"`
 	ShouldEnableSelfPoweredMode bool             `json:"shouldEnableSelfPoweredMode"`
 	CommandSuppressed           bool             `json:"commandSuppressed"`
+	CommandFingerprint          string           `json:"commandFingerprint"`
 	CommandBlockReason          string           `json:"commandBlockReason"`
+	CommandSent                 bool             `json:"commandSent"`
+	CommandError                *string          `json:"commandError,omitempty"`
 	WouldWrite                  bool             `json:"wouldWrite"`
 	ActionSummary               string           `json:"actionSummary"`
 	Reason                      string           `json:"reason"`
@@ -254,6 +257,9 @@ type NightChargePlanLog struct {
 	ExportW                   int       `json:"exportW"`
 	ShouldChargeTonight       bool      `json:"shouldChargeTonight"`
 	WouldWrite                bool      `json:"wouldWrite"`
+	CommandFingerprint        string    `json:"commandFingerprint"`
+	CommandSent               bool      `json:"commandSent"`
+	CommandError              *string   `json:"commandError,omitempty"`
 	CommandBlockReason        string    `json:"commandBlockReason"`
 	ActionSummary             string    `json:"actionSummary"`
 	Reason                    string    `json:"reason"`

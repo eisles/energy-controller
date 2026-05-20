@@ -19,6 +19,14 @@ type stubStatusProvider struct {
 	commandSent    bool
 }
 
+type fixedMainClock struct {
+	now time.Time
+}
+
+func (c fixedMainClock) Now() time.Time {
+	return c.now
+}
+
 func (p stubStatusProvider) CurrentStatus(context.Context) (domain.Status, error) {
 	return p.status, nil
 }
@@ -64,6 +72,7 @@ func TestRecordStatusPersistsWouldSendLogWithoutCommandSent(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 		slog.Default(),
 	)
 
@@ -82,5 +91,29 @@ func TestRecordStatusPersistsWouldSendLogWithoutCommandSent(t *testing.T) {
 	}
 	if !strings.Contains(logs[0].DecisionReason, "would-send") {
 		t.Fatalf("DecisionReason = %q, want would-send marker", logs[0].DecisionReason)
+	}
+}
+
+func TestRealControlTrialActiveRequiresFutureDeadline(t *testing.T) {
+	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
+	if realControlTrialActive(config.Config{Clock: fixedMainClock{now: now}}) {
+		t.Fatal("trial active without deadline")
+	}
+	if realControlTrialActive(config.Config{RealControlTrialUntil: now, Clock: fixedMainClock{now: now}}) {
+		t.Fatal("trial active at exact deadline")
+	}
+	if !realControlTrialActive(config.Config{RealControlTrialUntil: now.Add(time.Minute), Clock: fixedMainClock{now: now}}) {
+		t.Fatal("trial inactive before deadline")
+	}
+}
+
+func TestRealControlTrialActiveUsesCurrentClockNotMeasuredAt(t *testing.T) {
+	deadline := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
+	cfg := config.Config{
+		RealControlTrialUntil: deadline,
+		Clock:                 fixedMainClock{now: deadline.Add(time.Second)},
+	}
+	if realControlTrialActive(cfg) {
+		t.Fatal("trial active after current clock passed deadline")
 	}
 }

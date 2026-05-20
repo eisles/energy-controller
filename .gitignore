@@ -1,6 +1,8 @@
 .env
+.serena/
 backend/data/*.db
 backend/data/*.db-*
+backend/data/*.log
 backend/.gocache/
 backend/.gomodcache/
 backend/bin/

@@ -32,9 +32,9 @@ func (r *NightChargePlanRepository) InsertNightChargePlanLog(ctx context.Context
 		daily_estimated_pv_kwh, pv_effective_start_at, pv_effective_end_at, pv_effective_window_source,
 		morning_to_pv_start_load_kwh, forecast_daytime_deficit_kwh,
 		battery_soc, battery_input_w, battery_output_w, grid_w, import_w, export_w,
-		should_charge_tonight, would_write, command_block_reason, action_summary, reason,
+		should_charge_tonight, would_write, command_fingerprint, command_sent, command_error, command_block_reason, action_summary, reason,
 		target_forecast_date, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		log.MeasuredAt.Format(time.RFC3339Nano),
 		log.StrategyState,
 		log.RecommendedMode,
@@ -56,6 +56,9 @@ func (r *NightChargePlanRepository) InsertNightChargePlanLog(ctx context.Context
 		log.ExportW,
 		boolToInt(log.ShouldChargeTonight),
 		boolToInt(log.WouldWrite),
+		log.CommandFingerprint,
+		boolToInt(log.CommandSent),
+		nullableString(log.CommandError),
 		log.CommandBlockReason,
 		log.ActionSummary,
 		log.Reason,
@@ -76,7 +79,7 @@ func (r *NightChargePlanRepository) ListNightChargePlanLogsPage(ctx context.Cont
 		daily_estimated_pv_kwh, pv_effective_start_at, pv_effective_end_at, pv_effective_window_source,
 		morning_to_pv_start_load_kwh, forecast_daytime_deficit_kwh,
 		battery_soc, battery_input_w, battery_output_w, grid_w, import_w, export_w,
-		should_charge_tonight, would_write, command_block_reason, action_summary, reason,
+		should_charge_tonight, would_write, command_fingerprint, command_sent, command_error, command_block_reason, action_summary, reason,
 		target_forecast_date, created_at
 		FROM night_charge_plan_logs
 		`+whereClause+`
@@ -96,6 +99,33 @@ func (r *NightChargePlanRepository) ListNightChargePlanLogsPage(ctx context.Cont
 		return nil, 0, err
 	}
 	return logs, total, nil
+}
+
+func (r *NightChargePlanRepository) LatestNightChargePlanWriteCandidateLog(ctx context.Context) (*domain.NightChargePlanLog, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT
+		id, measured_at, strategy_state, recommended_mode, recommended_night_target_soc,
+		recommended_night_target_kwh, current_battery_energy_kwh, required_night_charge_kwh,
+		daily_estimated_pv_kwh, pv_effective_start_at, pv_effective_end_at, pv_effective_window_source,
+		morning_to_pv_start_load_kwh, forecast_daytime_deficit_kwh,
+		battery_soc, battery_input_w, battery_output_w, grid_w, import_w, export_w,
+		should_charge_tonight, would_write, command_fingerprint, command_sent, command_error, command_block_reason, action_summary, reason,
+		target_forecast_date, created_at
+		FROM night_charge_plan_logs
+		WHERE would_write = 1 OR command_sent = 1 OR command_error IS NOT NULL
+		ORDER BY measured_at DESC, id DESC
+		LIMIT 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	logs, err := scanNightChargePlanLogs(rows, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(logs) == 0 {
+		return nil, nil
+	}
+	return &logs[0], nil
 }
 
 func nightChargePlanLogFromStatus(status domain.Status) domain.NightChargePlanLog {
@@ -122,10 +152,16 @@ func nightChargePlanLogFromStatus(status domain.Status) domain.NightChargePlanLo
 		ExportW:                   status.ExportW,
 		ShouldChargeTonight:       plan.ShouldChargeTonight,
 		WouldWrite:                plan.WouldWrite,
+		CommandFingerprint:        plan.CommandFingerprint,
+		CommandSent:               plan.CommandSent,
+		CommandError:              plan.CommandError,
 		CommandBlockReason:        plan.CommandBlockReason,
 		ActionSummary:             plan.ActionSummary,
 		Reason:                    plan.Reason,
 		CreatedAt:                 status.UpdatedAt,
+	}
+	if log.CommandFingerprint == "" {
+		log.CommandFingerprint = "none"
 	}
 	if plan.TargetForecast != nil {
 		targetDate := plan.TargetForecast.Date
@@ -139,8 +175,8 @@ func scanNightChargePlanLogs(rows *sql.Rows, capacity int) ([]domain.NightCharge
 	for rows.Next() {
 		var log domain.NightChargePlanLog
 		var measuredAt, createdAt string
-		var shouldChargeTonight, wouldWrite int
-		var targetForecastDate sql.NullString
+		var shouldChargeTonight, wouldWrite, commandSent int
+		var commandError, targetForecastDate sql.NullString
 		if err := rows.Scan(
 			&log.ID,
 			&measuredAt,
@@ -164,6 +200,9 @@ func scanNightChargePlanLogs(rows *sql.Rows, capacity int) ([]domain.NightCharge
 			&log.ExportW,
 			&shouldChargeTonight,
 			&wouldWrite,
+			&log.CommandFingerprint,
+			&commandSent,
+			&commandError,
 			&log.CommandBlockReason,
 			&log.ActionSummary,
 			&log.Reason,
@@ -184,6 +223,10 @@ func scanNightChargePlanLogs(rows *sql.Rows, capacity int) ([]domain.NightCharge
 		log.CreatedAt = parsedCreatedAt
 		log.ShouldChargeTonight = shouldChargeTonight != 0
 		log.WouldWrite = wouldWrite != 0
+		log.CommandSent = commandSent != 0
+		if commandError.Valid {
+			log.CommandError = &commandError.String
+		}
 		if targetForecastDate.Valid {
 			log.TargetForecastDate = &targetForecastDate.String
 		}

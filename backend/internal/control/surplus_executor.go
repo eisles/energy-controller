@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -10,13 +11,20 @@ import (
 const confirmEcoFlowWriteValue = "I_UNDERSTAND"
 
 type SurplusCommandGuardInput struct {
-	Status              domain.Status
-	MockMode            bool
-	SimulationMode      bool
-	EnableRealControl   bool
-	AutoControl         bool
-	ConfirmEcoFlowWrite string
-	Previous            *domain.SurplusControlCommandLog
+	Status                 domain.Status
+	MockMode               bool
+	SimulationMode         bool
+	EnableRealControl      bool
+	AutoControl            bool
+	ConfirmEcoFlowWrite    string
+	RealControlTrialActive bool
+	Previous               *domain.SurplusControlCommandLog
+}
+
+type SurplusWriteClient interface {
+	SetACChargePower(ctx context.Context, watts int) error
+	SetBackupReserveSoc(ctx context.Context, percent int) error
+	SetTOUMode(ctx context.Context, enabled bool) error
 }
 
 func EvaluateSurplusCommandGuard(input SurplusCommandGuardInput, settings Settings) domain.SurplusControlCommandLog {
@@ -91,6 +99,9 @@ func surplusCommandSuppressedReason(input SurplusCommandGuardInput, settings Set
 	if input.ConfirmEcoFlowWrite != confirmEcoFlowWriteValue {
 		return "CONFIRM_ECOFLOW_WRITE is not I_UNDERSTAND"
 	}
+	if !input.RealControlTrialActive {
+		return "real control trial window inactive"
+	}
 	if log.ShouldSetBackupReserve && input.Status.BackupReserveSoc == nil {
 		return "backup reserve status unavailable"
 	}
@@ -107,7 +118,60 @@ func surplusCommandSuppressedReason(input SurplusCommandGuardInput, settings Set
 			return "command suppressed by minimum interval"
 		}
 	}
+	if previousErroredCandidate(input.Previous) &&
+		!input.Previous.MeasuredAt.IsZero() &&
+		!input.Status.UpdatedAt.IsZero() &&
+		input.Status.UpdatedAt.Sub(input.Previous.MeasuredAt) < settings.MinCommandInterval {
+		return "command retry suppressed after previous error"
+	}
 	return ""
+}
+
+func ExecuteSurplusCommand(ctx context.Context, log domain.SurplusControlCommandLog, writer SurplusWriteClient) domain.SurplusControlCommandLog {
+	if !log.WouldWrite {
+		return log
+	}
+	log.DryRun = false
+	if writer == nil {
+		return surplusCommandError(log, "EcoFlow write client is unavailable")
+	}
+	if log.ShouldDisableEnergyModes {
+		if err := writer.SetTOUMode(ctx, false); err != nil {
+			return surplusCommandError(log, fmt.Sprintf("disable energy strategy modes: %v", err))
+		}
+		log.CommandSent = true
+	}
+	if log.ShouldEnableTOUMode {
+		if err := writer.SetTOUMode(ctx, true); err != nil {
+			return surplusCommandError(log, fmt.Sprintf("enable TOU mode: %v", err))
+		}
+		log.CommandSent = true
+	}
+	if log.ShouldAdjustACChargeLimit {
+		if log.TargetACChargeLimitW == nil {
+			return surplusCommandError(log, "target AC charge limit is missing")
+		}
+		if err := writer.SetACChargePower(ctx, *log.TargetACChargeLimitW); err != nil {
+			return surplusCommandError(log, fmt.Sprintf("set AC charge power: %v", err))
+		}
+		log.CommandSent = true
+	}
+	if log.ShouldSetBackupReserve {
+		if log.TargetBackupReserveSoc == nil {
+			return surplusCommandError(log, "target backup reserve SOC is missing")
+		}
+		if err := writer.SetBackupReserveSoc(ctx, *log.TargetBackupReserveSoc); err != nil {
+			return surplusCommandError(log, fmt.Sprintf("set backup reserve SOC: %v", err))
+		}
+		log.CommandSent = true
+	}
+	return log
+}
+
+func surplusCommandError(log domain.SurplusControlCommandLog, message string) domain.SurplusControlCommandLog {
+	log.ErrorMessage = &message
+	log.WouldWrite = false
+	return log
 }
 
 func modeGuardReason(status domain.Status, log domain.SurplusControlCommandLog) string {
@@ -153,6 +217,14 @@ func modeGuardReason(status domain.Status, log domain.SurplusControlCommandLog) 
 func previousWriteCandidate(previous *domain.SurplusControlCommandLog) bool {
 	return previous != nil &&
 		previous.WouldWrite &&
+		previous.ErrorMessage == nil &&
+		previous.CommandKind != "none" &&
+		previous.CommandFingerprint != ""
+}
+
+func previousErroredCandidate(previous *domain.SurplusControlCommandLog) bool {
+	return previous != nil &&
+		previous.ErrorMessage != nil &&
 		previous.CommandKind != "none" &&
 		previous.CommandFingerprint != ""
 }

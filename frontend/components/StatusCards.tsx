@@ -9,6 +9,7 @@ type Metric = {
   value: number | string;
   unit?: string;
   sideValue?: string;
+  valueClassName?: string;
   description?: string;
 };
 
@@ -20,7 +21,7 @@ export function StatusCards({ status, fetchError }: { status: EnergyStatus; fetc
   const netBatteryW = status.batteryInputW - status.batteryOutputW;
   const batteryEnergy = batteryEnergySummary(status.batteryFullEnergyWh, status.batterySoc);
   const metrics: Record<MetricKey, Metric> = {
-    gridW: { label: "Grid", value: formatGridFlow(status.gridW) },
+    gridW: { label: "Grid", value: formatGridFlow(status.gridW), valueClassName: gridFlowClassName(status.gridW) },
     importW: { label: "Import", value: status.importW, unit: "W", description: "現在の買電" },
     exportW: { label: "Export", value: status.exportW, unit: "W", description: "現在の売電" },
     batterySoc: {
@@ -211,7 +212,7 @@ function MetricCard({ metric }: { metric: Metric }) {
       <CardHeader>
         <CardDescription>{metric.label}</CardDescription>
         <CardTitle className="metric-value">
-          <span>
+          <span className={metric.valueClassName}>
             {metric.value}
             {metric.unit ? <span className="metric-unit">{metric.unit}</span> : null}
           </span>
@@ -231,6 +232,16 @@ function formatGridFlow(value: number) {
     return `売電 ${Math.abs(value)} W`;
   }
   return "買電/売電 0 W";
+}
+
+function gridFlowClassName(value: number) {
+  if (value > 0) {
+    return "metric-grid-import";
+  }
+  if (value < 0) {
+    return "metric-grid-export";
+  }
+  return undefined;
 }
 
 function formatTimeWindow(start?: string, end?: string) {

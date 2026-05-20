@@ -371,6 +371,70 @@ func TestPlanSurplusChargingStopsWhenTargetSocReached(t *testing.T) {
 	}
 }
 
+func TestPlanSurplusChargingDisablesNonTOUModeBeforeRecoveryTOU(t *testing.T) {
+	reserve := 100
+	tou := false
+	selfPowered := true
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:              -1200,
+		BatterySoc:         98,
+		BatteryInputW:      600,
+		BatteryOutputW:     200,
+		ACChargeLimitW:     400,
+		BackupReserveSoc:   &reserve,
+		DefaultReserveSoc:  85,
+		TOUModeEnabled:     &tou,
+		SelfPoweredEnabled: &selfPowered,
+		SimulationMode:     false,
+		EnableRealControl:  true,
+		AutoControl:        true,
+	}, DefaultSettings())
+
+	if plan.StrategyState != "RECOVERING" {
+		t.Fatalf("StrategyState = %q, want RECOVERING", plan.StrategyState)
+	}
+	if !plan.ShouldDisableEnergyModes {
+		t.Fatal("ShouldDisableEnergyModes = false, want true")
+	}
+	if plan.ShouldEnableTOUMode {
+		t.Fatal("ShouldEnableTOUMode = true, want false until non-TOU modes are disabled")
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true")
+	}
+	if !strings.Contains(plan.ActionSummary, "energy strategy modesを全OFF") {
+		t.Fatalf("ActionSummary = %q, want energy strategy modes action", plan.ActionSummary)
+	}
+}
+
+func TestPlanSurplusChargingWouldWriteRecoveryModeDisableOnly(t *testing.T) {
+	reserve := 30
+	tou := false
+	selfPowered := true
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:              200,
+		BatterySoc:         78,
+		ACChargeLimitW:     minImportRecoveryChargeW,
+		BackupReserveSoc:   &reserve,
+		DefaultReserveSoc:  30,
+		TOUModeEnabled:     &tou,
+		SelfPoweredEnabled: &selfPowered,
+		SimulationMode:     false,
+		EnableRealControl:  true,
+		AutoControl:        true,
+	}, DefaultSettings())
+
+	if !plan.ShouldDisableEnergyModes {
+		t.Fatal("ShouldDisableEnergyModes = false, want true")
+	}
+	if plan.ShouldAdjustACChargeLimit || plan.ShouldLowerBackupReserve || plan.ShouldEnableTOUMode {
+		t.Fatalf("unexpected extra actions: %+v", plan)
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true for mode-disable-only recovery")
+	}
+}
+
 func TestPlanSurplusChargingDoesNotGoBelowAppMinimumWhenImporting(t *testing.T) {
 	reserve := 90
 	plan := PlanSurplusCharging(SurplusPlanInput{

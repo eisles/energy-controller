@@ -113,6 +113,42 @@ func TestBuildSetTOUModePayloadRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestBuildSetSelfPoweredModePayload(t *testing.T) {
+	payload, err := buildSetSelfPoweredModePayload("DP3-SN", true)
+	if err != nil {
+		t.Fatalf("buildSetSelfPoweredModePayload failed: %v", err)
+	}
+
+	if payload.SN != "DP3-SN" {
+		t.Fatalf("SN = %q, want DP3-SN", payload.SN)
+	}
+	if payload.CmdID != 17 || payload.CmdFunc != 254 || payload.DirDest != 1 || payload.DirSrc != 1 || payload.Dest != 2 || !payload.NeedAck {
+		t.Fatalf("unexpected command envelope: %+v", payload)
+	}
+	mode, ok := payload.Params[candidateEnergyModeParam].(map[string]any)
+	if !ok {
+		t.Fatalf("params[%q] = %T, want map", candidateEnergyModeParam, payload.Params[candidateEnergyModeParam])
+	}
+	if mode["operateTouModeOpen"] != false || mode["operateSelfPoweredOpen"] != true || mode["operateScheduledOpen"] != false || mode["operateIntelligentScheduleModeOpen"] != false {
+		t.Fatalf("params[%q] = %+v, want self-powered true and other modes false", candidateEnergyModeParam, mode)
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	want := `{"sn":"DP3-SN","cmdId":17,"cmdFunc":254,"dirDest":1,"dirSrc":1,"dest":2,"needAck":true,"params":{"cfgEnergyStrategyOperateMode":{"operateIntelligentScheduleModeOpen":false,"operateScheduledOpen":false,"operateSelfPoweredOpen":true,"operateTouModeOpen":false}}}`
+	if string(body) != want {
+		t.Fatalf("json = %s, want %s", body, want)
+	}
+}
+
+func TestBuildSetSelfPoweredModePayloadRejectsInvalidInput(t *testing.T) {
+	if _, err := buildSetSelfPoweredModePayload("", true); err == nil {
+		t.Fatal("buildSetSelfPoweredModePayload returned nil error, want error")
+	}
+}
+
 func TestBuildSetBackupReservePayloadRejectsInvalidInput(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -349,6 +349,7 @@ func TestNightChargePlanRepositoryInsertsAndListsNewestFirst(t *testing.T) {
 				RequiredNightChargeKWh:    0,
 				ShouldChargeTonight:       false,
 				WouldWrite:                false,
+				CommandFingerprint:        "none",
 				CommandBlockReason:        "outside night charge window",
 				ActionSummary:             "深夜充電は抑制",
 				Reason:                    "sunny forecast",
@@ -371,6 +372,61 @@ func TestNightChargePlanRepositoryInsertsAndListsNewestFirst(t *testing.T) {
 	}
 	if logs[0].TargetForecastDate == nil || *logs[0].TargetForecastDate != "2026-05-20" {
 		t.Fatalf("TargetForecastDate = %v, want 2026-05-20", logs[0].TargetForecastDate)
+	}
+	if logs[0].CommandFingerprint != "none" {
+		t.Fatalf("CommandFingerprint = %q, want none", logs[0].CommandFingerprint)
+	}
+}
+
+func TestNightChargePlanRepositoryReturnsLatestWriteCandidate(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewNightChargePlanRepository(db)
+	base := time.Date(2026, 5, 20, 3, 0, 0, 0, time.UTC)
+	message := "api down"
+
+	logs := []domain.NightChargePlan{
+		{
+			StrategyState:             "NIGHT_RECOVER",
+			RecommendedMode:           "self-powered",
+			RecommendedNightTargetSoc: 42,
+			CommandFingerprint:        "reserve=42|self-powered=on",
+			WouldWrite:                true,
+			CommandSent:               true,
+			ActionSummary:             "sent",
+			Reason:                    "sent",
+		},
+		{
+			StrategyState:             "NIGHT_CHARGE_WINDOW",
+			RecommendedMode:           "tou",
+			RecommendedNightTargetSoc: 90,
+			CommandFingerprint:        "ac=1500|reserve=90",
+			CommandError:              &message,
+			ActionSummary:             "error",
+			Reason:                    "error",
+		},
+	}
+	for i, plan := range logs {
+		if err := repo.InsertNightChargePlanLog(context.Background(), domain.Status{
+			BatterySoc:      80 + i,
+			UpdatedAt:       base.Add(time.Duration(i) * time.Minute),
+			NightChargePlan: &plan,
+		}); err != nil {
+			t.Fatalf("InsertNightChargePlanLog failed: %v", err)
+		}
+	}
+
+	latest, err := repo.LatestNightChargePlanWriteCandidateLog(context.Background())
+	if err != nil {
+		t.Fatalf("LatestNightChargePlanWriteCandidateLog failed: %v", err)
+	}
+	if latest == nil {
+		t.Fatal("latest = nil, want write candidate")
+	}
+	if latest.CommandFingerprint != "ac=1500|reserve=90" {
+		t.Fatalf("CommandFingerprint = %q, want latest errored candidate", latest.CommandFingerprint)
+	}
+	if latest.CommandError == nil || *latest.CommandError != message {
+		t.Fatalf("CommandError = %v, want %q", latest.CommandError, message)
 	}
 }
 
@@ -467,6 +523,39 @@ func TestSurplusControlCommandRepositoryInsertsAndListsNewestFirst(t *testing.T)
 	}
 	if latestCandidate == nil || latestCandidate.TargetACChargeLimitW == nil || *latestCandidate.TargetACChargeLimitW != 800 {
 		t.Fatalf("latestCandidate = %+v, want target AC 800", latestCandidate)
+	}
+}
+
+func TestSurplusControlCommandRepositoryTreatsErroredAttemptsAsWriteCandidates(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewSurplusControlCommandRepository(db)
+	base := time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC)
+	targetAC := 800
+	errorMessage := "set AC charge power: rejected"
+	if err := repo.InsertSurplusControlCommandLog(context.Background(), domain.SurplusControlCommandLog{
+		MeasuredAt:                base,
+		StrategyState:             "CHARGING",
+		CommandKind:               "ac_charge_limit",
+		CommandFingerprint:        "kind=ac_charge_limit;ac=800;reserve=-;adjust_ac=true;set_reserve=false;disable_modes=false;enable_tou=false",
+		GridW:                     -900,
+		ExportW:                   900,
+		BatterySoc:                77,
+		TargetACChargeLimitW:      &targetAC,
+		DryRun:                    false,
+		WouldWrite:                false,
+		ShouldAdjustACChargeLimit: true,
+		ErrorMessage:              &errorMessage,
+		CreatedAt:                 base,
+	}); err != nil {
+		t.Fatalf("InsertSurplusControlCommandLog failed: %v", err)
+	}
+
+	latestCandidate, err := repo.LatestSurplusControlWriteCandidateLog(context.Background())
+	if err != nil {
+		t.Fatalf("LatestSurplusControlWriteCandidateLog failed: %v", err)
+	}
+	if latestCandidate == nil || latestCandidate.ErrorMessage == nil || *latestCandidate.ErrorMessage != errorMessage {
+		t.Fatalf("latestCandidate = %+v, want errored write attempt", latestCandidate)
 	}
 }
 

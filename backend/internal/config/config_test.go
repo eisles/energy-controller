@@ -20,6 +20,7 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	t.Setenv("WEATHER_BASE_URL", "https://api.open-meteo.test")
 	t.Setenv("AUTO_CONTROL_ENABLED", "true")
 	t.Setenv("CONFIRM_ECOFLOW_WRITE", "I_UNDERSTAND")
+	t.Setenv("REAL_CONTROL_TRIAL_UNTIL", "2026-05-20T13:30:00+09:00")
 	t.Setenv("POLL_INTERVAL_SEC", "45")
 	t.Setenv("START_EXPORT_THRESHOLD_W", "900")
 	t.Setenv("STOP_EXPORT_THRESHOLD_W", "450")
@@ -79,6 +80,9 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	}
 	if cfg.ConfirmEcoFlowWrite != "I_UNDERSTAND" {
 		t.Fatalf("ConfirmEcoFlowWrite = %q, want I_UNDERSTAND", cfg.ConfirmEcoFlowWrite)
+	}
+	if cfg.RealControlTrialUntil.IsZero() || cfg.RealControlTrialUntil.Format(time.RFC3339) != "2026-05-20T13:30:00+09:00" {
+		t.Fatalf("RealControlTrialUntil = %s, want 2026-05-20T13:30:00+09:00", cfg.RealControlTrialUntil.Format(time.RFC3339))
 	}
 	if cfg.PollInterval != 45*time.Second {
 		t.Fatalf("PollInterval = %s, want 45s", cfg.PollInterval)

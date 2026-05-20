@@ -242,7 +242,7 @@ func (r *NightChargeSummaryRepository) latestPlanInWindow(ctx context.Context, s
 		daily_estimated_pv_kwh, pv_effective_start_at, pv_effective_end_at, pv_effective_window_source,
 		morning_to_pv_start_load_kwh, forecast_daytime_deficit_kwh,
 		battery_soc, battery_input_w, battery_output_w, grid_w, import_w, export_w,
-		should_charge_tonight, would_write, command_block_reason, action_summary, reason,
+		should_charge_tonight, would_write, command_fingerprint, command_sent, command_error, command_block_reason, action_summary, reason,
 		target_forecast_date, created_at
 		FROM night_charge_plan_logs
 		WHERE julianday(measured_at) >= julianday(?)

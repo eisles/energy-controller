@@ -72,6 +72,10 @@ func (failingWriteClient) SetTOUMode(context.Context, bool) error {
 	return errors.New("write failed")
 }
 
+func (failingWriteClient) SetSelfPoweredMode(context.Context, bool) error {
+	return errors.New("write failed")
+}
+
 func (failingWriteClient) StopOrMinimizeCharging(context.Context) error {
 	return errors.New("write failed")
 }
