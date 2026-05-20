@@ -96,6 +96,28 @@ func migrate(db *sql.DB) error {
 			target_forecast_date TEXT,
 			created_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS surplus_control_command_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			measured_at TEXT NOT NULL,
+			strategy_state TEXT NOT NULL,
+			grid_w INTEGER NOT NULL,
+			import_w INTEGER NOT NULL,
+			export_w INTEGER NOT NULL,
+			battery_soc INTEGER NOT NULL,
+			battery_input_w INTEGER NOT NULL,
+			battery_output_w INTEGER NOT NULL,
+			previous_ac_charge_limit_w INTEGER,
+			target_ac_charge_limit_w INTEGER,
+			previous_backup_reserve_soc INTEGER,
+			target_backup_reserve_soc INTEGER,
+			command_sent INTEGER NOT NULL DEFAULT 0,
+			dry_run INTEGER NOT NULL DEFAULT 1,
+			would_write INTEGER NOT NULL DEFAULT 0,
+			suppressed_reason TEXT NOT NULL DEFAULT '',
+			decision_reason TEXT NOT NULL,
+			error_message TEXT,
+			created_at TEXT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS tariff_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			plan_name TEXT NOT NULL,

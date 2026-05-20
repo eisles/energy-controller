@@ -61,6 +61,7 @@ func TestRecordStatusPersistsWouldSendLogWithoutCommandSent(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 		slog.Default(),
 	)
 

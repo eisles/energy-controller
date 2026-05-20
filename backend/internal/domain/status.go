@@ -303,6 +303,29 @@ type PowerLog struct {
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
+type SurplusControlCommandLog struct {
+	ID                       int64     `json:"id"`
+	MeasuredAt               time.Time `json:"measuredAt"`
+	StrategyState            string    `json:"strategyState"`
+	GridW                    int       `json:"gridW"`
+	ImportW                  int       `json:"importW"`
+	ExportW                  int       `json:"exportW"`
+	BatterySoc               int       `json:"batterySoc"`
+	BatteryInputW            int       `json:"batteryInputW"`
+	BatteryOutputW           int       `json:"batteryOutputW"`
+	PreviousACChargeLimitW   *int      `json:"previousAcChargeLimitW"`
+	TargetACChargeLimitW     *int      `json:"targetAcChargeLimitW"`
+	PreviousBackupReserveSoc *int      `json:"previousBackupReserveSoc"`
+	TargetBackupReserveSoc   *int      `json:"targetBackupReserveSoc"`
+	CommandSent              bool      `json:"commandSent"`
+	DryRun                   bool      `json:"dryRun"`
+	WouldWrite               bool      `json:"wouldWrite"`
+	SuppressedReason         string    `json:"suppressedReason"`
+	DecisionReason           string    `json:"decisionReason"`
+	ErrorMessage             *string   `json:"errorMessage"`
+	CreatedAt                time.Time `json:"createdAt"`
+}
+
 type EnergyMeterLog struct {
 	ID                   int64     `json:"id"`
 	MeasuredAt           time.Time `json:"measuredAt"`

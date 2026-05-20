@@ -45,10 +45,11 @@ func main() {
 	logRepository := store.NewLogRepository(db)
 	energyMeterRepository := store.NewEnergyMeterRepository(db)
 	nightChargePlanRepository := store.NewNightChargePlanRepository(db)
+	surplusControlCommandRepository := store.NewSurplusControlCommandRepository(db)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	recordStatus(ctx, statusProvider, statusRepository, logRepository, nightChargePlanRepository, energyMeterReader, energyMeterRepository, logger)
-	go runControlLoop(ctx, cfg.PollInterval, statusProvider, statusRepository, logRepository, nightChargePlanRepository, energyMeterReader, energyMeterRepository, logger)
+	recordStatus(ctx, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, energyMeterReader, energyMeterRepository, logger)
+	go runControlLoop(ctx, cfg.PollInterval, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, energyMeterReader, energyMeterRepository, logger)
 
 	router := api.NewRouter(api.Dependencies{
 		Config:         cfg,
@@ -91,6 +92,10 @@ type logWriter interface {
 
 type nightChargePlanLogWriter interface {
 	InsertNightChargePlanLog(ctx context.Context, status domain.Status) error
+}
+
+type surplusControlCommandLogWriter interface {
+	InsertSurplusControlCommandLog(ctx context.Context, status domain.Status) error
 }
 
 type energyMeterWriter interface {
@@ -154,7 +159,7 @@ func newWeatherReader(cfg config.Config, db *sql.DB) mock.WeatherReader {
 	return forecastClient
 }
 
-func runControlLoop(ctx context.Context, interval time.Duration, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
+func runControlLoop(ctx context.Context, interval time.Duration, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
 	if interval <= 0 {
 		interval = 30 * time.Second
 	}
@@ -165,12 +170,12 @@ func runControlLoop(ctx context.Context, interval time.Duration, provider api.St
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			recordStatus(ctx, provider, statusRepository, logRepository, nightChargePlanRepository, meterReader, meterRepository, logger)
+			recordStatus(ctx, provider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, meterReader, meterRepository, logger)
 		}
 	}
 }
 
-func recordStatus(ctx context.Context, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
+func recordStatus(ctx context.Context, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
 	status, err := provider.CurrentStatus(ctx)
 	if err != nil {
 		logger.Error("failed to evaluate current status", "error", err)
@@ -183,6 +188,11 @@ func recordStatus(ctx context.Context, provider api.StatusProvider, statusReposi
 	if nightChargePlanRepository != nil {
 		if err := nightChargePlanRepository.InsertNightChargePlanLog(ctx, status); err != nil {
 			logger.Warn("failed to save night charge plan log", "error", err)
+		}
+	}
+	if surplusControlCommandRepository != nil {
+		if err := surplusControlCommandRepository.InsertSurplusControlCommandLog(ctx, status); err != nil {
+			logger.Warn("failed to save surplus control command log", "error", err)
 		}
 	}
 	if err := statusRepository.UpdateCurrentStatus(ctx, status); err != nil {

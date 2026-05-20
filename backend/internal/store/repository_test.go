@@ -407,6 +407,51 @@ func TestNightChargePlanRepositoryFiltersByDateRange(t *testing.T) {
 	}
 }
 
+func TestSurplusControlCommandRepositoryInsertsAndListsNewestFirst(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewSurplusControlCommandRepository(db)
+	base := time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC)
+	reserve := 79
+
+	for i := 0; i < 2; i++ {
+		measuredAt := base.Add(time.Duration(i) * time.Minute)
+		if err := repo.InsertSurplusControlCommandLog(context.Background(), domain.Status{
+			GridW:            -500 - i,
+			ImportW:          0,
+			ExportW:          500 + i,
+			BatterySoc:       77,
+			BatteryInputW:    740,
+			BatteryOutputW:   250,
+			ACChargeLimitW:   500,
+			BackupReserveSoc: &reserve,
+			UpdatedAt:        measuredAt,
+			SurplusPlan: &domain.SurplusPlan{
+				StrategyState:             "CHARGING",
+				RecommendedACChargeLimitW: 800 + i*100,
+				ShouldAdjustACChargeLimit: true,
+				ActionSummary:             "AC充電上限を調整",
+				Reason:                    "surplus tracking condition met",
+			},
+		}); err != nil {
+			t.Fatalf("InsertSurplusControlCommandLog failed: %v", err)
+		}
+	}
+
+	logs, total, err := repo.ListSurplusControlCommandLogsPage(context.Background(), 1, 0, SurplusControlCommandLogPageFilter{})
+	if err != nil {
+		t.Fatalf("ListSurplusControlCommandLogsPage failed: %v", err)
+	}
+	if total != 2 || len(logs) != 1 {
+		t.Fatalf("total,len = %d,%d; want 2,1", total, len(logs))
+	}
+	if logs[0].TargetACChargeLimitW == nil || *logs[0].TargetACChargeLimitW != 900 {
+		t.Fatalf("TargetACChargeLimitW = %v, want 900", logs[0].TargetACChargeLimitW)
+	}
+	if !logs[0].DryRun || logs[0].CommandSent {
+		t.Fatalf("DryRun,CommandSent = %v,%v; want true,false", logs[0].DryRun, logs[0].CommandSent)
+	}
+}
+
 func TestNightChargeSummaryRepositoryBuildsDailySummary(t *testing.T) {
 	db := openTestDB(t)
 	repo := NewNightChargeSummaryRepositoryWithTimezone(db, "UTC")

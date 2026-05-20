@@ -11,6 +11,7 @@ import { NightChargePlanLogTable } from "@/components/NightChargePlanLogTable";
 import { NightChargeSummaryTable } from "@/components/NightChargeSummaryTable";
 import { SolarForecastPanel } from "@/components/SolarForecastPanel";
 import { StatusCards } from "@/components/StatusCards";
+import { SurplusControlCommandLogTable } from "@/components/SurplusControlCommandLogTable";
 import { TariffSummaryPanel } from "@/components/TariffSummaryPanel";
 import {
   fetchEnergyMeterLogsPage,
@@ -20,9 +21,19 @@ import {
   fetchNightChargeSummariesPage,
   fetchSolarForecast,
   fetchStatus,
+  fetchSurplusControlCommandLogsPage,
   fetchTariffSummary
 } from "@/lib/api";
-import type { EnergyMeterLog, EnergyStatus, NightChargeDailySummary, NightChargePlanLog, PowerLog, SolarForecastSummary, TariffSummary } from "@/lib/types";
+import type {
+  EnergyMeterLog,
+  EnergyStatus,
+  NightChargeDailySummary,
+  NightChargePlanLog,
+  PowerLog,
+  SolarForecastSummary,
+  SurplusControlCommandLog,
+  TariffSummary
+} from "@/lib/types";
 
 type LogRange = {
   label: string;
@@ -46,6 +57,7 @@ const logPageSize = 25;
 const energyMeterLogPageSize = 25;
 const nightChargePlanLogPageSize = 25;
 const nightChargeSummaryPageSize = 25;
+const surplusControlCommandLogPageSize = 25;
 const dryRunPlanLimit = 10;
 
 const initialStatus: EnergyStatus = {
@@ -73,6 +85,9 @@ export function Dashboard() {
   const [nightChargePlanLogs, setNightChargePlanLogs] = useState<NightChargePlanLog[]>([]);
   const [nightChargePlanPage, setNightChargePlanPage] = useState(1);
   const [nightChargePlanTotal, setNightChargePlanTotal] = useState(0);
+  const [surplusCommandLogs, setSurplusCommandLogs] = useState<SurplusControlCommandLog[]>([]);
+  const [surplusCommandPage, setSurplusCommandPage] = useState(1);
+  const [surplusCommandTotal, setSurplusCommandTotal] = useState(0);
   const [nightChargeSummaries, setNightChargeSummaries] = useState<NightChargeDailySummary[]>([]);
   const [nightChargeSummaryPage, setNightChargeSummaryPage] = useState(1);
   const [nightChargeSummaryFromInput, setNightChargeSummaryFromInput] = useState("");
@@ -109,6 +124,7 @@ export function Dashboard() {
   const [dryRunPlanError, setDryRunPlanError] = useState<string | null>(null);
   const [nightDryRunPlanError, setNightDryRunPlanError] = useState<string | null>(null);
   const [nightChargePlanError, setNightChargePlanError] = useState<string | null>(null);
+  const [surplusCommandError, setSurplusCommandError] = useState<string | null>(null);
   const [nightChargeSummaryError, setNightChargeSummaryError] = useState<string | null>(null);
   const [energyMeterError, setEnergyMeterError] = useState<string | null>(null);
   const [tariffError, setTariffError] = useState<string | null>(null);
@@ -265,6 +281,39 @@ export function Dashboard() {
       window.clearInterval(timer);
     };
   }, [nightChargePlanPage]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSurplusCommandLogPage() {
+      try {
+        const nextPage = await fetchSurplusControlCommandLogsPage({
+          limit: surplusControlCommandLogPageSize,
+          offset: (surplusCommandPage - 1) * surplusControlCommandLogPageSize
+        });
+        if (!cancelled) {
+          setSurplusCommandLogs(nextPage.items);
+          setSurplusCommandTotal(nextPage.total);
+          setSurplusCommandError(null);
+          const totalPages = Math.max(1, Math.ceil(nextPage.total / surplusControlCommandLogPageSize));
+          if (surplusCommandPage > totalPages) {
+            setSurplusCommandPage(totalPages);
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setSurplusCommandError(err instanceof Error ? err.message : "surplus control command logs request failed");
+        }
+      }
+    }
+
+    loadSurplusCommandLogPage();
+    const timer = window.setInterval(loadSurplusCommandLogPage, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [surplusCommandPage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -461,6 +510,14 @@ export function Dashboard() {
         title="夜間制御 dry-run 履歴"
         marker="night dry-run plan:"
         emptyMessage="夜間制御 dry-run 計画はまだ記録されていません。"
+      />
+      <SurplusControlCommandLogTable
+        logs={surplusCommandLogs}
+        error={surplusCommandError}
+        page={surplusCommandPage}
+        pageSize={surplusControlCommandLogPageSize}
+        total={surplusCommandTotal}
+        onPageChange={setSurplusCommandPage}
       />
       <NightChargePlanLogTable
         logs={nightChargePlanLogs}

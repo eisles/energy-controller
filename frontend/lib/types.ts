@@ -254,6 +254,36 @@ export type NightChargePlanLogsPage = {
   offset: number;
 };
 
+export type SurplusControlCommandLog = {
+  id: number;
+  measuredAt: string;
+  strategyState: string;
+  gridW: number;
+  importW: number;
+  exportW: number;
+  batterySoc: number;
+  batteryInputW: number;
+  batteryOutputW: number;
+  previousAcChargeLimitW: number | null;
+  targetAcChargeLimitW: number | null;
+  previousBackupReserveSoc: number | null;
+  targetBackupReserveSoc: number | null;
+  commandSent: boolean;
+  dryRun: boolean;
+  wouldWrite: boolean;
+  suppressedReason: string;
+  decisionReason: string;
+  errorMessage: string | null;
+  createdAt: string;
+};
+
+export type SurplusControlCommandLogsPage = {
+  items: SurplusControlCommandLog[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
 export type NightChargeDailySummary = {
   summaryDate: string;
   planCreatedAt?: string | null;

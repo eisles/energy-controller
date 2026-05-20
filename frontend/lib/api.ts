@@ -8,6 +8,7 @@ import type {
   PowerLog,
   PowerLogsPage,
   SolarForecastSummary,
+  SurplusControlCommandLogsPage,
   TariffPlan,
   TariffSummary,
   WeatherLocation
@@ -123,6 +124,34 @@ export async function fetchNightChargePlanLogsPage({
   const response = await fetch(`/api/night-charge/plans?${params.toString()}`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`night charge plan logs request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function fetchSurplusControlCommandLogsPage({
+  limit,
+  offset,
+  from,
+  to
+}: {
+  limit: number;
+  offset: number;
+  from?: string;
+  to?: string;
+}): Promise<SurplusControlCommandLogsPage> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset)
+  });
+  if (from) {
+    params.set("from", from);
+  }
+  if (to) {
+    params.set("to", to);
+  }
+  const response = await fetch(`/api/surplus-control/commands?${params.toString()}`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`surplus control command logs request failed: ${response.status}`);
   }
   return response.json();
 }
