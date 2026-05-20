@@ -33,9 +33,6 @@ type NightChargePlanInput struct {
 func PlanNightCharging(input NightChargePlanInput, settings Settings) domain.NightChargePlan {
 	settings = normalizeSettings(settings)
 	minReserveSoc := 30
-	if input.BackupReserveSoc != nil && *input.BackupReserveSoc > minReserveSoc {
-		minReserveSoc = *input.BackupReserveSoc
-	}
 	if input.SolarSettings != nil && input.SolarSettings.MinimumReserveSoc > minReserveSoc {
 		minReserveSoc = input.SolarSettings.MinimumReserveSoc
 	}

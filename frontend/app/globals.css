@@ -52,6 +52,50 @@ input {
   margin-top: 16px;
 }
 
+.collapsible-log-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.62);
+  padding: 10px 12px;
+}
+
+.collapsible-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.collapsible-log-header h2 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.collapsible-log-header p {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.collapsible-log-toggle {
+  min-width: 92px;
+  flex: 0 0 auto;
+}
+
+.collapsible-log-toggle-icon {
+  display: inline-flex;
+  width: 14px;
+  justify-content: center;
+  margin-right: 6px;
+  font-weight: 900;
+}
+
+.collapsible-log-body {
+  margin-top: 10px;
+}
+
 .app-header {
   display: flex;
   justify-content: space-between;
@@ -815,6 +859,15 @@ input {
   .page-shell {
     width: min(100% - 24px, 1280px);
     padding: 24px 0;
+  }
+
+  .collapsible-log-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .collapsible-log-toggle {
+    width: 100%;
   }
 
   .app-header {

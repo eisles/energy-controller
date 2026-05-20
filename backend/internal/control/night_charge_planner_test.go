@@ -411,6 +411,85 @@ func TestPlanNightChargingWouldWriteSelfPoweredRecoveryDuringNight(t *testing.T)
 	}
 }
 
+func TestPlanNightChargingDoesNotUseCurrentBackupReserveAsMinimumReserve(t *testing.T) {
+	fullEnergyWh := 12288
+	reserve := 90
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                 time.Date(2026, 5, 21, 3, 40, 0, 0, jst),
+		BatterySoc:          98,
+		BatteryFullEnergyWh: &fullEnergyWh,
+		BackupReserveSoc:    &reserve,
+		Forecast: &domain.WeatherForecast{
+			Date:                        "2026-05-21",
+			ShortwaveRadiationMJPerM2:   3.42,
+			SunshineDurationHours:       0,
+			CloudCoverMeanPercent:       79,
+			PrecipitationProbabilityMax: 100,
+			PrecipitationSumMM:          39.1,
+			HourlyShortwaveRadiation: []domain.HourlyShortwaveRadiation{
+				{Time: "2026-05-21T09:00", ShortwaveRadiationWPerM2: 68},
+				{Time: "2026-05-21T10:00", ShortwaveRadiationWPerM2: 64},
+				{Time: "2026-05-21T11:00", ShortwaveRadiationWPerM2: 83},
+				{Time: "2026-05-21T12:00", ShortwaveRadiationWPerM2: 91},
+				{Time: "2026-05-21T13:00", ShortwaveRadiationWPerM2: 133},
+				{Time: "2026-05-21T14:00", ShortwaveRadiationWPerM2: 119},
+				{Time: "2026-05-21T15:00", ShortwaveRadiationWPerM2: 86},
+				{Time: "2026-05-21T16:00", ShortwaveRadiationWPerM2: 82},
+			},
+		},
+		SolarSettings:       &domain.WeatherLocation{PVCapacityKW: 4, PVPerformanceRatio: 0.75, MinimumReserveSoc: 30},
+		EcoFlowLoadEstimate: &domain.EcoFlowLoadEstimate{SampleCount: 24, AverageDaytimeOutputKWh: 1.84, AverageNightOutputKWh: 2},
+		SimulationMode:      true,
+	}, DefaultSettings())
+
+	if plan.MinimumReserveSoc != 30 {
+		t.Fatalf("MinimumReserveSoc = %d, want configured default 30 instead of current reserve 90", plan.MinimumReserveSoc)
+	}
+	if plan.RecommendedNightTargetSoc >= reserve {
+		t.Fatalf("RecommendedNightTargetSoc = %d, want below current backup reserve %d", plan.RecommendedNightTargetSoc, reserve)
+	}
+	if plan.ShouldChargeTonight {
+		t.Fatal("ShouldChargeTonight = true, want false because current SOC is already above calculated target")
+	}
+}
+
+func TestPlanNightChargingDoesNotRatchetAfterProgramRaisedReserve(t *testing.T) {
+	fullEnergyWh := 12288
+	firstReserve := 30
+	first := PlanNightCharging(NightChargePlanInput{
+		Now:                 time.Date(2026, 5, 21, 3, 38, 0, 0, jst),
+		BatterySoc:          84,
+		BatteryFullEnergyWh: &fullEnergyWh,
+		BackupReserveSoc:    &firstReserve,
+		Forecast:            &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 8, SunshineDurationHours: 2, CloudCoverMeanPercent: 80},
+		SolarSettings:       &domain.WeatherLocation{PVCapacityKW: 4, PVPerformanceRatio: 0.75, MinimumReserveSoc: 30},
+		EcoFlowLoadEstimate: &domain.EcoFlowLoadEstimate{SampleCount: 24, AverageDaytimeOutputKWh: 2, AverageNightOutputKWh: 2},
+		SimulationMode:      true,
+	}, DefaultSettings())
+	if first.RecommendedNightTargetSoc <= firstReserve {
+		t.Fatalf("first RecommendedNightTargetSoc = %d, want above %d for setup", first.RecommendedNightTargetSoc, firstReserve)
+	}
+
+	raisedReserve := first.RecommendedNightTargetSoc
+	second := PlanNightCharging(NightChargePlanInput{
+		Now:                 time.Date(2026, 5, 21, 3, 39, 0, 0, jst),
+		BatterySoc:          84,
+		BatteryFullEnergyWh: &fullEnergyWh,
+		BackupReserveSoc:    &raisedReserve,
+		Forecast:            &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 8, SunshineDurationHours: 2, CloudCoverMeanPercent: 80},
+		SolarSettings:       &domain.WeatherLocation{PVCapacityKW: 4, PVPerformanceRatio: 0.75, MinimumReserveSoc: 30},
+		EcoFlowLoadEstimate: &domain.EcoFlowLoadEstimate{SampleCount: 24, AverageDaytimeOutputKWh: 2, AverageNightOutputKWh: 2},
+		SimulationMode:      true,
+	}, DefaultSettings())
+
+	if second.MinimumReserveSoc != 30 {
+		t.Fatalf("second MinimumReserveSoc = %d, want 30", second.MinimumReserveSoc)
+	}
+	if second.RecommendedNightTargetSoc != first.RecommendedNightTargetSoc {
+		t.Fatalf("RecommendedNightTargetSoc ratcheted from %d to %d", first.RecommendedNightTargetSoc, second.RecommendedNightTargetSoc)
+	}
+}
+
 func TestPlanNightChargingStrategyStatesByTime(t *testing.T) {
 	forecast := &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 3, SunshineDurationHours: 1, CloudCoverMeanPercent: 95, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 12}
 	settings := DefaultSettings()

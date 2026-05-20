@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { ControlPanel } from "@/components/ControlPanel";
 import { DryRunPlanHistory } from "@/components/DryRunPlanHistory";
@@ -13,6 +14,7 @@ import { SolarForecastPanel } from "@/components/SolarForecastPanel";
 import { StatusCards } from "@/components/StatusCards";
 import { SurplusControlCommandLogTable } from "@/components/SurplusControlCommandLogTable";
 import { TariffSummaryPanel } from "@/components/TariffSummaryPanel";
+import { Button } from "@/components/ui/button";
 import {
   fetchEnergyMeterLogsPage,
   fetchLogs,
@@ -59,6 +61,25 @@ const nightChargePlanLogPageSize = 25;
 const nightChargeSummaryPageSize = 25;
 const surplusControlCommandLogPageSize = 25;
 const dryRunPlanLimit = 10;
+
+type LogSectionKey =
+  | "nightDryRun"
+  | "surplusCommand"
+  | "nightPlan"
+  | "nightSummary"
+  | "surplusDryRun"
+  | "energyMeter"
+  | "control";
+
+const initialLogSections: Record<LogSectionKey, boolean> = {
+  nightDryRun: false,
+  surplusCommand: false,
+  nightPlan: false,
+  nightSummary: false,
+  surplusDryRun: false,
+  energyMeter: false,
+  control: false
+};
 
 const initialStatus: EnergyStatus = {
   gridW: 0,
@@ -130,6 +151,7 @@ export function Dashboard() {
   const [tariffError, setTariffError] = useState<string | null>(null);
   const [solarForecastError, setSolarForecastError] = useState<string | null>(null);
   const [solarForecastLoading, setSolarForecastLoading] = useState(false);
+  const [openLogSections, setOpenLogSections] = useState<Record<LogSectionKey, boolean>>(initialLogSections);
 
   useEffect(() => {
     let cancelled = false;
@@ -500,50 +522,18 @@ export function Dashboard() {
     setAppliedTariffTo("");
   }
 
+  function toggleLogSection(section: LogSectionKey) {
+    setOpenLogSections((current) => ({ ...current, [section]: !current[section] }));
+  }
+
   return (
     <main className="page-shell">
       <Header status={status} />
-      <StatusCards status={status} fetchError={statusError} />
-      <DryRunPlanHistory
-        logs={nightDryRunPlanLogs}
-        error={nightDryRunPlanError}
-        title="夜間制御 dry-run 履歴"
-        marker="night dry-run plan:"
-        emptyMessage="夜間制御 dry-run 計画はまだ記録されていません。"
+      <StatusCards
+        status={status}
+        fetchError={statusError}
+        chartSlot={<EnergyCharts logs={chartLogs} rangeLabel={logRange.label} ranges={logRanges} selectedRange={logRange} onRangeChange={setLogRange} />}
       />
-      <SurplusControlCommandLogTable
-        logs={surplusCommandLogs}
-        error={surplusCommandError}
-        page={surplusCommandPage}
-        pageSize={surplusControlCommandLogPageSize}
-        total={surplusCommandTotal}
-        onPageChange={setSurplusCommandPage}
-      />
-      <NightChargePlanLogTable
-        logs={nightChargePlanLogs}
-        error={nightChargePlanError}
-        page={nightChargePlanPage}
-        pageSize={nightChargePlanLogPageSize}
-        total={nightChargePlanTotal}
-        onPageChange={setNightChargePlanPage}
-      />
-      <NightChargeSummaryTable
-        summaries={nightChargeSummaries}
-        error={nightChargeSummaryError}
-        page={nightChargeSummaryPage}
-        pageSize={nightChargeSummaryPageSize}
-        total={nightChargeSummaryTotal}
-        from={nightChargeSummaryFromInput}
-        to={nightChargeSummaryToInput}
-        isFiltered={Boolean(appliedNightChargeSummaryFrom || appliedNightChargeSummaryTo)}
-        onFromChange={setNightChargeSummaryFromInput}
-        onToChange={setNightChargeSummaryToInput}
-        onSearchSubmit={submitNightChargeSummarySearch}
-        onSearchClear={clearNightChargeSummarySearch}
-        onPageChange={setNightChargeSummaryPage}
-      />
-      <DryRunPlanHistory logs={dryRunPlanLogs} error={dryRunPlanError} />
-      <EnergyCharts logs={chartLogs} rangeLabel={logRange.label} ranges={logRanges} selectedRange={logRange} onRangeChange={setLogRange} />
       <ControlPanel onTariffPlanSaved={() => setTariffRefreshToken((value) => value + 1)} />
       <SolarForecastPanel
         summary={solarForecast}
@@ -564,40 +554,175 @@ export function Dashboard() {
         onSearchSubmit={submitTariffSearch}
         onSearchClear={clearTariffSearch}
       />
-      <EnergyMeterLogTable
-        logs={energyMeterLogs}
-        error={energyMeterError}
-        page={energyMeterPage}
-        pageSize={energyMeterLogPageSize}
-        total={energyMeterTotal}
-        from={energyMeterFromInput}
-        to={energyMeterToInput}
-        isFiltered={Boolean(appliedEnergyMeterFrom || appliedEnergyMeterTo)}
-        onFromChange={setEnergyMeterFromInput}
-        onToChange={setEnergyMeterToInput}
-        onSearchSubmit={submitEnergyMeterSearch}
-        onSearchClear={clearEnergyMeterSearch}
-        onPageChange={setEnergyMeterPage}
-      />
-      <LogTable
-        logs={tableLogs}
-        error={logsError}
-        page={logPage}
-        pageSize={logPageSize}
-        total={logTotal}
-        search={logSearchInput}
-        from={logFromInput}
-        to={logToInput}
-        isFiltered={Boolean(appliedLogSearch || appliedLogFrom || appliedLogTo)}
-        onSearchChange={setLogSearchInput}
-        onFromChange={setLogFromInput}
-        onToChange={setLogToInput}
-        onSearchSubmit={submitLogSearch}
-        onSearchClear={clearLogSearch}
-        onPageChange={setLogPage}
-      />
+      <CollapsibleLogSection
+        title="夜間制御 dry-run 履歴"
+        summary={logSectionSummary(nightDryRunPlanLogs.length, nightDryRunPlanError)}
+        open={openLogSections.nightDryRun}
+        onToggle={() => toggleLogSection("nightDryRun")}
+      >
+        <DryRunPlanHistory
+          logs={nightDryRunPlanLogs}
+          error={nightDryRunPlanError}
+          title="夜間制御 dry-run 履歴"
+          marker="night dry-run plan:"
+          emptyMessage="夜間制御 dry-run 計画はまだ記録されていません。"
+        />
+      </CollapsibleLogSection>
+      <CollapsibleLogSection
+        title="余剰追従 実行ログ"
+        summary={pagedLogSectionSummary(surplusCommandTotal, surplusCommandPage, surplusControlCommandLogPageSize, surplusCommandError)}
+        open={openLogSections.surplusCommand}
+        onToggle={() => toggleLogSection("surplusCommand")}
+      >
+        <SurplusControlCommandLogTable
+          logs={surplusCommandLogs}
+          error={surplusCommandError}
+          page={surplusCommandPage}
+          pageSize={surplusControlCommandLogPageSize}
+          total={surplusCommandTotal}
+          onPageChange={setSurplusCommandPage}
+        />
+      </CollapsibleLogSection>
+      <CollapsibleLogSection
+        title="夜間充電計画ログ"
+        summary={pagedLogSectionSummary(nightChargePlanTotal, nightChargePlanPage, nightChargePlanLogPageSize, nightChargePlanError)}
+        open={openLogSections.nightPlan}
+        onToggle={() => toggleLogSection("nightPlan")}
+      >
+        <NightChargePlanLogTable
+          logs={nightChargePlanLogs}
+          error={nightChargePlanError}
+          page={nightChargePlanPage}
+          pageSize={nightChargePlanLogPageSize}
+          total={nightChargePlanTotal}
+          onPageChange={setNightChargePlanPage}
+        />
+      </CollapsibleLogSection>
+      <CollapsibleLogSection
+        title="夜間充電 日次検証ログ"
+        summary={pagedLogSectionSummary(nightChargeSummaryTotal, nightChargeSummaryPage, nightChargeSummaryPageSize, nightChargeSummaryError)}
+        open={openLogSections.nightSummary}
+        onToggle={() => toggleLogSection("nightSummary")}
+      >
+        <NightChargeSummaryTable
+          summaries={nightChargeSummaries}
+          error={nightChargeSummaryError}
+          page={nightChargeSummaryPage}
+          pageSize={nightChargeSummaryPageSize}
+          total={nightChargeSummaryTotal}
+          from={nightChargeSummaryFromInput}
+          to={nightChargeSummaryToInput}
+          isFiltered={Boolean(appliedNightChargeSummaryFrom || appliedNightChargeSummaryTo)}
+          onFromChange={setNightChargeSummaryFromInput}
+          onToChange={setNightChargeSummaryToInput}
+          onSearchSubmit={submitNightChargeSummarySearch}
+          onSearchClear={clearNightChargeSummarySearch}
+          onPageChange={setNightChargeSummaryPage}
+        />
+      </CollapsibleLogSection>
+      <CollapsibleLogSection
+        title="余剰追従 dry-run 履歴"
+        summary={logSectionSummary(dryRunPlanLogs.length, dryRunPlanError)}
+        open={openLogSections.surplusDryRun}
+        onToggle={() => toggleLogSection("surplusDryRun")}
+      >
+        <DryRunPlanHistory logs={dryRunPlanLogs} error={dryRunPlanError} />
+      </CollapsibleLogSection>
+      <CollapsibleLogSection
+        title="電力量ログ"
+        summary={pagedLogSectionSummary(energyMeterTotal, energyMeterPage, energyMeterLogPageSize, energyMeterError)}
+        open={openLogSections.energyMeter}
+        onToggle={() => toggleLogSection("energyMeter")}
+      >
+        <EnergyMeterLogTable
+          logs={energyMeterLogs}
+          error={energyMeterError}
+          page={energyMeterPage}
+          pageSize={energyMeterLogPageSize}
+          total={energyMeterTotal}
+          from={energyMeterFromInput}
+          to={energyMeterToInput}
+          isFiltered={Boolean(appliedEnergyMeterFrom || appliedEnergyMeterTo)}
+          onFromChange={setEnergyMeterFromInput}
+          onToChange={setEnergyMeterToInput}
+          onSearchSubmit={submitEnergyMeterSearch}
+          onSearchClear={clearEnergyMeterSearch}
+          onPageChange={setEnergyMeterPage}
+        />
+      </CollapsibleLogSection>
+      <CollapsibleLogSection
+        title="制御ログ"
+        summary={pagedLogSectionSummary(logTotal, logPage, logPageSize, logsError)}
+        open={openLogSections.control}
+        onToggle={() => toggleLogSection("control")}
+      >
+        <LogTable
+          logs={tableLogs}
+          error={logsError}
+          page={logPage}
+          pageSize={logPageSize}
+          total={logTotal}
+          search={logSearchInput}
+          from={logFromInput}
+          to={logToInput}
+          isFiltered={Boolean(appliedLogSearch || appliedLogFrom || appliedLogTo)}
+          onSearchChange={setLogSearchInput}
+          onFromChange={setLogFromInput}
+          onToChange={setLogToInput}
+          onSearchSubmit={submitLogSearch}
+          onSearchClear={clearLogSearch}
+          onPageChange={setLogPage}
+        />
+      </CollapsibleLogSection>
     </main>
   );
+}
+
+function CollapsibleLogSection({
+  title,
+  summary,
+  open,
+  onToggle,
+  children
+}: {
+  title: string;
+  summary: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section className="collapsible-log-section section">
+      <div className="collapsible-log-header">
+        <div>
+          <h2>{title}</h2>
+          <p>{summary}</p>
+        </div>
+        <Button type="button" variant="outline" className="collapsible-log-toggle" aria-expanded={open} onClick={onToggle}>
+          <span className="collapsible-log-toggle-icon" aria-hidden="true">
+            {open ? "-" : "+"}
+          </span>
+          {open ? "閉じる" : "開く"}
+        </Button>
+      </div>
+      {open ? <div className="collapsible-log-body">{children}</div> : null}
+    </section>
+  );
+}
+
+function logSectionSummary(count: number, error: string | null) {
+  if (error) {
+    return `取得エラー: ${error}`;
+  }
+  return `${count}件表示`;
+}
+
+function pagedLogSectionSummary(total: number, page: number, pageSize: number, error: string | null) {
+  if (error) {
+    return `取得エラー: ${error}`;
+  }
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  return `${total}件 / ${page}ページ目 of ${totalPages}`;
 }
 
 function datetimeLocalToISOString(value: string) {

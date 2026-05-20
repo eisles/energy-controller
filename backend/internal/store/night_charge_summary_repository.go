@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sort"
 	"time"
 
@@ -47,20 +48,12 @@ func NewNightChargeSummaryRepositoryWithTimezone(db *sql.DB, timezone string) *N
 func (r *NightChargeSummaryRepository) ListNightChargeDailySummariesPage(ctx context.Context, now time.Time, limit int, offset int, filter NightChargeSummaryPageFilter) ([]domain.NightChargeDailySummary, int, error) {
 	limit = normalizeLimit(limit)
 	offset = normalizeOffset(offset)
-	dates, err := r.summaryDates(ctx, filter)
+	dates, total, err := r.summaryDatesPage(ctx, limit, offset, filter)
 	if err != nil {
 		return nil, 0, err
 	}
-	total := len(dates)
-	if offset >= total {
-		return []domain.NightChargeDailySummary{}, total, nil
-	}
-	end := offset + limit
-	if end > total {
-		end = total
-	}
-	summaries := make([]domain.NightChargeDailySummary, 0, end-offset)
-	for _, summaryDate := range dates[offset:end] {
+	summaries := make([]domain.NightChargeDailySummary, 0, len(dates))
+	for _, summaryDate := range dates {
 		summary, err := r.buildSummary(ctx, now, summaryDate)
 		if err != nil {
 			return nil, 0, err
@@ -70,10 +63,45 @@ func (r *NightChargeSummaryRepository) ListNightChargeDailySummariesPage(ctx con
 	return summaries, total, nil
 }
 
-func (r *NightChargeSummaryRepository) summaryDates(ctx context.Context, filter NightChargeSummaryPageFilter) ([]string, error) {
+func (r *NightChargeSummaryRepository) summaryDatesPage(ctx context.Context, limit int, offset int, filter NightChargeSummaryPageFilter) ([]string, int, error) {
+	if r.hasVariableUTCOffset() {
+		return r.summaryDatesPageByScan(ctx, limit, offset, filter)
+	}
+
+	whereArgs := r.summaryDateArgs(filter)
+	var total int
+	if err := r.db.QueryRowContext(ctx, summaryDatesCountSQL(), whereArgs...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if offset >= total {
+		return []string{}, total, nil
+	}
+
+	pageArgs := append(whereArgs, limit, offset)
+	rows, err := r.db.QueryContext(ctx, summaryDatesPageSQL(), pageArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	dates := make([]string, 0, limit)
+	for rows.Next() {
+		var summaryDate string
+		if err := rows.Scan(&summaryDate); err != nil {
+			return nil, 0, err
+		}
+		dates = append(dates, summaryDate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return dates, total, nil
+}
+
+func (r *NightChargeSummaryRepository) summaryDatesPageByScan(ctx context.Context, limit int, offset int, filter NightChargeSummaryPageFilter) ([]string, int, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT measured_at FROM night_charge_plan_logs ORDER BY measured_at DESC, id DESC`)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -81,11 +109,11 @@ func (r *NightChargeSummaryRepository) summaryDates(ctx context.Context, filter 
 	for rows.Next() {
 		var measuredAt string
 		if err := rows.Scan(&measuredAt); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		parsed, err := parseTime(measuredAt)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		summaryDate, ok := r.summaryDateFor(parsed)
 		if !ok {
@@ -101,14 +129,101 @@ func (r *NightChargeSummaryRepository) summaryDates(ctx context.Context, filter 
 		seen[summaryDate] = true
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	dates := make([]string, 0, len(seen))
 	for date := range seen {
 		dates = append(dates, date)
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(dates)))
-	return dates, nil
+	total := len(dates)
+	if offset >= total {
+		return []string{}, total, nil
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return dates[offset:end], total, nil
+}
+
+func (r *NightChargeSummaryRepository) hasVariableUTCOffset() bool {
+	year := time.Now().In(r.location).Year()
+	var baseline *int
+	for sampleYear := year - 2; sampleYear <= year+2; sampleYear++ {
+		for month := time.January; month <= time.December; month++ {
+			_, offsetSeconds := time.Date(sampleYear, month, 1, 12, 0, 0, 0, r.location).Zone()
+			if baseline == nil {
+				baseline = &offsetSeconds
+				continue
+			}
+			if offsetSeconds != *baseline {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (r *NightChargeSummaryRepository) summaryDateArgs(filter NightChargeSummaryPageFilter) []any {
+	from := localTimeFilterValue(filter.From, r.location)
+	to := localTimeFilterValue(filter.To, r.location)
+	modifier := r.sqliteLocalTimeModifier()
+	return []any{
+		modifier, nightSummaryChargeEndHour,
+		modifier, nightSummaryPlanStartHour,
+		modifier, nightSummaryChargeEndHour, modifier,
+		modifier, nightSummaryPlanStartHour, modifier,
+		from, from, to, to,
+	}
+}
+
+func (r *NightChargeSummaryRepository) sqliteLocalTimeModifier() string {
+	_, offsetSeconds := time.Now().In(r.location).Zone()
+	return fmt.Sprintf("%+d seconds", offsetSeconds)
+}
+
+func localTimeFilterValue(value *time.Time, location *time.Location) string {
+	if value == nil {
+		return ""
+	}
+	return value.In(location).Format("2006-01-02T15:04:05")
+}
+
+func summaryDatesCountSQL() string {
+	return summaryDatesBaseSQL() + `SELECT COUNT(*) FROM filtered_dates`
+}
+
+func summaryDatesPageSQL() string {
+	return summaryDatesBaseSQL() + `SELECT summary_date
+	FROM filtered_dates
+	ORDER BY summary_date DESC
+	LIMIT ? OFFSET ?`
+}
+
+func summaryDatesBaseSQL() string {
+	return `WITH summary_dates AS (
+	SELECT DISTINCT CASE
+		WHEN target_forecast_date IS NOT NULL
+			AND target_forecast_date != ''
+			AND (
+				CAST(strftime('%H', datetime(measured_at, ?)) AS INTEGER) < ?
+				OR CAST(strftime('%H', datetime(measured_at, ?)) AS INTEGER) >= ?
+			) THEN date(target_forecast_date, '-1 day')
+		WHEN CAST(strftime('%H', datetime(measured_at, ?)) AS INTEGER) < ? THEN date(datetime(measured_at, ?), '-1 day')
+		WHEN CAST(strftime('%H', datetime(measured_at, ?)) AS INTEGER) >= ? THEN date(datetime(measured_at, ?))
+		ELSE NULL
+	END AS summary_date
+	FROM night_charge_plan_logs
+),
+filtered_dates AS (
+	SELECT summary_date
+	FROM summary_dates
+	WHERE summary_date IS NOT NULL
+		AND (? = '' OR (date(summary_date, '+1 day') || 'T16:00:00') >= ?)
+		AND (? = '' OR (summary_date || 'T21:00:00') <= ?)
+)
+`
 }
 
 func (r *NightChargeSummaryRepository) buildSummary(ctx context.Context, now time.Time, summaryDate string) (domain.NightChargeDailySummary, error) {

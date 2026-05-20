@@ -17,7 +17,7 @@ type MetricKey = "gridW" | "importW" | "exportW" | "batterySoc" | "netBatteryW" 
 
 const primaryMetrics: MetricKey[] = ["gridW", "importW", "exportW", "batterySoc", "netBatteryW", "targetChargeW"];
 
-export function StatusCards({ status, fetchError }: { status: EnergyStatus; fetchError: string | null }) {
+export function StatusCards({ status, fetchError, chartSlot }: { status: EnergyStatus; fetchError: string | null; chartSlot?: ReactNode }) {
   const netBatteryW = status.batteryInputW - status.batteryOutputW;
   const batteryEnergy = batteryEnergySummary(status.batteryFullEnergyWh, status.batterySoc);
   const metrics: Record<MetricKey, Metric> = {
@@ -58,6 +58,8 @@ export function StatusCards({ status, fetchError }: { status: EnergyStatus; fetc
           <MetricCard key={key} metric={metrics[key]} />
         ))}
       </section>
+
+      {chartSlot}
 
       <Card className="decision-panel section">
         <CardHeader>

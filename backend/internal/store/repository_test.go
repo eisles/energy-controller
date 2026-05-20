@@ -651,6 +651,78 @@ func TestNightChargeSummaryRepositoryKeepsCurrentNightPending(t *testing.T) {
 	}
 }
 
+func TestNightChargeSummaryRepositoryPagesSummaryDates(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewNightChargeSummaryRepositoryWithTimezone(db, "UTC")
+	base := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
+
+	for day := 0; day < 3; day++ {
+		insertNightSummaryPlanLog(t, db, base.AddDate(0, 0, day).Add(21*time.Hour+10*time.Minute), 70+day, 8.6, 0.4)
+	}
+	insertNightSummaryPlanLog(t, db, base.AddDate(0, 0, 3).Add(12*time.Hour), 80, 9.8, 0.8)
+
+	summaries, total, err := repo.ListNightChargeDailySummariesPage(context.Background(), base.AddDate(0, 0, 4), 1, 1, NightChargeSummaryPageFilter{})
+	if err != nil {
+		t.Fatalf("ListNightChargeDailySummariesPage failed: %v", err)
+	}
+	if total != 3 {
+		t.Fatalf("total = %d, want 3", total)
+	}
+	if len(summaries) != 1 || summaries[0].SummaryDate != "2026-05-20" {
+		t.Fatalf("summaries = %#v, want only 2026-05-20", summaries)
+	}
+}
+
+func TestNightChargeSummaryRepositoryFiltersSummaryDatesBySessionWindow(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewNightChargeSummaryRepositoryWithTimezone(db, "UTC")
+	base := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
+
+	for day := 0; day < 3; day++ {
+		insertNightSummaryPlanLog(t, db, base.AddDate(0, 0, day).Add(21*time.Hour+10*time.Minute), 70+day, 8.6, 0.4)
+	}
+
+	from := base.AddDate(0, 0, 1).Add(21 * time.Hour)
+	to := base.AddDate(0, 0, 2).Add(16 * time.Hour)
+	summaries, total, err := repo.ListNightChargeDailySummariesPage(context.Background(), base.AddDate(0, 0, 4), 10, 0, NightChargeSummaryPageFilter{
+		From: &from,
+		To:   &to,
+	})
+	if err != nil {
+		t.Fatalf("ListNightChargeDailySummariesPage failed: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("total = %d, want 1", total)
+	}
+	if len(summaries) != 1 || summaries[0].SummaryDate != "2026-05-20" {
+		t.Fatalf("summaries = %#v, want only 2026-05-20", summaries)
+	}
+}
+
+func TestNightChargeSummaryRepositoryPagesSummaryDatesInDSTTimezone(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewNightChargeSummaryRepositoryWithTimezone(db, "America/New_York")
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("LoadLocation failed: %v", err)
+	}
+
+	insertNightSummaryPlanLog(t, db, time.Date(2026, 1, 5, 21, 10, 0, 0, location), 70, 8.6, 0.4)
+	insertNightSummaryPlanLog(t, db, time.Date(2026, 7, 5, 21, 10, 0, 0, location), 75, 9.2, 1.1)
+	insertNightSummaryPlanLog(t, db, time.Date(2026, 7, 6, 12, 0, 0, 0, location), 80, 9.8, 0.8)
+
+	summaries, total, err := repo.ListNightChargeDailySummariesPage(context.Background(), time.Date(2026, 7, 7, 12, 0, 0, 0, location), 10, 0, NightChargeSummaryPageFilter{})
+	if err != nil {
+		t.Fatalf("ListNightChargeDailySummariesPage failed: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("total = %d, want 2", total)
+	}
+	if len(summaries) != 2 || summaries[0].SummaryDate != "2026-07-05" || summaries[1].SummaryDate != "2026-01-05" {
+		t.Fatalf("summaries = %#v, want 2026-07-05 then 2026-01-05", summaries)
+	}
+}
+
 func insertNightSummaryPlanLog(t *testing.T, db *sql.DB, measuredAt time.Time, targetSoc int, targetKWh float64, requiredKWh float64) {
 	t.Helper()
 	targetDate := measuredAt.AddDate(0, 0, 1).Format("2006-01-02")
