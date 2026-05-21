@@ -1,6 +1,7 @@
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CollapsibleSection } from "@/components/CollapsibleSection";
 import type { EnergyStatus, NightChargePlan, SurplusPlan } from "@/lib/types";
 import type { ReactNode } from "react";
 
@@ -17,7 +18,14 @@ type MetricKey = "gridW" | "importW" | "exportW" | "batterySoc" | "netBatteryW" 
 
 const primaryMetrics: MetricKey[] = ["gridW", "importW", "exportW", "batterySoc", "netBatteryW", "targetChargeW"];
 
-export function StatusCards({ status, fetchError, chartSlot }: { status: EnergyStatus; fetchError: string | null; chartSlot?: ReactNode }) {
+export type StatusCardSectionKey = "charts" | "decision" | "surplusPlan" | "nightPlan";
+
+type StatusCardsProps = {
+  status: EnergyStatus;
+  fetchError: string | null;
+};
+
+export function StatusCards({ status, fetchError }: StatusCardsProps) {
   const netBatteryW = status.batteryInputW - status.batteryOutputW;
   const batteryEnergy = batteryEnergySummary(status.batteryFullEnergyWh, status.batterySoc);
   const metrics: Record<MetricKey, Metric> = {
@@ -59,8 +67,30 @@ export function StatusCards({ status, fetchError, chartSlot }: { status: EnergyS
         ))}
       </section>
 
-      {chartSlot}
+      {status.lastError ? (
+        <Alert variant="destructive" className="section">
+          <AlertTitle>Last error</AlertTitle>
+          <AlertDescription>{status.lastError}</AlertDescription>
+        </Alert>
+      ) : null}
+    </>
+  );
+}
 
+export function StatusDecisionSection({
+  status,
+  open,
+  onToggle,
+  headerControls
+}: {
+  status: EnergyStatus;
+  open: boolean;
+  onToggle: () => void;
+  headerControls?: ReactNode;
+}) {
+  const netBatteryW = status.batteryInputW - status.batteryOutputW;
+  return (
+    <CollapsibleSection title="制御判断" summary={status.lastDecisionReason || "-"} open={open} onToggle={onToggle} headerControls={headerControls}>
       <Card className="decision-panel section">
         <CardHeader>
           <CardDescription>Last decision</CardDescription>
@@ -78,134 +108,180 @@ export function StatusCards({ status, fetchError, chartSlot }: { status: EnergyS
           <Detail label="Updated" value={formatDateTime(status.updatedAt)} />
         </CardContent>
       </Card>
-
-      <SurplusPlanCard plan={status.surplusPlan} />
-      <NightChargePlanCard plan={status.nightChargePlan} />
-
-      {status.lastError ? (
-        <Alert variant="destructive" className="section">
-          <AlertTitle>Last error</AlertTitle>
-          <AlertDescription>{status.lastError}</AlertDescription>
-        </Alert>
-      ) : null}
-    </>
+    </CollapsibleSection>
   );
 }
 
-function NightChargePlanCard({ plan }: { plan?: NightChargePlan | null }) {
+export function StatusChartSection({
+  open,
+  onToggle,
+  children,
+  summary,
+  headerControls
+}: {
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+  summary: string;
+  headerControls?: ReactNode;
+}) {
+  return (
+    <CollapsibleSection title="推移グラフ" summary={summary} open={open} onToggle={onToggle} headerControls={headerControls}>
+      {children}
+    </CollapsibleSection>
+  );
+}
+
+export function NightChargePlanSection({
+  plan,
+  open,
+  onToggle,
+  headerControls
+}: {
+  plan?: NightChargePlan | null;
+  open: boolean;
+  onToggle: () => void;
+  headerControls?: ReactNode;
+}) {
   if (!plan) {
     return null;
   }
 
   return (
-    <Card className="planner-panel section">
-      <CardHeader>
-        <div className="panel-title-row">
-          <div>
-            <CardDescription>Weather forecast planner</CardDescription>
-            <CardTitle>深夜充電プラン</CardTitle>
+    <CollapsibleSection title="深夜充電プラン" summary={nightPlanSummary(plan)} open={open} onToggle={onToggle} headerControls={headerControls}>
+      <Card className="planner-panel section">
+        <CardHeader>
+          <div className="panel-title-row">
+            <div>
+              <CardDescription>Weather forecast planner</CardDescription>
+              <CardTitle>深夜充電プラン</CardTitle>
+            </div>
+            <Badge variant={plan.wouldWrite ? "warning" : "secondary"}>{plan.wouldWrite ? "would write" : "read-only"}</Badge>
           </div>
-          <Badge variant={plan.wouldWrite ? "warning" : "secondary"}>{plan.wouldWrite ? "would write" : "read-only"}</Badge>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="detail-strip" aria-label="night charging planner detail">
-          <Detail label="状態" value={plan.strategyState || "-"} />
-          <Detail label="PV期待度" value={`${plan.solarForecastScore}/100`} />
-          <Detail label="推奨mode" value={modeLabel(plan.recommendedMode)} />
-          <Detail label="推奨深夜SOC" value={`${plan.recommendedNightTargetSoc}%`} />
-          <Detail label="最低確保SOC" value={`${plan.minimumReserveSoc}%`} />
-          <Detail label="今夜充電" value={yesNo(plan.shouldChargeTonight)} />
-          <Detail label="対象日" value={plan.targetForecast?.date || "-"} />
-          <Detail label="日射量" value={plan.targetForecast ? `${formatDecimal(plan.targetForecast.shortwaveRadiationMjPerM2)} MJ/m2` : "-"} />
-        </div>
-        <div className="detail-strip planner-secondary" aria-label="weather forecast detail">
-          <Detail label="推定PV発電" value={`${formatDecimal(plan.dailyEstimatedPvKwh || plan.estimatedPvKwh)} kWh`} />
-          <Detail label="PV有効時間" value={formatTimeWindow(plan.pvEffectiveStartAt, plan.pvEffectiveEndAt)} />
-          <Detail label="PV時間ソース" value={plan.pvEffectiveWindowSource || "-"} />
-          <Detail label="PVしきい値" value={plan.pvEffectiveRadiationWPerM2 ? `${formatDecimal(plan.pvEffectiveRadiationWPerM2)} W/m2` : "-"} />
-          <Detail label="推定日中消費" value={`${formatDecimal(plan.estimatedDaytimeLoadKwh)} kWh`} />
-          <Detail label="朝まで消費" value={`${formatDecimal(plan.estimatedMorningLoadKwh)} kWh`} />
-          <Detail label="7時-PV開始" value={`${formatDecimal(plan.morningToPvStartLoadKwh)} kWh`} />
-          <Detail label="PV不足見込" value={`${formatDecimal(plan.forecastDaytimeDeficitKwh)} kWh`} />
-          <Detail label="推定余剰" value={`${formatDecimal(plan.estimatedSurplusKwh)} kWh`} />
-          <Detail label="推定不足" value={`${formatDecimal(plan.estimatedDeficitKwh)} kWh`} />
-          <Detail label="PV充電見込" value={`${formatDecimal(plan.estimatedPvToBatteryKwh)} kWh`} />
-          <Detail label="安全余力" value={`${formatDecimal(plan.safetyMarginKwh)} kWh`} />
-          <Detail label="充電余地" value={`${formatDecimal(plan.batteryChargeHeadroomKwh)} kWh`} />
-          <Detail label="容量ソース" value={capacitySourceLabel(plan.batteryCapacitySource)} />
-          <Detail label="消費ソース" value={consumptionSourceLabel(plan.consumptionSource)} />
-          <Detail label="日射量" value={`${formatDecimal(plan.solarRadiationKwhPerM2)} kWh/m2`} />
-        </div>
-        <div className="detail-strip planner-secondary" aria-label="night charge energy detail">
-          <Detail label="現在残量" value={`${formatDecimal(plan.currentBatteryEnergyKwh)} kWh`} />
-          <Detail label="推奨残量" value={`${formatDecimal(plan.recommendedNightTargetKwh)} kWh`} />
-          <Detail label="最低確保" value={`${formatDecimal(plan.minimumReserveKwh)} kWh`} />
-          <Detail label="深夜必要量" value={`${formatDecimal(plan.requiredNightChargeKwh)} kWh`} />
-          <Detail label="容量" value={`${formatDecimal(plan.batteryCapacityKwh)} kWh`} />
-        </div>
-        <div className="detail-strip planner-secondary" aria-label="night charge command guard detail">
-          <Detail label="候補AC上限" value={plan.recommendedAcChargeLimitW > 0 ? `${plan.recommendedAcChargeLimitW} W` : "-"} />
-          <Detail label="候補リザーブ" value={nullablePercent(plan.recommendedBackupReserveSoc)} />
-          <Detail label="AC上限変更" value={yesNo(plan.shouldSetAcChargeLimit)} />
-          <Detail label="リザーブ変更" value={yesNo(plan.shouldSetBackupReserve)} />
-          <Detail label="TOU解除" value={yesNo(plan.shouldDisableEnergyModes)} />
-          <Detail label="TOU維持" value={yesNo(plan.shouldEnableTouMode)} />
-          <Detail label="Self-powered" value={yesNo(plan.shouldEnableSelfPoweredMode)} />
-          <Detail label="抑制" value={yesNo(plan.commandSuppressed)} />
-        </div>
-        <div className="detail-strip planner-secondary" aria-label="weather forecast detail">
-          <Detail label="日照" value={plan.targetForecast ? `${formatDecimal(plan.targetForecast.sunshineDurationHours)} h` : "-"} />
-          <Detail label="雲量" value={plan.targetForecast ? `${plan.targetForecast.cloudCoverMeanPercent}%` : "-"} />
-          <Detail label="降水確率" value={plan.targetForecast ? `${plan.targetForecast.precipitationProbabilityMax}%` : "-"} />
-          <Detail label="降水量" value={plan.targetForecast ? `${formatDecimal(plan.targetForecast.precipitationSumMm)} mm` : "-"} />
-          <Detail label="取得元" value={plan.targetForecast?.provider || "-"} />
-          <Detail label="天気コード" value={plan.targetForecast ? `${plan.targetForecast.weatherCode}` : "-"} />
-        </div>
-        {plan.actionSummary ? <p className="planner-reason">Dry-run計画: {plan.actionSummary}</p> : null}
-        {plan.commandBlockReason ? <p className="planner-reason">Write guard: {plan.commandBlockReason}</p> : null}
-        <p className="planner-reason">{plan.reason || "-"}</p>
-      </CardContent>
-    </Card>
+        </CardHeader>
+        <CardContent>
+          <div className="detail-strip" aria-label="night charging planner detail">
+            <Detail label="状態" value={plan.strategyState || "-"} />
+            <Detail label="PV期待度" value={`${plan.solarForecastScore}/100`} />
+            <Detail label="推奨mode" value={modeLabel(plan.recommendedMode)} />
+            <Detail label="推奨深夜SOC" value={`${plan.recommendedNightTargetSoc}%`} />
+            <Detail label="最低確保SOC" value={`${plan.minimumReserveSoc}%`} />
+            <Detail label="今夜充電" value={yesNo(plan.shouldChargeTonight)} />
+            <Detail label="対象日" value={plan.targetForecast?.date || "-"} />
+            <Detail label="日射量" value={plan.targetForecast ? `${formatDecimal(plan.targetForecast.shortwaveRadiationMjPerM2)} MJ/m2` : "-"} />
+          </div>
+          <div className="detail-strip planner-secondary" aria-label="weather forecast detail">
+            <Detail label="推定PV発電" value={`${formatDecimal(plan.dailyEstimatedPvKwh || plan.estimatedPvKwh)} kWh`} />
+            <Detail label="PV有効時間" value={formatTimeWindow(plan.pvEffectiveStartAt, plan.pvEffectiveEndAt)} />
+            <Detail label="PV時間ソース" value={plan.pvEffectiveWindowSource || "-"} />
+            <Detail label="PVしきい値" value={plan.pvEffectiveRadiationWPerM2 ? `${formatDecimal(plan.pvEffectiveRadiationWPerM2)} W/m2` : "-"} />
+            <Detail label="推定日中消費" value={`${formatDecimal(plan.estimatedDaytimeLoadKwh)} kWh`} />
+            <Detail label="朝まで消費" value={`${formatDecimal(plan.estimatedMorningLoadKwh)} kWh`} />
+            <Detail label="7時-PV開始" value={`${formatDecimal(plan.morningToPvStartLoadKwh)} kWh`} />
+            <Detail label="PV不足見込" value={`${formatDecimal(plan.forecastDaytimeDeficitKwh)} kWh`} />
+            <Detail label="推定余剰" value={`${formatDecimal(plan.estimatedSurplusKwh)} kWh`} />
+            <Detail label="推定不足" value={`${formatDecimal(plan.estimatedDeficitKwh)} kWh`} />
+            <Detail label="PV充電見込" value={`${formatDecimal(plan.estimatedPvToBatteryKwh)} kWh`} />
+            <Detail label="安全余力" value={`${formatDecimal(plan.safetyMarginKwh)} kWh`} />
+            <Detail label="充電余地" value={`${formatDecimal(plan.batteryChargeHeadroomKwh)} kWh`} />
+            <Detail label="容量ソース" value={capacitySourceLabel(plan.batteryCapacitySource)} />
+            <Detail label="消費ソース" value={consumptionSourceLabel(plan.consumptionSource)} />
+            <Detail label="日射量" value={`${formatDecimal(plan.solarRadiationKwhPerM2)} kWh/m2`} />
+          </div>
+          <div className="detail-strip planner-secondary" aria-label="night charge energy detail">
+            <Detail label="現在残量" value={`${formatDecimal(plan.currentBatteryEnergyKwh)} kWh`} />
+            <Detail label="推奨残量" value={`${formatDecimal(plan.recommendedNightTargetKwh)} kWh`} />
+            <Detail label="最低確保" value={`${formatDecimal(plan.minimumReserveKwh)} kWh`} />
+            <Detail label="深夜必要量" value={`${formatDecimal(plan.requiredNightChargeKwh)} kWh`} />
+            <Detail label="容量" value={`${formatDecimal(plan.batteryCapacityKwh)} kWh`} />
+          </div>
+          <div className="detail-strip planner-secondary" aria-label="night charge command guard detail">
+            <Detail label="候補AC上限" value={plan.recommendedAcChargeLimitW > 0 ? `${plan.recommendedAcChargeLimitW} W` : "-"} />
+            <Detail label="候補リザーブ" value={nullablePercent(plan.recommendedBackupReserveSoc)} />
+            <Detail label="AC上限変更" value={yesNo(plan.shouldSetAcChargeLimit)} />
+            <Detail label="リザーブ変更" value={yesNo(plan.shouldSetBackupReserve)} />
+            <Detail label="TOU解除" value={yesNo(plan.shouldDisableEnergyModes)} />
+            <Detail label="TOU維持" value={yesNo(plan.shouldEnableTouMode)} />
+            <Detail label="Self-powered" value={yesNo(plan.shouldEnableSelfPoweredMode)} />
+            <Detail label="抑制" value={yesNo(plan.commandSuppressed)} />
+          </div>
+          <div className="detail-strip planner-secondary" aria-label="weather forecast detail">
+            <Detail label="日照" value={plan.targetForecast ? `${formatDecimal(plan.targetForecast.sunshineDurationHours)} h` : "-"} />
+            <Detail label="雲量" value={plan.targetForecast ? `${plan.targetForecast.cloudCoverMeanPercent}%` : "-"} />
+            <Detail label="降水確率" value={plan.targetForecast ? `${plan.targetForecast.precipitationProbabilityMax}%` : "-"} />
+            <Detail label="降水量" value={plan.targetForecast ? `${formatDecimal(plan.targetForecast.precipitationSumMm)} mm` : "-"} />
+            <Detail label="取得元" value={plan.targetForecast?.provider || "-"} />
+            <Detail label="天気コード" value={plan.targetForecast ? `${plan.targetForecast.weatherCode}` : "-"} />
+          </div>
+          {plan.actionSummary ? <p className="planner-reason">Dry-run計画: {plan.actionSummary}</p> : null}
+          {plan.commandBlockReason ? <p className="planner-reason">Write guard: {plan.commandBlockReason}</p> : null}
+          <p className="planner-reason">{plan.reason || "-"}</p>
+        </CardContent>
+      </Card>
+    </CollapsibleSection>
   );
 }
 
-function SurplusPlanCard({ plan }: { plan?: SurplusPlan | null }) {
+export function SurplusPlanSection({
+  plan,
+  open,
+  onToggle,
+  headerControls
+}: {
+  plan?: SurplusPlan | null;
+  open: boolean;
+  onToggle: () => void;
+  headerControls?: ReactNode;
+}) {
   if (!plan) {
     return null;
   }
 
   return (
-    <Card className="planner-panel section">
-      <CardHeader>
-        <div className="panel-title-row">
-          <div>
-            <CardDescription>Read-only planner</CardDescription>
-            <CardTitle>余剰追従プラン</CardTitle>
+    <CollapsibleSection title="余剰追従プラン" summary={surplusPlanSummary(plan)} open={open} onToggle={onToggle} headerControls={headerControls}>
+      <Card className="planner-panel section">
+        <CardHeader>
+          <div className="panel-title-row">
+            <div>
+              <CardDescription>Read-only planner</CardDescription>
+              <CardTitle>余剰追従プラン</CardTitle>
+            </div>
+            <Badge variant={plan.wouldWrite ? "warning" : "secondary"}>{plan.wouldWrite ? "would write" : "read-only"}</Badge>
           </div>
-          <Badge variant={plan.wouldWrite ? "warning" : "secondary"}>{plan.wouldWrite ? "would write" : "read-only"}</Badge>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="detail-strip" aria-label="surplus planner detail">
-          <Detail label="状態" value={plan.strategyState || "-"} />
-          <Detail label="Net battery" value={formatNetBatteryFlow(plan.netBatteryW)} />
-          <Detail label="開始必要売電" value={`${plan.requiredStartExportW} W`} />
-          <Detail label="開始余力" value={formatSignedW(plan.availableStartMarginW)} />
-          <Detail label="推奨AC充電" value={`${plan.recommendedAcChargeLimitW} W`} />
-          <Detail label="推奨リザーブ" value={nullablePercent(plan.recommendedBackupReserveSoc)} />
-          <Detail label="AC調整" value={yesNo(plan.shouldAdjustAcChargeLimit)} />
-          <Detail label="リザーブ引上げ" value={yesNo(plan.shouldRaiseBackupReserve)} />
-          <Detail label="リザーブ戻し" value={yesNo(plan.shouldLowerBackupReserve)} />
-          <Detail label="リザーブ同期" value={yesNo(plan.shouldAlignBackupReserve)} />
-          <Detail label="Modes OFF" value={yesNo(plan.shouldDisableEnergyModes)} />
-          <Detail label="TOU ON" value={yesNo(plan.shouldEnableTouMode)} />
-        </div>
-        <p className="planner-reason">{surplusActionLabel(plan)}</p>
-        <p className="planner-reason">{plan.reason || "-"}</p>
-      </CardContent>
-    </Card>
+        </CardHeader>
+        <CardContent>
+          <div className="detail-strip" aria-label="surplus planner detail">
+            <Detail label="状態" value={plan.strategyState || "-"} />
+            <Detail label="Net battery" value={formatNetBatteryFlow(plan.netBatteryW)} />
+            <Detail label="開始必要売電" value={`${plan.requiredStartExportW} W`} />
+            <Detail label="開始余力" value={formatSignedW(plan.availableStartMarginW)} />
+            <Detail label="推奨AC充電" value={`${plan.recommendedAcChargeLimitW} W`} />
+            <Detail label="推奨リザーブ" value={nullablePercent(plan.recommendedBackupReserveSoc)} />
+            <Detail label="AC調整" value={yesNo(plan.shouldAdjustAcChargeLimit)} />
+            <Detail label="リザーブ引上げ" value={yesNo(plan.shouldRaiseBackupReserve)} />
+            <Detail label="リザーブ戻し" value={yesNo(plan.shouldLowerBackupReserve)} />
+            <Detail label="リザーブ同期" value={yesNo(plan.shouldAlignBackupReserve)} />
+            <Detail label="Modes OFF" value={yesNo(plan.shouldDisableEnergyModes)} />
+            <Detail label="TOU ON" value={yesNo(plan.shouldEnableTouMode)} />
+          </div>
+          <p className="planner-reason">{surplusActionLabel(plan)}</p>
+          <p className="planner-reason">{plan.reason || "-"}</p>
+        </CardContent>
+      </Card>
+    </CollapsibleSection>
   );
+}
+
+function logRangeSummary(status: EnergyStatus) {
+  return status.updatedAt ? `更新 ${formatDateTime(status.updatedAt)}` : "更新待ち";
+}
+
+function surplusPlanSummary(plan: SurplusPlan) {
+  return `${plan.strategyState || "-"} / ${surplusActionLabel(plan)}`;
+}
+
+function nightPlanSummary(plan: NightChargePlan) {
+  return `${plan.strategyState || "-"} / 推奨深夜SOC ${plan.recommendedNightTargetSoc}% / PV ${formatDecimal(plan.dailyEstimatedPvKwh || plan.estimatedPvKwh)} kWh`;
 }
 
 function MetricCard({ metric }: { metric: Metric }) {

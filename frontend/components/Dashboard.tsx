@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { ControlPanel } from "@/components/ControlPanel";
 import { DryRunPlanHistory } from "@/components/DryRunPlanHistory";
 import { EnergyCharts } from "@/components/EnergyCharts";
@@ -11,7 +12,14 @@ import { LogTable } from "@/components/LogTable";
 import { NightChargePlanLogTable } from "@/components/NightChargePlanLogTable";
 import { NightChargeSummaryTable } from "@/components/NightChargeSummaryTable";
 import { SolarForecastPanel } from "@/components/SolarForecastPanel";
-import { StatusCards } from "@/components/StatusCards";
+import {
+  NightChargePlanSection,
+  StatusCards,
+  StatusChartSection,
+  StatusDecisionSection,
+  SurplusPlanSection,
+  type StatusCardSectionKey
+} from "@/components/StatusCards";
 import { SurplusControlCommandLogTable } from "@/components/SurplusControlCommandLogTable";
 import { TariffSummaryPanel } from "@/components/TariffSummaryPanel";
 import { Button } from "@/components/ui/button";
@@ -62,24 +70,55 @@ const nightChargeSummaryPageSize = 25;
 const surplusControlCommandLogPageSize = 25;
 const dryRunPlanLimit = 10;
 
-type LogSectionKey =
+type DashboardSectionKey =
+  | StatusCardSectionKey
+  | "settings"
+  | "solarForecast"
+  | "tariffSummary"
   | "nightDryRun"
   | "surplusCommand"
-  | "nightPlan"
+  | "nightPlanLog"
   | "nightSummary"
   | "surplusDryRun"
   | "energyMeter"
-  | "control";
+  | "controlLog";
 
-const initialLogSections: Record<LogSectionKey, boolean> = {
+const defaultSectionOrder: DashboardSectionKey[] = [
+  "charts",
+  "decision",
+  "surplusPlan",
+  "nightPlan",
+  "settings",
+  "solarForecast",
+  "tariffSummary",
+  "nightDryRun",
+  "surplusCommand",
+  "nightPlanLog",
+  "nightSummary",
+  "surplusDryRun",
+  "energyMeter",
+  "controlLog"
+];
+
+const initialDashboardSections: Record<DashboardSectionKey, boolean> = {
+  charts: true,
+  decision: true,
+  surplusPlan: true,
+  nightPlan: true,
+  settings: true,
+  solarForecast: true,
+  tariffSummary: true,
   nightDryRun: false,
   surplusCommand: false,
-  nightPlan: false,
+  nightPlanLog: false,
   nightSummary: false,
   surplusDryRun: false,
   energyMeter: false,
-  control: false
+  controlLog: false
 };
+
+const dashboardSectionStorageKey = "energy-controller.dashboard.sections.v1";
+const dashboardSectionOrderStorageKey = "energy-controller.dashboard.sectionOrder.v1";
 
 const initialStatus: EnergyStatus = {
   gridW: 0,
@@ -151,7 +190,59 @@ export function Dashboard() {
   const [tariffError, setTariffError] = useState<string | null>(null);
   const [solarForecastError, setSolarForecastError] = useState<string | null>(null);
   const [solarForecastLoading, setSolarForecastLoading] = useState(false);
-  const [openLogSections, setOpenLogSections] = useState<Record<LogSectionKey, boolean>>(initialLogSections);
+  const [openSections, setOpenSections] = useState<Record<DashboardSectionKey, boolean>>(initialDashboardSections);
+  const [openSectionsLoaded, setOpenSectionsLoaded] = useState(false);
+  const [sectionOrder, setSectionOrder] = useState<DashboardSectionKey[]>(defaultSectionOrder);
+  const [sectionOrderLoaded, setSectionOrderLoaded] = useState(false);
+  const [draggingSection, setDraggingSection] = useState<DashboardSectionKey | null>(null);
+
+  useEffect(() => {
+    try {
+      const savedSections = window.localStorage.getItem(dashboardSectionStorageKey);
+      if (savedSections) {
+        setOpenSections(mergeStoredSections(savedSections));
+      }
+    } catch {
+      // Ignore localStorage failures and keep default visibility.
+    } finally {
+      setOpenSectionsLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!openSectionsLoaded) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(dashboardSectionStorageKey, JSON.stringify(openSections));
+    } catch {
+      // Ignore localStorage write failures; the dashboard remains usable.
+    }
+  }, [openSections, openSectionsLoaded]);
+
+  useEffect(() => {
+    try {
+      const savedOrder = window.localStorage.getItem(dashboardSectionOrderStorageKey);
+      if (savedOrder) {
+        setSectionOrder(mergeStoredSectionOrder(savedOrder));
+      }
+    } catch {
+      // Ignore localStorage failures and keep default order.
+    } finally {
+      setSectionOrderLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!sectionOrderLoaded) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(dashboardSectionOrderStorageKey, JSON.stringify(sectionOrder));
+    } catch {
+      // Ignore localStorage write failures; the dashboard remains usable.
+    }
+  }, [sectionOrder, sectionOrderLoaded]);
 
   useEffect(() => {
     let cancelled = false;
@@ -522,191 +613,360 @@ export function Dashboard() {
     setAppliedTariffTo("");
   }
 
-  function toggleLogSection(section: LogSectionKey) {
-    setOpenLogSections((current) => ({ ...current, [section]: !current[section] }));
+  function toggleSection(section: DashboardSectionKey) {
+    setOpenSections((current) => ({ ...current, [section]: !current[section] }));
   }
+
+  function moveSection(section: DashboardSectionKey, direction: -1 | 1) {
+    setSectionOrder((current) => moveSectionInVisibleOrder(current, section, direction, (candidate) => isDashboardSectionVisible(candidate, status)));
+  }
+
+  function moveDraggedSection(targetSection: DashboardSectionKey) {
+    if (!draggingSection || draggingSection === targetSection) {
+      return;
+    }
+    setSectionOrder((current) => moveSectionNearTarget(current, draggingSection, targetSection));
+  }
+
+  function renderDashboardBlock(section: DashboardSectionKey, headerControls: ReactNode) {
+    switch (section) {
+      case "charts":
+        return (
+          <StatusChartSection
+            open={openSections.charts}
+            onToggle={() => toggleSection("charts")}
+            summary={`Grid / Battery / ${status.updatedAt ? `更新 ${formatDateTime(status.updatedAt)}` : "更新待ち"}`}
+            headerControls={headerControls}
+          >
+            <EnergyCharts logs={chartLogs} rangeLabel={logRange.label} ranges={logRanges} selectedRange={logRange} onRangeChange={setLogRange} />
+          </StatusChartSection>
+        );
+      case "decision":
+        return <StatusDecisionSection status={status} open={openSections.decision} onToggle={() => toggleSection("decision")} headerControls={headerControls} />;
+      case "surplusPlan":
+        return status.surplusPlan ? (
+          <SurplusPlanSection plan={status.surplusPlan} open={openSections.surplusPlan} onToggle={() => toggleSection("surplusPlan")} headerControls={headerControls} />
+        ) : null;
+      case "nightPlan":
+        return status.nightChargePlan ? (
+          <NightChargePlanSection plan={status.nightChargePlan} open={openSections.nightPlan} onToggle={() => toggleSection("nightPlan")} headerControls={headerControls} />
+        ) : null;
+      case "settings":
+        return (
+          <CollapsibleSection
+            title="設定"
+            summary="自動制御 / 設定値更新 / 手動シミュレーション / 設置場所 / 料金プラン"
+            open={openSections.settings}
+            onToggle={() => toggleSection("settings")}
+            headerControls={headerControls}
+          >
+            <ControlPanel onTariffPlanSaved={() => setTariffRefreshToken((value) => value + 1)} />
+          </CollapsibleSection>
+        );
+      case "solarForecast":
+        return (
+          <CollapsibleSection
+            title="発電予測"
+            summary={solarForecastSummary(solarForecast, forecastRange.label, solarForecastError)}
+            open={openSections.solarForecast}
+            onToggle={() => toggleSection("solarForecast")}
+            headerControls={headerControls}
+          >
+            <SolarForecastPanel
+              summary={solarForecast}
+              error={solarForecastError}
+              ranges={forecastRanges}
+              selectedRange={forecastRange}
+              loading={solarForecastLoading}
+              onRangeChange={setForecastRange}
+            />
+          </CollapsibleSection>
+        );
+      case "tariffSummary":
+        return (
+          <CollapsibleSection
+            title="料金概算"
+            summary={tariffSummaryLabel(tariffSummary, tariffError)}
+            open={openSections.tariffSummary}
+            onToggle={() => toggleSection("tariffSummary")}
+            headerControls={headerControls}
+          >
+            <TariffSummaryPanel
+              summary={tariffSummary}
+              error={tariffError}
+              from={tariffFromInput}
+              to={tariffToInput}
+              isFiltered={Boolean(appliedTariffFrom || appliedTariffTo)}
+              onFromChange={setTariffFromInput}
+              onToChange={setTariffToInput}
+              onSearchSubmit={submitTariffSearch}
+              onSearchClear={clearTariffSearch}
+            />
+          </CollapsibleSection>
+        );
+      case "nightDryRun":
+        return (
+          <CollapsibleSection
+            title="夜間制御 dry-run 履歴"
+            summary={logSectionSummary(nightDryRunPlanLogs.length, nightDryRunPlanError)}
+            open={openSections.nightDryRun}
+            onToggle={() => toggleSection("nightDryRun")}
+            headerControls={headerControls}
+          >
+            <DryRunPlanHistory
+              logs={nightDryRunPlanLogs}
+              error={nightDryRunPlanError}
+              title="夜間制御 dry-run 履歴"
+              marker="night dry-run plan:"
+              emptyMessage="夜間制御 dry-run 計画はまだ記録されていません。"
+            />
+          </CollapsibleSection>
+        );
+      case "surplusCommand":
+        return (
+          <CollapsibleSection
+            title="余剰追従 実行ログ"
+            summary={pagedLogSectionSummary(surplusCommandTotal, surplusCommandPage, surplusControlCommandLogPageSize, surplusCommandError)}
+            open={openSections.surplusCommand}
+            onToggle={() => toggleSection("surplusCommand")}
+            headerControls={headerControls}
+          >
+            <SurplusControlCommandLogTable
+              logs={surplusCommandLogs}
+              error={surplusCommandError}
+              page={surplusCommandPage}
+              pageSize={surplusControlCommandLogPageSize}
+              total={surplusCommandTotal}
+              onPageChange={setSurplusCommandPage}
+            />
+          </CollapsibleSection>
+        );
+      case "nightPlanLog":
+        return (
+          <CollapsibleSection
+            title="夜間充電計画ログ"
+            summary={pagedLogSectionSummary(nightChargePlanTotal, nightChargePlanPage, nightChargePlanLogPageSize, nightChargePlanError)}
+            open={openSections.nightPlanLog}
+            onToggle={() => toggleSection("nightPlanLog")}
+            headerControls={headerControls}
+          >
+            <NightChargePlanLogTable
+              logs={nightChargePlanLogs}
+              error={nightChargePlanError}
+              page={nightChargePlanPage}
+              pageSize={nightChargePlanLogPageSize}
+              total={nightChargePlanTotal}
+              onPageChange={setNightChargePlanPage}
+            />
+          </CollapsibleSection>
+        );
+      case "nightSummary":
+        return (
+          <CollapsibleSection
+            title="夜間充電 日次検証ログ"
+            summary={pagedLogSectionSummary(nightChargeSummaryTotal, nightChargeSummaryPage, nightChargeSummaryPageSize, nightChargeSummaryError)}
+            open={openSections.nightSummary}
+            onToggle={() => toggleSection("nightSummary")}
+            headerControls={headerControls}
+          >
+            <NightChargeSummaryTable
+              summaries={nightChargeSummaries}
+              error={nightChargeSummaryError}
+              page={nightChargeSummaryPage}
+              pageSize={nightChargeSummaryPageSize}
+              total={nightChargeSummaryTotal}
+              from={nightChargeSummaryFromInput}
+              to={nightChargeSummaryToInput}
+              isFiltered={Boolean(appliedNightChargeSummaryFrom || appliedNightChargeSummaryTo)}
+              onFromChange={setNightChargeSummaryFromInput}
+              onToChange={setNightChargeSummaryToInput}
+              onSearchSubmit={submitNightChargeSummarySearch}
+              onSearchClear={clearNightChargeSummarySearch}
+              onPageChange={setNightChargeSummaryPage}
+            />
+          </CollapsibleSection>
+        );
+      case "surplusDryRun":
+        return (
+          <CollapsibleSection
+            title="余剰追従 dry-run 履歴"
+            summary={logSectionSummary(dryRunPlanLogs.length, dryRunPlanError)}
+            open={openSections.surplusDryRun}
+            onToggle={() => toggleSection("surplusDryRun")}
+            headerControls={headerControls}
+          >
+            <DryRunPlanHistory logs={dryRunPlanLogs} error={dryRunPlanError} />
+          </CollapsibleSection>
+        );
+      case "energyMeter":
+        return (
+          <CollapsibleSection
+            title="電力量ログ"
+            summary={pagedLogSectionSummary(energyMeterTotal, energyMeterPage, energyMeterLogPageSize, energyMeterError)}
+            open={openSections.energyMeter}
+            onToggle={() => toggleSection("energyMeter")}
+            headerControls={headerControls}
+          >
+            <EnergyMeterLogTable
+              logs={energyMeterLogs}
+              error={energyMeterError}
+              page={energyMeterPage}
+              pageSize={energyMeterLogPageSize}
+              total={energyMeterTotal}
+              from={energyMeterFromInput}
+              to={energyMeterToInput}
+              isFiltered={Boolean(appliedEnergyMeterFrom || appliedEnergyMeterTo)}
+              onFromChange={setEnergyMeterFromInput}
+              onToChange={setEnergyMeterToInput}
+              onSearchSubmit={submitEnergyMeterSearch}
+              onSearchClear={clearEnergyMeterSearch}
+              onPageChange={setEnergyMeterPage}
+            />
+          </CollapsibleSection>
+        );
+      case "controlLog":
+        return (
+          <CollapsibleSection
+            title="制御ログ"
+            summary={pagedLogSectionSummary(logTotal, logPage, logPageSize, logsError)}
+            open={openSections.controlLog}
+            onToggle={() => toggleSection("controlLog")}
+            headerControls={headerControls}
+          >
+            <LogTable
+              logs={tableLogs}
+              error={logsError}
+              page={logPage}
+              pageSize={logPageSize}
+              total={logTotal}
+              search={logSearchInput}
+              from={logFromInput}
+              to={logToInput}
+              isFiltered={Boolean(appliedLogSearch || appliedLogFrom || appliedLogTo)}
+              onSearchChange={setLogSearchInput}
+              onFromChange={setLogFromInput}
+              onToChange={setLogToInput}
+              onSearchSubmit={submitLogSearch}
+              onSearchClear={clearLogSearch}
+              onPageChange={setLogPage}
+            />
+          </CollapsibleSection>
+        );
+    }
+  }
+
+  const visibleSectionOrder = sectionOrder.filter((section) => isDashboardSectionVisible(section, status));
 
   return (
     <main className="page-shell">
       <Header status={status} />
-      <StatusCards
-        status={status}
-        fetchError={statusError}
-        chartSlot={<EnergyCharts logs={chartLogs} rangeLabel={logRange.label} ranges={logRanges} selectedRange={logRange} onRangeChange={setLogRange} />}
-      />
-      <ControlPanel onTariffPlanSaved={() => setTariffRefreshToken((value) => value + 1)} />
-      <SolarForecastPanel
-        summary={solarForecast}
-        error={solarForecastError}
-        ranges={forecastRanges}
-        selectedRange={forecastRange}
-        loading={solarForecastLoading}
-        onRangeChange={setForecastRange}
-      />
-      <TariffSummaryPanel
-        summary={tariffSummary}
-        error={tariffError}
-        from={tariffFromInput}
-        to={tariffToInput}
-        isFiltered={Boolean(appliedTariffFrom || appliedTariffTo)}
-        onFromChange={setTariffFromInput}
-        onToChange={setTariffToInput}
-        onSearchSubmit={submitTariffSearch}
-        onSearchClear={clearTariffSearch}
-      />
-      <CollapsibleLogSection
-        title="夜間制御 dry-run 履歴"
-        summary={logSectionSummary(nightDryRunPlanLogs.length, nightDryRunPlanError)}
-        open={openLogSections.nightDryRun}
-        onToggle={() => toggleLogSection("nightDryRun")}
-      >
-        <DryRunPlanHistory
-          logs={nightDryRunPlanLogs}
-          error={nightDryRunPlanError}
-          title="夜間制御 dry-run 履歴"
-          marker="night dry-run plan:"
-          emptyMessage="夜間制御 dry-run 計画はまだ記録されていません。"
-        />
-      </CollapsibleLogSection>
-      <CollapsibleLogSection
-        title="余剰追従 実行ログ"
-        summary={pagedLogSectionSummary(surplusCommandTotal, surplusCommandPage, surplusControlCommandLogPageSize, surplusCommandError)}
-        open={openLogSections.surplusCommand}
-        onToggle={() => toggleLogSection("surplusCommand")}
-      >
-        <SurplusControlCommandLogTable
-          logs={surplusCommandLogs}
-          error={surplusCommandError}
-          page={surplusCommandPage}
-          pageSize={surplusControlCommandLogPageSize}
-          total={surplusCommandTotal}
-          onPageChange={setSurplusCommandPage}
-        />
-      </CollapsibleLogSection>
-      <CollapsibleLogSection
-        title="夜間充電計画ログ"
-        summary={pagedLogSectionSummary(nightChargePlanTotal, nightChargePlanPage, nightChargePlanLogPageSize, nightChargePlanError)}
-        open={openLogSections.nightPlan}
-        onToggle={() => toggleLogSection("nightPlan")}
-      >
-        <NightChargePlanLogTable
-          logs={nightChargePlanLogs}
-          error={nightChargePlanError}
-          page={nightChargePlanPage}
-          pageSize={nightChargePlanLogPageSize}
-          total={nightChargePlanTotal}
-          onPageChange={setNightChargePlanPage}
-        />
-      </CollapsibleLogSection>
-      <CollapsibleLogSection
-        title="夜間充電 日次検証ログ"
-        summary={pagedLogSectionSummary(nightChargeSummaryTotal, nightChargeSummaryPage, nightChargeSummaryPageSize, nightChargeSummaryError)}
-        open={openLogSections.nightSummary}
-        onToggle={() => toggleLogSection("nightSummary")}
-      >
-        <NightChargeSummaryTable
-          summaries={nightChargeSummaries}
-          error={nightChargeSummaryError}
-          page={nightChargeSummaryPage}
-          pageSize={nightChargeSummaryPageSize}
-          total={nightChargeSummaryTotal}
-          from={nightChargeSummaryFromInput}
-          to={nightChargeSummaryToInput}
-          isFiltered={Boolean(appliedNightChargeSummaryFrom || appliedNightChargeSummaryTo)}
-          onFromChange={setNightChargeSummaryFromInput}
-          onToChange={setNightChargeSummaryToInput}
-          onSearchSubmit={submitNightChargeSummarySearch}
-          onSearchClear={clearNightChargeSummarySearch}
-          onPageChange={setNightChargeSummaryPage}
-        />
-      </CollapsibleLogSection>
-      <CollapsibleLogSection
-        title="余剰追従 dry-run 履歴"
-        summary={logSectionSummary(dryRunPlanLogs.length, dryRunPlanError)}
-        open={openLogSections.surplusDryRun}
-        onToggle={() => toggleLogSection("surplusDryRun")}
-      >
-        <DryRunPlanHistory logs={dryRunPlanLogs} error={dryRunPlanError} />
-      </CollapsibleLogSection>
-      <CollapsibleLogSection
-        title="電力量ログ"
-        summary={pagedLogSectionSummary(energyMeterTotal, energyMeterPage, energyMeterLogPageSize, energyMeterError)}
-        open={openLogSections.energyMeter}
-        onToggle={() => toggleLogSection("energyMeter")}
-      >
-        <EnergyMeterLogTable
-          logs={energyMeterLogs}
-          error={energyMeterError}
-          page={energyMeterPage}
-          pageSize={energyMeterLogPageSize}
-          total={energyMeterTotal}
-          from={energyMeterFromInput}
-          to={energyMeterToInput}
-          isFiltered={Boolean(appliedEnergyMeterFrom || appliedEnergyMeterTo)}
-          onFromChange={setEnergyMeterFromInput}
-          onToChange={setEnergyMeterToInput}
-          onSearchSubmit={submitEnergyMeterSearch}
-          onSearchClear={clearEnergyMeterSearch}
-          onPageChange={setEnergyMeterPage}
-        />
-      </CollapsibleLogSection>
-      <CollapsibleLogSection
-        title="制御ログ"
-        summary={pagedLogSectionSummary(logTotal, logPage, logPageSize, logsError)}
-        open={openLogSections.control}
-        onToggle={() => toggleLogSection("control")}
-      >
-        <LogTable
-          logs={tableLogs}
-          error={logsError}
-          page={logPage}
-          pageSize={logPageSize}
-          total={logTotal}
-          search={logSearchInput}
-          from={logFromInput}
-          to={logToInput}
-          isFiltered={Boolean(appliedLogSearch || appliedLogFrom || appliedLogTo)}
-          onSearchChange={setLogSearchInput}
-          onFromChange={setLogFromInput}
-          onToChange={setLogToInput}
-          onSearchSubmit={submitLogSearch}
-          onSearchClear={clearLogSearch}
-          onPageChange={setLogPage}
-        />
-      </CollapsibleLogSection>
+      <StatusCards status={status} fetchError={statusError} />
+      <section className="sortable-dashboard" aria-label="dashboard blocks">
+        {visibleSectionOrder.map((section, index) => {
+          const sortControls = (
+            <DashboardSortControls
+              section={section}
+              draggableLabel={dashboardSectionLabel(section)}
+              canMoveUp={index > 0}
+              canMoveDown={index < visibleSectionOrder.length - 1}
+              onMoveUp={() => moveSection(section, -1)}
+              onMoveDown={() => moveSection(section, 1)}
+              onDragStart={() => setDraggingSection(section)}
+            />
+          );
+          const block = renderDashboardBlock(section, sortControls);
+          if (!block) {
+            return null;
+          }
+          return (
+            <SortableDashboardBlock
+              key={section}
+              section={section}
+              isDragging={draggingSection === section}
+              onDrop={() => moveDraggedSection(section)}
+              onDragEnd={() => setDraggingSection(null)}
+            >
+              {block}
+            </SortableDashboardBlock>
+          );
+        })}
+      </section>
     </main>
   );
 }
 
-function CollapsibleLogSection({
-  title,
-  summary,
-  open,
-  onToggle,
+function SortableDashboardBlock({
+  section,
+  isDragging,
+  onDrop,
+  onDragEnd,
   children
 }: {
-  title: string;
-  summary: string;
-  open: boolean;
-  onToggle: () => void;
+  section: DashboardSectionKey;
+  isDragging: boolean;
+  onDrop: () => void;
+  onDragEnd: () => void;
   children: ReactNode;
 }) {
   return (
-    <section className="collapsible-log-section section">
-      <div className="collapsible-log-header">
-        <div>
-          <h2>{title}</h2>
-          <p>{summary}</p>
-        </div>
-        <Button type="button" variant="outline" className="collapsible-log-toggle" aria-expanded={open} onClick={onToggle}>
-          <span className="collapsible-log-toggle-icon" aria-hidden="true">
-            {open ? "-" : "+"}
-          </span>
-          {open ? "閉じる" : "開く"}
-        </Button>
-      </div>
-      {open ? <div className="collapsible-log-body">{children}</div> : null}
-    </section>
+    <div
+      className={`sortable-dashboard-block${isDragging ? " is-dragging" : ""}`}
+      data-dashboard-block={section}
+      onDragOver={(event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        onDrop();
+        onDragEnd();
+      }}
+      onDragEnd={onDragEnd}
+    >
+      {children}
+    </div>
+  );
+}
+
+function DashboardSortControls({
+  section,
+  draggableLabel,
+  canMoveUp,
+  canMoveDown,
+  onMoveUp,
+  onMoveDown,
+  onDragStart
+}: {
+  section: DashboardSectionKey;
+  draggableLabel: string;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onDragStart: () => void;
+}) {
+  return (
+    <div className="sortable-dashboard-controls" aria-label={`${draggableLabel} の並び替え`}>
+      <span
+        className="sortable-dashboard-handle"
+        draggable
+        role="img"
+        aria-label={`${draggableLabel} をドラッグして移動`}
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", section);
+          onDragStart();
+        }}
+      >
+        ::
+      </span>
+      <Button type="button" variant="outline" className="sortable-dashboard-button" disabled={!canMoveUp} onClick={onMoveUp}>
+        上へ
+      </Button>
+      <Button type="button" variant="outline" className="sortable-dashboard-button" disabled={!canMoveDown} onClick={onMoveDown}>
+        下へ
+      </Button>
+    </div>
   );
 }
 
@@ -715,6 +975,117 @@ function logSectionSummary(count: number, error: string | null) {
     return `取得エラー: ${error}`;
   }
   return `${count}件表示`;
+}
+
+function mergeStoredSections(savedSections: string) {
+  const parsed = JSON.parse(savedSections);
+  if (!parsed || typeof parsed !== "object") {
+    return initialDashboardSections;
+  }
+  return Object.entries(initialDashboardSections).reduce<Record<DashboardSectionKey, boolean>>((nextSections, [section, defaultOpen]) => {
+    const storedValue = (parsed as Record<string, unknown>)[section];
+    nextSections[section as DashboardSectionKey] = typeof storedValue === "boolean" ? storedValue : defaultOpen;
+    return nextSections;
+  }, { ...initialDashboardSections });
+}
+
+function mergeStoredSectionOrder(savedOrder: string) {
+  const parsed = JSON.parse(savedOrder);
+  if (!Array.isArray(parsed)) {
+    return defaultSectionOrder;
+  }
+  const validStoredSections = parsed.filter((section): section is DashboardSectionKey => isDashboardSectionKey(section));
+  const missingSections = defaultSectionOrder.filter((section) => !validStoredSections.includes(section));
+  return [...validStoredSections, ...missingSections];
+}
+
+function isDashboardSectionKey(value: unknown): value is DashboardSectionKey {
+  return typeof value === "string" && defaultSectionOrder.includes(value as DashboardSectionKey);
+}
+
+function moveSectionInVisibleOrder(
+  current: DashboardSectionKey[],
+  section: DashboardSectionKey,
+  direction: -1 | 1,
+  isVisible: (section: DashboardSectionKey) => boolean
+) {
+  const visibleSections = current.filter(isVisible);
+  const fromVisibleIndex = visibleSections.indexOf(section);
+  const toVisibleIndex = fromVisibleIndex + direction;
+  if (fromVisibleIndex < 0 || toVisibleIndex < 0 || toVisibleIndex >= visibleSections.length) {
+    return current;
+  }
+  return moveSectionNearTarget(current, section, visibleSections[toVisibleIndex]);
+}
+
+function isDashboardSectionVisible(section: DashboardSectionKey, status: EnergyStatus) {
+  if (section === "surplusPlan") {
+    return Boolean(status.surplusPlan);
+  }
+  if (section === "nightPlan") {
+    return Boolean(status.nightChargePlan);
+  }
+  return true;
+}
+
+function moveSectionNearTarget(current: DashboardSectionKey[], draggingSection: DashboardSectionKey, targetSection: DashboardSectionKey) {
+  const fromIndex = current.indexOf(draggingSection);
+  const targetIndex = current.indexOf(targetSection);
+  if (fromIndex < 0 || targetIndex < 0 || fromIndex === targetIndex) {
+    return current;
+  }
+  const next = [...current];
+  const [item] = next.splice(fromIndex, 1);
+  const insertionIndex = fromIndex < targetIndex ? targetIndex : targetIndex;
+  next.splice(insertionIndex, 0, item);
+  return next;
+}
+
+function dashboardSectionLabel(section: DashboardSectionKey) {
+  const labels: Record<DashboardSectionKey, string> = {
+    charts: "推移グラフ",
+    decision: "制御判断",
+    surplusPlan: "余剰追従プラン",
+    nightPlan: "深夜充電プラン",
+    settings: "設定",
+    solarForecast: "発電予測",
+    tariffSummary: "料金概算",
+    nightDryRun: "夜間制御 dry-run 履歴",
+    surplusCommand: "余剰追従 実行ログ",
+    nightPlanLog: "夜間充電計画ログ",
+    nightSummary: "夜間充電 日次検証ログ",
+    surplusDryRun: "余剰追従 dry-run 履歴",
+    energyMeter: "電力量ログ",
+    controlLog: "制御ログ"
+  };
+  return labels[section];
+}
+
+function solarForecastSummary(summary: SolarForecastSummary | null, rangeLabel: string, error: string | null) {
+  if (error) {
+    return `取得エラー: ${error}`;
+  }
+  if (!summary) {
+    return `${rangeLabel} / 取得待ち`;
+  }
+  return `${rangeLabel} / ${summary.items.length}日分`;
+}
+
+function tariffSummaryLabel(summary: TariffSummary | null, error: string | null) {
+  if (error) {
+    return `取得エラー: ${error}`;
+  }
+  if (!summary) {
+    return "取得待ち";
+  }
+  return `${summary.planName} / ${summary.sampleCount}件`;
+}
+
+function formatDateTime(value: string) {
+  if (!value) {
+    return "-";
+  }
+  return new Date(value).toLocaleString("ja-JP");
 }
 
 function pagedLogSectionSummary(total: number, page: number, pageSize: number, error: string | null) {

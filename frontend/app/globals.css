@@ -52,39 +52,51 @@ input {
   margin-top: 16px;
 }
 
-.collapsible-log-section {
+.collapsible-section {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: rgba(255, 255, 255, 0.62);
   padding: 10px 12px;
 }
 
-.collapsible-log-header {
+.collapsible-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.collapsible-log-header h2 {
+.collapsible-heading {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.collapsible-header h2 {
   margin: 0;
   font-size: 17px;
   line-height: 1.25;
 }
 
-.collapsible-log-header p {
+.collapsible-header p {
   margin: 4px 0 0;
   color: var(--muted-foreground);
   font-size: 13px;
   font-weight: 700;
 }
 
-.collapsible-log-toggle {
+.collapsible-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.collapsible-toggle {
   min-width: 92px;
   flex: 0 0 auto;
 }
 
-.collapsible-log-toggle-icon {
+.collapsible-toggle-icon {
   display: inline-flex;
   width: 14px;
   justify-content: center;
@@ -92,8 +104,53 @@ input {
   font-weight: 900;
 }
 
-.collapsible-log-body {
+.collapsible-body {
   margin-top: 10px;
+}
+
+.collapsible-body > .section:first-child {
+  margin-top: 0;
+}
+
+.sortable-dashboard {
+  margin-top: 16px;
+}
+
+.sortable-dashboard-block {
+  border-radius: var(--radius);
+}
+
+.sortable-dashboard-block.is-dragging {
+  opacity: 0.58;
+}
+
+.sortable-dashboard-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.sortable-dashboard-handle {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted-foreground);
+  cursor: grab;
+  letter-spacing: 1px;
+}
+
+.sortable-dashboard-button {
+  min-height: 28px;
+  padding: 4px 9px;
+  font-size: 12px;
 }
 
 .app-header {
@@ -861,13 +918,22 @@ input {
     padding: 24px 0;
   }
 
-  .collapsible-log-header {
+  .collapsible-header {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .collapsible-log-toggle {
+  .collapsible-actions,
+  .collapsible-toggle {
     width: 100%;
+  }
+
+  .sortable-dashboard-controls {
+    width: 100%;
+  }
+
+  .sortable-dashboard-button {
+    flex: 1 1 0;
   }
 
   .app-header {
