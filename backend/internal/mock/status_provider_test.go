@@ -110,6 +110,9 @@ func TestStatusProviderRecordsWouldSendWithoutMarkingCommandSent(t *testing.T) {
 	if !strings.Contains(status.LastDecisionReason, "would-send") {
 		t.Fatalf("LastDecisionReason = %q, want would-send marker", status.LastDecisionReason)
 	}
+	if status.State != "real-control" {
+		t.Fatalf("State = %q, want real-control", status.State)
+	}
 	if status.SurplusPlan == nil || !strings.Contains(status.SurplusPlan.ActionSummary, "AC充電上限を1400Wへ設定") {
 		t.Fatalf("SurplusPlan = %+v, want AC charge dry-run action", status.SurplusPlan)
 	}

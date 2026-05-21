@@ -185,12 +185,27 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 		SurplusPlan:         &surplusPlan,
 		NightChargePlan:     &nightChargePlan,
 		TargetChargeW:       result.Decision.TargetChargeW,
-		State:               "simulation",
+		State:               p.state(),
 		Mode:                p.mode,
 		LastDecisionReason:  result.Decision.Reason,
 		LastError:           lastError,
 		UpdatedAt:           now,
 	}, nil
+}
+
+func (p *StatusProvider) state() string {
+	switch {
+	case p.mockMode:
+		return "mock"
+	case p.simulationMode:
+		return "simulation"
+	case p.realControl && p.autoControl:
+		return "real-control"
+	case p.realControl:
+		return "real-control-armed"
+	default:
+		return "read-only"
+	}
 }
 
 func (p *StatusProvider) LastCommandActualW() *int {

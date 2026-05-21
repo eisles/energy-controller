@@ -1,45 +1,67 @@
 # Energy Controller
 
-Nature Remo E と EcoFlow DELTA Pro 3 を使った家庭用エネルギー制御アプリです。
+Nature Remo E と EcoFlow DELTA Pro 3 を使い、家庭の買電/売電状況、EcoFlow の SOC/入出力、翌日の PV 発電予測から充電方針を決めるローカル運用向けアプリです。
 
-Phase 1 では実機 API 連携と EcoFlow への書き込み制御は実装していません。デフォルトは必ず mock + simulation です。
+管理画面は Next.js Static Export を Go backend が配信します。backend は SQLite に制御判断、電力量、夜間充電計画、余剰追従コマンド履歴を保存します。
+
+## 安全境界
+
+`.env.example` と Docker Compose の既定値は、必ず mock + simulation + write disabled です。
 
 ```env
 MOCK_MODE=true
 SIMULATION_MODE=true
 ENABLE_REAL_CONTROL=false
 AUTO_CONTROL_ENABLED=false
+CONFIRM_ECOFLOW_WRITE=
+REAL_CONTROL_TRIAL_MINUTES=0
+REAL_CONTROL_TRIAL_UNTIL=
 ```
 
-EcoFlow の実制御は最終フェーズまで有効化しないでください。家庭配線や分電盤に関わる改造は電気工事士に依頼してください。
+EcoFlow への実書き込みは、以下がすべて揃った場合だけ実行されます。
 
-## 環境設定
+- `MOCK_MODE=false`
+- `SIMULATION_MODE=false`
+- `ENABLE_REAL_CONTROL=true`
+- `AUTO_CONTROL_ENABLED=true`
+- `CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND`
+- `REAL_CONTROL_TRIAL_MINUTES` が正の値、または `REAL_CONTROL_TRIAL_UNTIL` が未来時刻
+- `ECOFLOW_ACCESS_KEY` / `ECOFLOW_SECRET_KEY` / `ECOFLOW_DEVICE_SN` が設定済み
 
-`.env.example` には Phase 2 以降で使う制御設定も先に列挙しています。Phase 1 では見本値として保持し、実際の制御判断への反映は後続フェーズで実装します。
-
-主な制御設定:
-
-- `START_EXPORT_THRESHOLD_W`: 充電開始を検討する売電しきい値
-- `STOP_EXPORT_THRESHOLD_W`: 充電停止を検討する売電しきい値
-- `SAFETY_MARGIN_W`: 売電量から差し引く安全余白
-- `MIN_CHARGE_W` / `MAX_CHARGE_W`: 推奨充電 W の下限/上限
-- `TARGET_SOC`: 充電対象 SOC 上限
-- `MIN_COMMAND_INTERVAL_SEC`: コマンド送信の最小間隔
-- `MIN_COMMAND_DIFF_W`: コマンド差分の最小幅
+実制御でも、最小コマンド間隔、最小差分、連続買電/売電回数、AC充電下限/上限、バックアップリザーブ制御を通して、頻繁な送信を避けます。家庭配線や分電盤に関わる改造は電気工事士に依頼してください。EcoFlow AC 出力を家庭用コンセントや系統へ戻す接続は絶対に行わないでください。
 
 ## 構成
 
-- `backend`: Go API server
-- `frontend`: Next.js Static Export
-- `SQLite`: `/app/data/energy.db`
-- `Docker Compose`: local server deployment
+- `backend`: Go API server / control loop / SQLite store
+- `frontend`: Next.js Static Export dashboard
+- `backend/data`: ローカル実行時の SQLite / runtime logs
+- Docker Compose: home server / mini PC / Raspberry Pi / NAS 向け起動
 
-Go backend が `frontend/out` の静的ファイルを配信します。
+主要 API:
 
-## 起動
+- `GET /api/status`: 現在値、余剰追従計画、夜間充電計画
+- `GET /api/logs`: 制御ログ
+- `GET /api/energy-meter-logs`: Nature Remo E 電力量ログ
+- `GET /api/surplus-control-command-logs`: 余剰追従コマンド履歴
+- `GET /api/night-charge-plan-logs`: 夜間充電計画履歴
+- `GET /api/night-charge-summaries`: 夜間充電の日次検証
+- `GET /api/solar-forecast`: PV 発電予測
+
+## 初回セットアップ
 
 ```bash
 cp .env.example .env
+cd frontend
+npm install
+npm run build
+cd ../backend
+go test ./...
+go build -o bin/server ./cmd/server
+```
+
+mock/simulation のまま Docker Compose で起動する場合:
+
+```bash
 docker compose up -d --build
 ```
 
@@ -54,81 +76,118 @@ docker compose up -d --build
 docker compose down
 ```
 
-## ローカル開発
+## 実稼働用 `.env`
 
-backend test:
+実稼働でローカルの `backend/bin/server` を使う場合は、cwd に左右されないように `DB_PATH` と `FRONTEND_DIR` は絶対パスにしてください。
+
+```env
+APP_ENV=local
+HTTP_PORT=18085
+DB_PATH=/Users/sato/go/src/github.com/eisles/energy-controller/backend/data/energy-real-observe.db
+FRONTEND_DIR=/Users/sato/go/src/github.com/eisles/energy-controller/frontend/out
+
+MOCK_MODE=false
+SIMULATION_MODE=false
+ENABLE_REAL_CONTROL=true
+AUTO_CONTROL_ENABLED=true
+CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND
+REAL_CONTROL_TRIAL_MINUTES=1440
+
+NATURE_MODE=cloud
+NATURE_ACCESS_TOKEN=...
+NATURE_APPLIANCE_ID=...
+
+ECOFLOW_ACCESS_KEY=...
+ECOFLOW_SECRET_KEY=...
+ECOFLOW_DEVICE_SN=...
+ECOFLOW_BASE_URL=https://api-e.ecoflow.com
+
+POLL_INTERVAL_SEC=30
+MIN_COMMAND_INTERVAL_SEC=60
+MIN_COMMAND_DIFF_W=100
+MIN_CHARGE_W=400
+MAX_CHARGE_W=1500
+TARGET_EXPORT_BUFFER_W=150
+```
+
+`REAL_CONTROL_TRIAL_MINUTES=1440` は起動から 24 時間だけ実書き込みを許可します。継続運用する場合でも、まず短い時間でログと EcoFlow app の挙動を確認してから延長してください。
+
+Docker Compose で実稼働する場合も、同じ `.env` の値を使います。Compose 内部では container port は `8080`、host port は `${HTTP_PORT}` です。
+
+## ローカル実稼働起動
 
 ```bash
 cd backend
-go test ./...
+./bin/server
 ```
 
-frontend static export:
+起動後に確認します。
 
 ```bash
-cd frontend
-npm install
-npm run build
+curl -sS http://localhost:18085/api/status | jq '{mode,state,lastDecisionReason,lastError,gridW,importW,exportW,batterySoc,batteryInputW,batteryOutputW,acChargeLimitW,backupReserveSoc,surplusPlan,nightChargePlan}'
+tail -f data/real-control-continuous.log
 ```
 
-backend をローカル実行する場合:
+実制御で見るべき点:
+
+- `lastError` が `null`
+- `surplusPlan.wouldWrite` / `nightChargePlan.wouldWrite` または command 履歴で、実行条件に応じた write 候補と送信結果を確認する
+- `commandSent=true` の履歴がある場合、EcoFlow app と read-only status で反映を確認する
+- 買電時は AC 充電を増やしすぎず、売電時だけ余剰吸収候補になる
+- `decisionReason` にコマンド抑制、ガード、SOC、PV予測、夜間計画の理由が残る
+
+## 制御方針
+
+余剰追従:
+
+- Nature Remo E の `exportW` と EcoFlow の `batteryOutputW` / `batteryInputW` を見て、売電を減らす方向に AC 充電上限やバックアップリザーブを調整します。
+- EcoFlow app 上の AC 充電下限は 400W として扱います。
+- 400W 充電が大きすぎる場面では、バックアップリザーブと SOC の関係を使った pass-through 的な挙動も候補にします。
+- 買電へ戻った場合は充電を抑制し、既定リザーブへ戻す候補を出します。
+
+夜間充電:
+
+- 23:00-07:00 を安価な深夜時間帯として扱います。
+- 翌日の時間別日射量から PV 有効時間帯と推定 PV 発電量を作り、EcoFlow 特定回路の過去出力平均、朝 07:00 から PV 開始までの消費、制御対象外負荷を加味して推奨 SOC を決めます。
+- 翌日の PV で十分充電できる見込みなら深夜充電を抑え、不足見込みなら深夜に必要分だけ充電する方針です。
+- TOU / self-powered / backup reserve の切り替えは実機観測に基づくため、必ずログと EcoFlow app で確認してください。
+
+## ロールバック
+
+実制御を止める場合は、`.env` を以下に戻して再起動します。
+
+```env
+MOCK_MODE=true
+SIMULATION_MODE=true
+ENABLE_REAL_CONTROL=false
+AUTO_CONTROL_ENABLED=false
+CONFIRM_ECOFLOW_WRITE=
+REAL_CONTROL_TRIAL_MINUTES=0
+REAL_CONTROL_TRIAL_UNTIL=
+```
+
+ローカルプロセス停止:
 
 ```bash
-cd backend
-FRONTEND_DIR=../frontend/out DB_PATH=./data/energy.db go run ./cmd/server
+lsof -tiTCP:18085 -sTCP:LISTEN | xargs kill
 ```
 
-## Phase 7 dry-run 検証
-
-通常の server / 管理画面経由では、EcoFlow への実 API 書き込みは行いません。Phase 7 の現時点では、server は write 条件が揃った場合でも mock write adapter が would-send として記録するだけです。
-
-dry-run で確認する場合:
+Docker Compose 停止:
 
 ```bash
-cd backend
-HTTP_PORT=18081 \
-FRONTEND_DIR=../frontend/out \
-DB_PATH=./data/energy-dry-run.db \
-MOCK_MODE=false \
-SIMULATION_MODE=false \
-ENABLE_REAL_CONTROL=true \
-AUTO_CONTROL_ENABLED=true \
-NATURE_MODE=local \
-POLL_INTERVAL_SEC=5 \
-go run ./cmd/server
+docker compose down
 ```
 
-確認ポイント:
+## one-shot 実機検証 CLI
 
-- `/api/logs?limit=10` の `decisionReason` に `would-send` が残る
-- `decisionReason` に `surplus dry-run plan: ...` が残り、買電時のAC充電抑制/リザーブ戻し、売電時の充電開始条件を確認できる
-- dry-run のため `commandSent` は `false`
-- dry-run のため `actualCommandW` は `null`
-- interval / diff 抑制時は `decisionReason` に `command suppressed` が残る
-
-## Phase 7 one-shot 実機検証 CLI
-
-EcoFlow への実 API 書き込みは、管理画面や server API ではなく、手動 CLI で 1 command だけ実行します。通常は `--execute` を付けず dry-run してください。
-
-dry-run:
+自動制御ではなく 1 command だけ確認したい場合は、`ecoflow-write-test` を使います。通常は `--execute` を付けず dry-run してください。
 
 ```bash
 cd backend
 go run ./cmd/ecoflow-write-test --watts 1000 --expected-current-limit 1500
 ```
 
-バックアップリザーブ%も同時に検証する場合:
-
-```bash
-cd backend
-go run ./cmd/ecoflow-write-test \
-  --watts 1000 \
-  --expected-current-limit 1500 \
-  --reserve-soc 90 \
-  --expected-current-reserve 88
-```
-
-実行時は read-only API で現在の AC 充電上限が `--expected-current-limit` と一致し、`--reserve-soc` を指定した場合は現在のバックアップリザーブが `--expected-current-reserve` と一致することを確認してから、1 回だけ設定を送ります。余剰を実際に充電へ回すには、AC充電上限Wだけでなく、バックアップリザーブ%を現在SOCより上へ引き上げる必要がある可能性があります。以下の環境変数が全て揃わない場合は送信しません。
+実送信する場合:
 
 ```bash
 cd backend
@@ -137,67 +196,7 @@ SIMULATION_MODE=false \
 ENABLE_REAL_CONTROL=true \
 AUTO_CONTROL_ENABLED=false \
 CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND \
-ECOFLOW_ACCESS_KEY=... \
-ECOFLOW_SECRET_KEY=... \
-ECOFLOW_DEVICE_SN=... \
-ECOFLOW_BASE_URL=https://api-e.ecoflow.com \
 go run ./cmd/ecoflow-write-test --execute --watts 1000 --expected-current-limit 1500
 ```
 
-バックアップリザーブ%も同時に送る場合:
-
-```bash
-cd backend
-MOCK_MODE=false \
-SIMULATION_MODE=false \
-ENABLE_REAL_CONTROL=true \
-AUTO_CONTROL_ENABLED=false \
-CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND \
-ECOFLOW_ACCESS_KEY=... \
-ECOFLOW_SECRET_KEY=... \
-ECOFLOW_DEVICE_SN=... \
-ECOFLOW_BASE_URL=https://api-e.ecoflow.com \
-go run ./cmd/ecoflow-write-test \
-  --execute \
-  --watts 1000 \
-  --expected-current-limit 1500 \
-  --reserve-soc 90 \
-  --expected-current-reserve 88
-```
-
-Energy strategy modes を全て OFF にする one-shot 検証:
-
-```bash
-cd backend
-MOCK_MODE=false \
-SIMULATION_MODE=false \
-ENABLE_REAL_CONTROL=true \
-AUTO_CONTROL_ENABLED=false \
-CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND \
-ECOFLOW_ACCESS_KEY=... \
-ECOFLOW_SECRET_KEY=... \
-ECOFLOW_DEVICE_SN=... \
-ECOFLOW_BASE_URL=https://api-e.ecoflow.com \
-go run ./cmd/ecoflow-write-test \
-  --execute \
-  --disable-energy-modes \
-  --expected-tou-mode=true \
-  --expected-self-powered-mode=false \
-  --expected-scheduled-mode=false \
-  --expected-intelligent-schedule-mode=false
-```
-
-2026-05-19 の実機確認では、AC充電上限とバックアップリザーブだけでは充電が始まらず、energy strategy modes 全OFF 後に `batteryInputW` が約 1.4kW へ増えました。この操作は時間帯制御への影響が大きいため、当面は one-shot CLI に限定し、自動連続制御や UI/API からは実行しません。
-
-実行後は EcoFlow app または read-only status で反映を確認し、`ENABLE_REAL_CONTROL` と `CONFIRM_ECOFLOW_WRITE` は継続運用用に残さないでください。2026-05-19 の実機確認では read-only status 上は 200W まで反映しましたが、EcoFlow app の設定UIでは 400W が最小値として表示されるため、自動制御の下限は 400W として扱います。自動連続制御、UI からの書き込み、server API からの書き込みはまだ有効化していません。
-
-## Phase 1 の実装範囲
-
-- `GET /api/status`
-- SQLite 初期化
-- `settings` / `current_status` / `power_logs` table
-- mock status provider
-- Next.js Static Export の最小管理画面
-- Docker Compose 起動
-
-自動制御ループ、設定更新 API、server / 管理画面からの EcoFlow 書き込み制御は未実装です。EcoFlow への実 API 書き込みは Phase 7 の one-shot CLI に限定しています。
+バックアップリザーブや energy strategy modes の検証も同 CLI で行えます。実行前後は必ず `/api/status` と EcoFlow app の両方で反映を確認してください。

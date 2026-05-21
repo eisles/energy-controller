@@ -27,10 +27,11 @@ func main() {
 
 	cfg := config.Load()
 	if !cfg.SimulationMode || cfg.EnableRealControl {
-		logger.Warn("unsafe mode flags detected; real device control is not implemented in this phase",
+		logger.Warn("real device control flags are enabled; verify guards, trial window, and EcoFlow app state",
 			"mockMode", cfg.MockMode,
 			"simulationMode", cfg.SimulationMode,
 			"enableRealControl", cfg.EnableRealControl,
+			"autoControlEnabled", cfg.AutoControlEnabled,
 		)
 	}
 
