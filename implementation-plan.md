@@ -1929,6 +1929,98 @@ API / UI:
 
 ---
 
+## 余剰売電の手動バッテリー充電通知計画
+
+目的:
+
+- EcoFlow DELTA Pro 3 側の AC 充電が上限、またはバッテリー満充電に近く、太陽光余剰をこれ以上吸収しにくい状態を検知する
+- 売電が多く残っている場合に、別の EcoFlow / ポータブルバッテリーを手動で充電する判断材料として通知する
+- 通知は制御コマンドではなく、人間への read-only alert として扱う
+
+安全境界:
+
+- 既定は `NOTIFICATION_ENABLED=false`
+- Slack webhook URL、メール認証情報、送信先は `.env` でのみ設定し、repository に保存しない
+- 通知は EcoFlow 書き込み制御とは完全に分離し、通知が有効でも実機 write gate を変えない
+- 同じ状態で頻繁に通知しないよう、連続検知回数と cooldown を必須にする
+- 通知送信の成否は SQLite に保存し、失敗しても制御ループを止めない
+
+推奨通知方式:
+
+- Phase 1 は Slack Incoming Webhook のみ実装する
+- メールは `Notifier` interface を分けておき、後続で SMTP notifier を追加できる構造にする
+- Slack を選ぶ理由は、スマホ通知が速く、SMTP 認証・迷惑メール判定・TLS 設定を避けられるため
+
+通知条件:
+
+- `exportW >= MANUAL_CHARGE_ALERT_EXPORT_W`
+- かつ、以下のいずれか:
+  - `acChargeLimitW >= MAX_CHARGE_W`
+  - `batterySoc >= MANUAL_CHARGE_ALERT_SOC`
+  - `surplusPlan.recommendedAcChargeLimitW >= MAX_CHARGE_W`
+  - `surplusPlan.strategyState` または reason が EcoFlow 側で追加吸収しにくい状態を示す
+- 上記状態が `MANUAL_CHARGE_ALERT_CONSECUTIVE` 回以上連続する
+- 前回同じ fingerprint の通知から `MANUAL_CHARGE_ALERT_COOLDOWN_MINUTES` 分以上経過している
+
+設定値:
+
+```env
+NOTIFICATION_ENABLED=false
+NOTIFICATION_PROVIDER=slack
+SLACK_WEBHOOK_URL=
+MANUAL_CHARGE_ALERT_EXPORT_W=700
+MANUAL_CHARGE_ALERT_SOC=95
+MANUAL_CHARGE_ALERT_CONSECUTIVE=3
+MANUAL_CHARGE_ALERT_COOLDOWN_MINUTES=30
+```
+
+実装対象ファイル:
+
+- `backend/internal/config/config.go`
+  - 通知設定を `Config` に追加する
+- `backend/internal/domain/status.go`
+  - 通知ログ用の domain model を追加する
+- `backend/internal/notify/`
+  - `Notifier` interface、`NoopNotifier`、`SlackWebhookNotifier`、手動充電アラート判定を追加する
+- `backend/internal/store/migrations.go`
+  - `notification_logs` テーブルを追加する
+- `backend/internal/store/notification_repository.go`
+  - 最新通知取得、通知ログ保存、ページング取得を追加する
+- `backend/cmd/server/main.go`
+  - control loop の status 保存後に通知評価と送信を呼ぶ
+- `backend/internal/api/`
+  - 必要なら通知ログ API を追加する
+- `frontend/components/`
+  - 必要なら通知ログまたは最新通知状態を表示する
+- `.env.example`
+  - 通知設定を追加し、既定を無効にする
+- `README.md`
+  - Slack 通知の設定方法と安全境界を追記する
+
+実装ステップ:
+
+1. 通知設定を config に追加し、既定無効にする
+2. `ManualChargeAlert` 判定を network なしで unit test 可能な pure function として実装する
+3. `notification_logs` に `measured_at`, `kind`, `fingerprint`, `severity`, `message`, `export_w`, `battery_soc`, `ac_charge_limit_w`, `sent`, `error_message`, `created_at` を保存する
+4. 直近通知ログを参照し、連続検知回数と cooldown で重複通知を抑制する
+5. Slack webhook adapter を追加し、HTTP timeout と non-2xx error を扱う
+6. `recordStatus` の最後で通知評価を行い、通知失敗時は warn log と `notification_logs.error_message` に残す
+7. unit test で、売電不足、SOC不足、AC上限未到達、連続回数不足、cooldown 中、Slack 送信成功/失敗を確認する
+8. `cd backend && go test ./...` を通す
+9. frontend を触る場合は `cd frontend && npm run build` も通す
+
+完了条件:
+
+- default の mock/simulation 起動では通知送信されない
+- Slack URL 未設定では送信されず、制御ループも止まらない
+- 条件を満たす売電過多状態だけ通知候補になる
+- 連続回数と cooldown により通知が連打されない
+- 通知内容に売電W、SOC、AC充電上限、理由、時刻が含まれる
+- 通知は read-only alert であり、EcoFlow write gate や制御コマンドには影響しない
+- `cd backend && go test ./...` が通る
+
+---
+
 ## 最初にCodexへ投げるプロンプト
 
 ```text

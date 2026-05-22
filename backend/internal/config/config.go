@@ -44,9 +44,20 @@ type Config struct {
 	WeatherLongitude      float64
 	WeatherTimezone       string
 	WeatherBaseURL        string
+	NotificationEnabled   bool
+	NotificationProvider  string
+	SlackWebhookURL       string
+	ManualChargeAlert     ManualChargeAlertConfig
 	PollInterval          time.Duration
 	ControlSettings       control.Settings
 	Clock                 Clock
+}
+
+type ManualChargeAlertConfig struct {
+	ExportThresholdW int
+	SocThreshold     int
+	ConsecutiveCount int
+	Cooldown         time.Duration
 }
 
 func Load() Config {
@@ -83,7 +94,16 @@ func Load() Config {
 		WeatherLongitude:      parseFloat(weatherLongitudeRaw, 0),
 		WeatherTimezone:       env("WEATHER_TIMEZONE", "Asia/Tokyo"),
 		WeatherBaseURL:        env("WEATHER_BASE_URL", "https://api.open-meteo.com"),
-		PollInterval:          time.Duration(envInt("POLL_INTERVAL_SEC", 30)) * time.Second,
+		NotificationEnabled:   envBool("NOTIFICATION_ENABLED", false),
+		NotificationProvider:  env("NOTIFICATION_PROVIDER", "slack"),
+		SlackWebhookURL:       env("SLACK_WEBHOOK_URL", ""),
+		ManualChargeAlert: ManualChargeAlertConfig{
+			ExportThresholdW: envInt("MANUAL_CHARGE_ALERT_EXPORT_W", 700),
+			SocThreshold:     envInt("MANUAL_CHARGE_ALERT_SOC", 95),
+			ConsecutiveCount: envInt("MANUAL_CHARGE_ALERT_CONSECUTIVE", 3),
+			Cooldown:         time.Duration(envInt("MANUAL_CHARGE_ALERT_COOLDOWN_MINUTES", 30)) * time.Minute,
+		},
+		PollInterval: time.Duration(envInt("POLL_INTERVAL_SEC", 30)) * time.Second,
 		ControlSettings: control.Settings{
 			StartExportThresholdW:     envInt("START_EXPORT_THRESHOLD_W", 700),
 			StopExportThresholdW:      envInt("STOP_EXPORT_THRESHOLD_W", 300),

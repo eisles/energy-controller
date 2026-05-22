@@ -128,6 +128,22 @@ func migrate(db *sql.DB) error {
 			error_message TEXT,
 			created_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS notification_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			measured_at TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			fingerprint TEXT NOT NULL,
+			severity TEXT NOT NULL,
+			message TEXT NOT NULL,
+			reason TEXT NOT NULL,
+			export_w INTEGER NOT NULL,
+			battery_soc INTEGER NOT NULL,
+			ac_charge_limit_w INTEGER NOT NULL,
+			sent INTEGER NOT NULL DEFAULT 0,
+			error_message TEXT,
+			consecutive_hits INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS tariff_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			plan_name TEXT NOT NULL,

@@ -559,6 +559,42 @@ func TestSurplusControlCommandRepositoryTreatsErroredAttemptsAsWriteCandidates(t
 	}
 }
 
+func TestNotificationRepositoryInsertsAndReadsLatest(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewNotificationRepository(db)
+	now := time.Date(2026, 5, 23, 12, 0, 0, 0, time.UTC)
+	message := "slack unavailable"
+
+	if err := repo.InsertNotificationLog(context.Background(), domain.NotificationLog{
+		MeasuredAt:      now,
+		Kind:            "manual_charge_surplus",
+		Fingerprint:     "sample",
+		Severity:        "warning",
+		Message:         "manual charge alert",
+		Reason:          "AC charge is max",
+		ExportW:         900,
+		BatterySoc:      96,
+		ACChargeLimitW:  1500,
+		Sent:            false,
+		ErrorMessage:    &message,
+		ConsecutiveHits: 3,
+		CreatedAt:       now,
+	}); err != nil {
+		t.Fatalf("InsertNotificationLog failed: %v", err)
+	}
+
+	got, err := repo.LatestNotificationLog(context.Background(), "manual_charge_surplus", "sample")
+	if err != nil {
+		t.Fatalf("LatestNotificationLog failed: %v", err)
+	}
+	if got == nil || got.ExportW != 900 || got.BatterySoc != 96 || got.ACChargeLimitW != 1500 {
+		t.Fatalf("unexpected notification log: %+v", got)
+	}
+	if got.ErrorMessage == nil || *got.ErrorMessage != message {
+		t.Fatalf("ErrorMessage = %v, want %q", got.ErrorMessage, message)
+	}
+}
+
 func TestNightChargeSummaryRepositoryBuildsDailySummary(t *testing.T) {
 	db := openTestDB(t)
 	repo := NewNightChargeSummaryRepositoryWithTimezone(db, "UTC")

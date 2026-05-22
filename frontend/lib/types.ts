@@ -18,6 +18,9 @@ export type EnergyStatus = {
   targetChargeW: number;
   state: string;
   mode: string;
+  realControlTrialUntil?: string | null;
+  realControlTrialActive: boolean;
+  realControlTrialRemainingSeconds: number;
   lastDecisionReason: string;
   lastError: string | null;
   updatedAt: string;

@@ -33,7 +33,7 @@ func NewRouter(deps Dependencies) http.Handler {
 		statusProvider = store.NewStatusRepository(deps.DB)
 		logProvider = store.NewLogRepository(deps.DB)
 	}
-	mux.HandleFunc("GET /api/status", statusHandler(statusProvider, deps.Logger))
+	mux.HandleFunc("GET /api/status", statusHandler(statusProvider, deps.Logger, deps.Config))
 	if logProvider != nil {
 		mux.HandleFunc("GET /api/logs", logsHandler(logProvider, deps.Logger))
 	}

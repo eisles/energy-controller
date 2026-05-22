@@ -131,6 +131,9 @@ const initialStatus: EnergyStatus = {
   targetChargeW: 0,
   state: "loading",
   mode: "mock",
+  realControlTrialUntil: null,
+  realControlTrialActive: false,
+  realControlTrialRemainingSeconds: 0,
   lastDecisionReason: "loading mock simulation status",
   lastError: null,
   updatedAt: ""

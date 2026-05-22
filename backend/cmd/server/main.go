@@ -18,6 +18,7 @@ import (
 	"github.com/eisles/energy-controller/backend/internal/ecoflow"
 	"github.com/eisles/energy-controller/backend/internal/mock"
 	"github.com/eisles/energy-controller/backend/internal/nature"
+	"github.com/eisles/energy-controller/backend/internal/notify"
 	"github.com/eisles/energy-controller/backend/internal/store"
 	"github.com/eisles/energy-controller/backend/internal/weather"
 )
@@ -48,11 +49,13 @@ func main() {
 	energyMeterRepository := store.NewEnergyMeterRepository(db)
 	nightChargePlanRepository := store.NewNightChargePlanRepository(db)
 	surplusControlCommandRepository := store.NewSurplusControlCommandRepository(db)
+	notificationRepository := store.NewNotificationRepository(db)
 	surplusWriteClient := newSurplusWriteClient(cfg)
+	manualChargeAlertService := newManualChargeAlertService(cfg)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	recordStatus(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, surplusWriteClient, energyMeterReader, energyMeterRepository, logger)
-	go runControlLoop(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, surplusWriteClient, energyMeterReader, energyMeterRepository, logger)
+	recordStatus(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, notificationRepository, manualChargeAlertService, surplusWriteClient, energyMeterReader, energyMeterRepository, logger)
+	go runControlLoop(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, notificationRepository, manualChargeAlertService, surplusWriteClient, energyMeterReader, energyMeterRepository, logger)
 
 	router := api.NewRouter(api.Dependencies{
 		Config:         cfg,
@@ -102,6 +105,16 @@ type surplusControlCommandLogWriter interface {
 	InsertSurplusControlCommandLog(ctx context.Context, log domain.SurplusControlCommandLog) error
 	LatestSurplusControlCommandLog(ctx context.Context) (*domain.SurplusControlCommandLog, error)
 	LatestSurplusControlWriteCandidateLog(ctx context.Context) (*domain.SurplusControlCommandLog, error)
+}
+
+type notificationLogWriter interface {
+	InsertNotificationLog(ctx context.Context, log domain.NotificationLog) error
+	LatestNotificationLog(ctx context.Context, kind string, fingerprint string) (*domain.NotificationLog, error)
+}
+
+type manualChargeAlertEvaluator interface {
+	Fingerprint() string
+	EvaluateAndSend(ctx context.Context, status domain.Status, latest *domain.NotificationLog, now time.Time) (*domain.NotificationLog, error)
 }
 
 type surplusWriteClient interface {
@@ -174,6 +187,21 @@ func newSurplusWriteClient(cfg config.Config) surplusWriteClient {
 	})
 }
 
+func newManualChargeAlertService(cfg config.Config) *notify.ManualChargeAlertService {
+	var notifier notify.Notifier = notify.NoopNotifier{}
+	if cfg.NotificationEnabled && cfg.NotificationProvider == "slack" {
+		notifier = notify.SlackWebhookNotifier{WebhookURL: cfg.SlackWebhookURL}
+	}
+	return notify.NewManualChargeAlertService(notify.ManualChargeAlertSettings{
+		Enabled:          cfg.NotificationEnabled,
+		ExportThresholdW: cfg.ManualChargeAlert.ExportThresholdW,
+		SocThreshold:     cfg.ManualChargeAlert.SocThreshold,
+		ConsecutiveCount: cfg.ManualChargeAlert.ConsecutiveCount,
+		Cooldown:         cfg.ManualChargeAlert.Cooldown,
+		MaxChargeW:       cfg.ControlSettings.MaxChargeW,
+	}, notifier)
+}
+
 func newWeatherReader(cfg config.Config, db *sql.DB) mock.WeatherReader {
 	forecastClient := weather.NewOpenMeteoClient(weather.OpenMeteoConfig{
 		Latitude:  cfg.WeatherLatitude,
@@ -190,7 +218,7 @@ func newWeatherReader(cfg config.Config, db *sql.DB) mock.WeatherReader {
 	return forecastClient
 }
 
-func runControlLoop(ctx context.Context, cfg config.Config, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, writeClient surplusWriteClient, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
+func runControlLoop(ctx context.Context, cfg config.Config, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, notificationRepository notificationLogWriter, manualChargeAlertService manualChargeAlertEvaluator, writeClient surplusWriteClient, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
 	interval := cfg.PollInterval
 	if interval <= 0 {
 		interval = 30 * time.Second
@@ -202,12 +230,12 @@ func runControlLoop(ctx context.Context, cfg config.Config, provider api.StatusP
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			recordStatus(ctx, cfg, provider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, writeClient, meterReader, meterRepository, logger)
+			recordStatus(ctx, cfg, provider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, notificationRepository, manualChargeAlertService, writeClient, meterReader, meterRepository, logger)
 		}
 	}
 }
 
-func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, writeClient surplusWriteClient, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
+func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, notificationRepository notificationLogWriter, manualChargeAlertService manualChargeAlertEvaluator, writeClient surplusWriteClient, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
 	status, err := provider.CurrentStatus(ctx)
 	if err != nil {
 		logger.Error("failed to evaluate current status", "error", err)
@@ -256,8 +284,30 @@ func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusPro
 		logger.Error("failed to update current status", "error", err)
 		return
 	}
+	recordManualChargeAlert(ctx, cfg, status, notificationRepository, manualChargeAlertService, logger)
 	recordEnergyMeterReading(ctx, meterReader, meterRepository, logger)
 	logger.Info("control decision saved", "mode", status.Mode, "state", status.State, "gridW", status.GridW, "targetChargeW", status.TargetChargeW, "reason", status.LastDecisionReason)
+}
+
+func recordManualChargeAlert(ctx context.Context, cfg config.Config, status domain.Status, repository notificationLogWriter, service manualChargeAlertEvaluator, logger *slog.Logger) {
+	if repository == nil || service == nil {
+		return
+	}
+	latest, err := repository.LatestNotificationLog(ctx, notify.ManualChargeAlertKind, service.Fingerprint())
+	if err != nil {
+		logger.Warn("failed to load latest manual charge notification log", "error", err)
+		return
+	}
+	log, err := service.EvaluateAndSend(ctx, status, latest, controlClockNow(cfg))
+	if log == nil {
+		return
+	}
+	if err != nil {
+		logger.Warn("failed to send manual charge notification", "error", err)
+	}
+	if insertErr := repository.InsertNotificationLog(ctx, *log); insertErr != nil {
+		logger.Warn("failed to save manual charge notification log", "error", insertErr)
+	}
 }
 
 func applyNightChargePlanControl(ctx context.Context, cfg config.Config, status *domain.Status, writeClient surplusWriteClient, previous *domain.NightChargePlanLog) bool {

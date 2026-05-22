@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eisles/energy-controller/backend/internal/config"
 	"github.com/eisles/energy-controller/backend/internal/domain"
 	"github.com/eisles/energy-controller/backend/internal/store"
 )
@@ -33,11 +34,19 @@ func (stubStatusProvider) CurrentStatus(context.Context) (domain.Status, error) 
 	}, nil
 }
 
+type fixedAPIClock struct {
+	now time.Time
+}
+
+func (c fixedAPIClock) Now() time.Time {
+	return c.now
+}
+
 func TestStatusHandlerReturnsJSON(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	rec := httptest.NewRecorder()
 
-	statusHandler(stubStatusProvider{}, slog.Default())(rec, req)
+	statusHandler(stubStatusProvider{}, slog.Default(), config.Config{})(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
@@ -51,6 +60,35 @@ func TestStatusHandlerReturnsJSON(t *testing.T) {
 	}
 	if payload["gridW"] != float64(-850) {
 		t.Fatalf("gridW = %#v, want -850", payload["gridW"])
+	}
+}
+
+func TestStatusHandlerAddsRealControlTrialStatus(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+	now := time.Date(2026, 5, 23, 7, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	until := now.Add(2 * time.Hour)
+
+	statusHandler(stubStatusProvider{}, slog.Default(), config.Config{
+		RealControlTrialUntil: until,
+		Clock:                 fixedAPIClock{now: now},
+	})(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("invalid json response: %v", err)
+	}
+	if payload["realControlTrialActive"] != true {
+		t.Fatalf("realControlTrialActive = %#v, want true", payload["realControlTrialActive"])
+	}
+	if payload["realControlTrialUntil"] != until.Format(time.RFC3339) {
+		t.Fatalf("realControlTrialUntil = %#v, want %s", payload["realControlTrialUntil"], until.Format(time.RFC3339))
+	}
+	if payload["realControlTrialRemainingSeconds"] != float64(7200) {
+		t.Fatalf("realControlTrialRemainingSeconds = %#v, want 7200", payload["realControlTrialRemainingSeconds"])
 	}
 }
 

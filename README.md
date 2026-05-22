@@ -91,7 +91,8 @@ SIMULATION_MODE=false
 ENABLE_REAL_CONTROL=true
 AUTO_CONTROL_ENABLED=true
 CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND
-REAL_CONTROL_TRIAL_MINUTES=1440
+REAL_CONTROL_TRIAL_MINUTES=0
+REAL_CONTROL_TRIAL_UNTIL=YYYY-MM-DDTHH:MM:SS+09:00
 
 NATURE_MODE=cloud
 NATURE_ACCESS_TOKEN=...
@@ -108,11 +109,35 @@ MIN_COMMAND_DIFF_W=100
 MIN_CHARGE_W=400
 MAX_CHARGE_W=1500
 TARGET_EXPORT_BUFFER_W=150
+
+NOTIFICATION_ENABLED=false
+NOTIFICATION_PROVIDER=slack
+SLACK_WEBHOOK_URL=
+MANUAL_CHARGE_ALERT_EXPORT_W=700
+MANUAL_CHARGE_ALERT_SOC=95
+MANUAL_CHARGE_ALERT_CONSECUTIVE=3
+MANUAL_CHARGE_ALERT_COOLDOWN_MINUTES=30
 ```
 
-`REAL_CONTROL_TRIAL_MINUTES=1440` は起動から 24 時間だけ実書き込みを許可します。継続運用する場合でも、まず短い時間でログと EcoFlow app の挙動を確認してから延長してください。
+`REAL_CONTROL_TRIAL_UNTIL` は実書き込み許可の期限です。長期運用では `REAL_CONTROL_TRIAL_MINUTES` よりも、再起動で期限がずれない `REAL_CONTROL_TRIAL_UNTIL` を使ってください。値は運用者が明示的に決め、管理画面のヘッダーと `/api/status` で期限と有効状態を確認してください。
 
 Docker Compose で実稼働する場合も、同じ `.env` の値を使います。Compose 内部では container port は `8080`、host port は `${HTTP_PORT}` です。
+
+### 売電過多の手動充電通知
+
+EcoFlow の AC 充電上限が `MAX_CHARGE_W` に到達している、または SOC が `MANUAL_CHARGE_ALERT_SOC` 以上で、なお `MANUAL_CHARGE_ALERT_EXPORT_W` 以上の売電が続く場合、別バッテリーの手動充電を促す Slack 通知を送れます。通知は read-only alert で、EcoFlow の制御コマンドや write gate には影響しません。
+
+```env
+NOTIFICATION_ENABLED=true
+NOTIFICATION_PROVIDER=slack
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+MANUAL_CHARGE_ALERT_EXPORT_W=700
+MANUAL_CHARGE_ALERT_SOC=95
+MANUAL_CHARGE_ALERT_CONSECUTIVE=3
+MANUAL_CHARGE_ALERT_COOLDOWN_MINUTES=30
+```
+
+Slack webhook URL は secret として扱い、repository に保存しないでください。通知は `MANUAL_CHARGE_ALERT_CONSECUTIVE` 回連続で条件を満たした場合だけ送信し、同じ条件では cooldown 中に再送しません。送信成否は SQLite の `notification_logs` に保存されます。
 
 ## ローカル実稼働起動
 

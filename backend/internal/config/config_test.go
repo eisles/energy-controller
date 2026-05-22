@@ -39,6 +39,13 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	t.Setenv("DEFAULT_RESERVE_SOC", "28")
 	t.Setenv("PASS_THROUGH_ENABLED", "true")
 	t.Setenv("PASS_THROUGH_COOLDOWN_SEC", "420")
+	t.Setenv("NOTIFICATION_ENABLED", "true")
+	t.Setenv("NOTIFICATION_PROVIDER", "slack")
+	t.Setenv("SLACK_WEBHOOK_URL", "https://hooks.slack.test/sample")
+	t.Setenv("MANUAL_CHARGE_ALERT_EXPORT_W", "800")
+	t.Setenv("MANUAL_CHARGE_ALERT_SOC", "96")
+	t.Setenv("MANUAL_CHARGE_ALERT_CONSECUTIVE", "4")
+	t.Setenv("MANUAL_CHARGE_ALERT_COOLDOWN_MINUTES", "45")
 
 	cfg := Load()
 
@@ -137,5 +144,17 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	}
 	if cfg.ControlSettings.PassThroughCooldown != 420*time.Second {
 		t.Fatalf("PassThroughCooldown = %s, want 420s", cfg.ControlSettings.PassThroughCooldown)
+	}
+	if !cfg.NotificationEnabled {
+		t.Fatal("NotificationEnabled = false, want true")
+	}
+	if cfg.NotificationProvider != "slack" || cfg.SlackWebhookURL != "https://hooks.slack.test/sample" {
+		t.Fatalf("unexpected notification config: provider=%q url=%q", cfg.NotificationProvider, cfg.SlackWebhookURL)
+	}
+	if cfg.ManualChargeAlert.ExportThresholdW != 800 || cfg.ManualChargeAlert.SocThreshold != 96 || cfg.ManualChargeAlert.ConsecutiveCount != 4 {
+		t.Fatalf("unexpected manual charge alert config: %+v", cfg.ManualChargeAlert)
+	}
+	if cfg.ManualChargeAlert.Cooldown != 45*time.Minute {
+		t.Fatalf("ManualChargeAlert.Cooldown = %s, want 45m", cfg.ManualChargeAlert.Cooldown)
 	}
 }

@@ -30,28 +30,31 @@ type ControlDecision struct {
 }
 
 type Status struct {
-	GridW               int              `json:"gridW"`
-	ImportW             int              `json:"importW"`
-	ExportW             int              `json:"exportW"`
-	BatterySoc          int              `json:"batterySoc"`
-	BatteryInputW       int              `json:"batteryInputW"`
-	BatteryOutputW      int              `json:"batteryOutputW"`
-	ACChargeLimitW      int              `json:"acChargeLimitW"`
-	BackupReserveSoc    *int             `json:"backupReserveSoc,omitempty"`
-	EnergyBackupEnabled *bool            `json:"energyBackupEnabled,omitempty"`
-	TOUModeEnabled      *bool            `json:"touModeEnabled,omitempty"`
-	SelfPoweredEnabled  *bool            `json:"selfPoweredEnabled,omitempty"`
-	ScheduledEnabled    *bool            `json:"scheduledEnabled,omitempty"`
-	IntelligentEnabled  *bool            `json:"intelligentEnabled,omitempty"`
-	BatteryFullEnergyWh *int             `json:"batteryFullEnergyWh,omitempty"`
-	SurplusPlan         *SurplusPlan     `json:"surplusPlan,omitempty"`
-	NightChargePlan     *NightChargePlan `json:"nightChargePlan,omitempty"`
-	TargetChargeW       int              `json:"targetChargeW"`
-	State               string           `json:"state"`
-	Mode                string           `json:"mode"`
-	LastDecisionReason  string           `json:"lastDecisionReason"`
-	LastError           *string          `json:"lastError"`
-	UpdatedAt           time.Time        `json:"updatedAt"`
+	GridW                            int              `json:"gridW"`
+	ImportW                          int              `json:"importW"`
+	ExportW                          int              `json:"exportW"`
+	BatterySoc                       int              `json:"batterySoc"`
+	BatteryInputW                    int              `json:"batteryInputW"`
+	BatteryOutputW                   int              `json:"batteryOutputW"`
+	ACChargeLimitW                   int              `json:"acChargeLimitW"`
+	BackupReserveSoc                 *int             `json:"backupReserveSoc,omitempty"`
+	EnergyBackupEnabled              *bool            `json:"energyBackupEnabled,omitempty"`
+	TOUModeEnabled                   *bool            `json:"touModeEnabled,omitempty"`
+	SelfPoweredEnabled               *bool            `json:"selfPoweredEnabled,omitempty"`
+	ScheduledEnabled                 *bool            `json:"scheduledEnabled,omitempty"`
+	IntelligentEnabled               *bool            `json:"intelligentEnabled,omitempty"`
+	BatteryFullEnergyWh              *int             `json:"batteryFullEnergyWh,omitempty"`
+	SurplusPlan                      *SurplusPlan     `json:"surplusPlan,omitempty"`
+	NightChargePlan                  *NightChargePlan `json:"nightChargePlan,omitempty"`
+	TargetChargeW                    int              `json:"targetChargeW"`
+	State                            string           `json:"state"`
+	Mode                             string           `json:"mode"`
+	RealControlTrialUntil            *time.Time       `json:"realControlTrialUntil,omitempty"`
+	RealControlTrialActive           bool             `json:"realControlTrialActive"`
+	RealControlTrialRemainingSeconds int64            `json:"realControlTrialRemainingSeconds"`
+	LastDecisionReason               string           `json:"lastDecisionReason"`
+	LastError                        *string          `json:"lastError"`
+	UpdatedAt                        time.Time        `json:"updatedAt"`
 }
 
 type SurplusPlan struct {
@@ -340,6 +343,23 @@ type SurplusControlCommandLog struct {
 	DecisionReason            string    `json:"decisionReason"`
 	ErrorMessage              *string   `json:"errorMessage"`
 	CreatedAt                 time.Time `json:"createdAt"`
+}
+
+type NotificationLog struct {
+	ID              int64     `json:"id"`
+	MeasuredAt      time.Time `json:"measuredAt"`
+	Kind            string    `json:"kind"`
+	Fingerprint     string    `json:"fingerprint"`
+	Severity        string    `json:"severity"`
+	Message         string    `json:"message"`
+	Reason          string    `json:"reason"`
+	ExportW         int       `json:"exportW"`
+	BatterySoc      int       `json:"batterySoc"`
+	ACChargeLimitW  int       `json:"acChargeLimitW"`
+	Sent            bool      `json:"sent"`
+	ErrorMessage    *string   `json:"errorMessage"`
+	ConsecutiveHits int       `json:"consecutiveHits"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 type EnergyMeterLog struct {
