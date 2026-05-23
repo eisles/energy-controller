@@ -3,15 +3,16 @@ package ecoflowdelta3
 import "fmt"
 
 type WriteGuards struct {
-	MockMode             bool
-	SimulationMode       bool
-	EnableRealControl    bool
-	AutoControlEnabled   bool
-	ConfirmEcoFlowWrite  string
-	Execute              bool
-	AllowPrivateAPIWrite bool
-	Command              string
-	DeviceType           string
+	MockMode                bool
+	SimulationMode          bool
+	EnableRealControl       bool
+	AutoControlEnabled      bool
+	AllowAutoControlOverlap bool
+	ConfirmEcoFlowWrite     string
+	Execute                 bool
+	AllowPrivateAPIWrite    bool
+	Command                 string
+	DeviceType              string
 }
 
 func (g WriteGuards) Validate() error {
@@ -30,8 +31,8 @@ func (g WriteGuards) Validate() error {
 	if !g.EnableRealControl {
 		return fmt.Errorf("DELTA_3 private write disabled: ENABLE_REAL_CONTROL=false")
 	}
-	if g.AutoControlEnabled {
-		return fmt.Errorf("DELTA_3 private write disabled: AUTO_CONTROL_ENABLED=true")
+	if g.AutoControlEnabled && !g.AllowAutoControlOverlap {
+		return fmt.Errorf("DELTA_3 private write disabled: AUTO_CONTROL_ENABLED=true; set ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=true or --allow-auto-control-overlap for one-shot DELTA_3 validation")
 	}
 	if g.ConfirmEcoFlowWrite != ConfirmWriteValue {
 		return fmt.Errorf("DELTA_3 private write disabled: CONFIRM_ECOFLOW_WRITE is not %s", ConfirmWriteValue)

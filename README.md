@@ -239,6 +239,7 @@ ECOFLOW_PRIVATE_PASSWORD=...
 ECOFLOW_DELTA3_DEVICE_SN=...
 ECOFLOW_DELTA3_DEVICE_TYPE=DELTA_3
 ECOFLOW_DELTA3_MQTT_CLIENT_ID=
+ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=false
 ```
 
 read-only probe:
@@ -255,7 +256,7 @@ cd backend
 go run ./cmd/ecoflow-delta3-probe --set-ac-charge-w 100
 ```
 
-実送信は、既存の write gate に加えて `--execute` と `--allow-private-api-write` が必要です。
+実送信は、既存の write gate に加えて `--execute` と `--allow-private-api-write` が必要です。既存の自動制御を止めずに DELTA_3 系の one-shot 検証を行う場合は、追加で `ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=true` または `--allow-auto-control-overlap` が必要です。
 
 ```bash
 cd backend
@@ -263,6 +264,19 @@ MOCK_MODE=false \
 SIMULATION_MODE=false \
 ENABLE_REAL_CONTROL=true \
 AUTO_CONTROL_ENABLED=false \
+CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND \
+go run ./cmd/ecoflow-delta3-probe --set-ac-charge-w 100 --execute --allow-private-api-write
+```
+
+自動制御を止めずに one-shot 検証する場合:
+
+```bash
+cd backend
+MOCK_MODE=false \
+SIMULATION_MODE=false \
+ENABLE_REAL_CONTROL=true \
+AUTO_CONTROL_ENABLED=true \
+ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=true \
 CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND \
 go run ./cmd/ecoflow-delta3-probe --set-ac-charge-w 100 --execute --allow-private-api-write
 ```

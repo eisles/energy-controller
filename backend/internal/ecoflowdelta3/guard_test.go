@@ -46,6 +46,24 @@ func TestWriteGuardsRequireEveryPrivateWriteGate(t *testing.T) {
 	}
 }
 
+func TestWriteGuardsAllowExplicitAutoControlOverlap(t *testing.T) {
+	guards := WriteGuards{
+		MockMode:                false,
+		SimulationMode:          false,
+		EnableRealControl:       true,
+		AutoControlEnabled:      true,
+		AllowAutoControlOverlap: true,
+		ConfirmEcoFlowWrite:     ConfirmWriteValue,
+		Execute:                 true,
+		AllowPrivateAPIWrite:    true,
+		Command:                 "set_ac_charge_power",
+		DeviceType:              "DELTA_3",
+	}
+	if err := guards.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil", err)
+	}
+}
+
 func TestValidateACChargePowerDeviceRanges(t *testing.T) {
 	if err := ValidateACChargePower("DELTA_3", 100); err != nil {
 		t.Fatalf("DELTA_3 100W rejected: %v", err)

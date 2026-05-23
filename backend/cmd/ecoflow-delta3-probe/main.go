@@ -17,17 +17,18 @@ import (
 type envGetter func(string) string
 
 type options struct {
-	sn                   string
-	deviceType           string
-	privateAPIHost       string
-	timeout              time.Duration
-	fixturePath          string
-	setACChargeW         int
-	backupReserveSoc     int
-	setACChargeWSet      bool
-	backupReserveSocSet  bool
-	execute              bool
-	allowPrivateAPIWrite bool
+	sn                      string
+	deviceType              string
+	privateAPIHost          string
+	timeout                 time.Duration
+	fixturePath             string
+	setACChargeW            int
+	backupReserveSoc        int
+	setACChargeWSet         bool
+	backupReserveSocSet     bool
+	execute                 bool
+	allowPrivateAPIWrite    bool
+	allowAutoControlOverlap bool
 }
 
 type output struct {
@@ -83,14 +84,15 @@ func runWriteCandidate(ctx context.Context, opts options, getenv envGetter, clie
 		command = "set_backup_reserve_soc"
 	}
 	guards := ecoflowdelta3.WriteGuards{
-		MockMode:             envBool(getenv, "MOCK_MODE", true),
-		SimulationMode:       envBool(getenv, "SIMULATION_MODE", true),
-		EnableRealControl:    envBool(getenv, "ENABLE_REAL_CONTROL", false),
-		AutoControlEnabled:   envBool(getenv, "AUTO_CONTROL_ENABLED", false),
-		ConfirmEcoFlowWrite:  getenv("CONFIRM_ECOFLOW_WRITE"),
-		Execute:              opts.execute,
-		AllowPrivateAPIWrite: opts.allowPrivateAPIWrite,
-		Command:              command,
+		MockMode:                envBool(getenv, "MOCK_MODE", true),
+		SimulationMode:          envBool(getenv, "SIMULATION_MODE", true),
+		EnableRealControl:       envBool(getenv, "ENABLE_REAL_CONTROL", false),
+		AutoControlEnabled:      envBool(getenv, "AUTO_CONTROL_ENABLED", false),
+		AllowAutoControlOverlap: opts.allowAutoControlOverlap || envBool(getenv, "ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL", false),
+		ConfirmEcoFlowWrite:     getenv("CONFIRM_ECOFLOW_WRITE"),
+		Execute:                 opts.execute,
+		AllowPrivateAPIWrite:    opts.allowPrivateAPIWrite,
+		Command:                 command,
 	}
 	if !opts.execute {
 		var payload ecoflowdelta3.CommandPayload
@@ -151,6 +153,7 @@ func parseOptions(args []string) (options, error) {
 	flags.IntVar(&opts.backupReserveSoc, "backup-reserve-soc", 0, "optional backup reserve SOC command for dry-run or one-shot execute")
 	flags.BoolVar(&opts.execute, "execute", false, "send one real private MQTT write command")
 	flags.BoolVar(&opts.allowPrivateAPIWrite, "allow-private-api-write", false, "required together with --execute for private MQTT write")
+	flags.BoolVar(&opts.allowAutoControlOverlap, "allow-auto-control-overlap", false, "allow one-shot DELTA_3 private write while AUTO_CONTROL_ENABLED=true")
 	if err := flags.Parse(args); err != nil {
 		return options{}, err
 	}
