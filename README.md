@@ -256,6 +256,13 @@ cd backend
 go run ./cmd/ecoflow-delta3-probe --set-ac-charge-w 100
 ```
 
+grid bypass disabled の dry-run:
+
+```bash
+cd backend
+go run ./cmd/ecoflow-delta3-probe --grid-bypass-disabled=true
+```
+
 実送信は、既存の write gate に加えて `--execute` と `--allow-private-api-write` が必要です。既存の自動制御を止めずに DELTA_3 系の one-shot 検証を行う場合は、追加で `ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=true` または `--allow-auto-control-overlap` が必要です。
 
 ```bash
@@ -281,4 +288,4 @@ CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND \
 go run ./cmd/ecoflow-delta3-probe --set-ac-charge-w 100 --execute --allow-private-api-write
 ```
 
-この CLI の write 対象は `set_ac_charge_power` と `set_backup_reserve_soc` の one-shot 検証だけです。SwitchBot 制御や既存の余剰追従自動制御には接続しません。
+この CLI の write 対象は `set_ac_charge_power`、`set_backup_reserve_soc`、`set_grid_bypass_disabled` の one-shot 検証だけです。SwitchBot 制御や既存の余剰追従自動制御には接続しません。

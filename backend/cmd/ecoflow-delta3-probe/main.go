@@ -24,8 +24,10 @@ type options struct {
 	fixturePath             string
 	setACChargeW            int
 	backupReserveSoc        int
+	gridBypassDisabled      bool
 	setACChargeWSet         bool
 	backupReserveSocSet     bool
+	gridBypassDisabledSet   bool
 	execute                 bool
 	allowPrivateAPIWrite    bool
 	allowAutoControlOverlap bool
@@ -64,7 +66,7 @@ func run(ctx context.Context, args []string, getenv envGetter, out io.Writer) er
 		return writeJSON(out, output{Mode: "offline-fixture", Status: status, Write: map[string]interface{}{"wouldSend": false, "sent": false, "reason": "offline fixture decode"}})
 	}
 
-	if opts.setACChargeWSet || opts.backupReserveSocSet {
+	if opts.hasWriteCandidate() {
 		return runWriteCandidate(ctx, opts, getenv, client, out)
 	}
 
@@ -76,12 +78,14 @@ func run(ctx context.Context, args []string, getenv envGetter, out io.Writer) er
 }
 
 func runWriteCandidate(ctx context.Context, opts options, getenv envGetter, client *ecoflowdelta3.Client, out io.Writer) error {
-	if opts.setACChargeWSet && opts.backupReserveSocSet {
+	if opts.writeCandidateCount() != 1 {
 		return fmt.Errorf("set only one command per DELTA_3 probe run")
 	}
 	command := "set_ac_charge_power"
 	if opts.backupReserveSocSet {
 		command = "set_backup_reserve_soc"
+	} else if opts.gridBypassDisabledSet {
+		command = "set_grid_bypass_disabled"
 	}
 	guards := ecoflowdelta3.WriteGuards{
 		MockMode:                envBool(getenv, "MOCK_MODE", true),
@@ -97,10 +101,13 @@ func runWriteCandidate(ctx context.Context, opts options, getenv envGetter, clie
 	if !opts.execute {
 		var payload ecoflowdelta3.CommandPayload
 		var err error
-		if opts.setACChargeWSet {
+		switch {
+		case opts.setACChargeWSet:
 			payload, err = client.BuildDryRunACChargePower(opts.setACChargeW)
-		} else {
+		case opts.backupReserveSocSet:
 			payload, err = client.BuildDryRunBackupReserve(opts.backupReserveSoc)
+		case opts.gridBypassDisabledSet:
+			payload, err = client.BuildDryRunGridBypassDisabled(opts.gridBypassDisabled)
 		}
 		if err != nil {
 			return err
@@ -121,10 +128,13 @@ func runWriteCandidate(ctx context.Context, opts options, getenv envGetter, clie
 
 	var status ecoflowdelta3.Status
 	var err error
-	if opts.setACChargeWSet {
+	switch {
+	case opts.setACChargeWSet:
 		status, err = client.ExecuteACChargePower(ctx, opts.setACChargeW, guards)
-	} else {
+	case opts.backupReserveSocSet:
 		status, err = client.ExecuteBackupReserve(ctx, opts.backupReserveSoc, guards)
+	case opts.gridBypassDisabledSet:
+		status, err = client.ExecuteGridBypassDisabled(ctx, opts.gridBypassDisabled, guards)
 	}
 	if err != nil {
 		return err
@@ -151,6 +161,7 @@ func parseOptions(args []string) (options, error) {
 	flags.StringVar(&opts.fixturePath, "offline-fixture", "", "decode a raw/base64 protobuf payload file without network access")
 	flags.IntVar(&opts.setACChargeW, "set-ac-charge-w", 0, "optional AC charge power command for dry-run or one-shot execute")
 	flags.IntVar(&opts.backupReserveSoc, "backup-reserve-soc", 0, "optional backup reserve SOC command for dry-run or one-shot execute")
+	flags.BoolVar(&opts.gridBypassDisabled, "grid-bypass-disabled", false, "optional grid bypass disabled command for dry-run or one-shot execute")
 	flags.BoolVar(&opts.execute, "execute", false, "send one real private MQTT write command")
 	flags.BoolVar(&opts.allowPrivateAPIWrite, "allow-private-api-write", false, "required together with --execute for private MQTT write")
 	flags.BoolVar(&opts.allowAutoControlOverlap, "allow-auto-control-overlap", false, "allow one-shot DELTA_3 private write while AUTO_CONTROL_ENABLED=true")
@@ -163,9 +174,29 @@ func parseOptions(args []string) (options, error) {
 			opts.setACChargeWSet = true
 		case "backup-reserve-soc":
 			opts.backupReserveSocSet = true
+		case "grid-bypass-disabled":
+			opts.gridBypassDisabledSet = true
 		}
 	})
 	return opts, nil
+}
+
+func (opts options) hasWriteCandidate() bool {
+	return opts.writeCandidateCount() > 0
+}
+
+func (opts options) writeCandidateCount() int {
+	count := 0
+	if opts.setACChargeWSet {
+		count++
+	}
+	if opts.backupReserveSocSet {
+		count++
+	}
+	if opts.gridBypassDisabledSet {
+		count++
+	}
+	return count
 }
 
 func buildConfig(opts options, getenv envGetter) ecoflowdelta3.Config {

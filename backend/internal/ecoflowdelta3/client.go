@@ -91,6 +91,22 @@ func (c *Client) BuildDryRunBackupReserve(percent int) (CommandPayload, error) {
 	}, nil
 }
 
+func (c *Client) BuildDryRunGridBypassDisabled(disabled bool) (CommandPayload, error) {
+	if err := c.validateDryRunTarget(); err != nil {
+		return CommandPayload{}, err
+	}
+	payload, err := BuildSetGridBypassDisabledPayload(c.cfg.DeviceSN, disabled, 1)
+	if err != nil {
+		return CommandPayload{}, err
+	}
+	return CommandPayload{
+		Command: "set_grid_bypass_disabled",
+		Topic:   BuildTopics("USER_ID", c.cfg.DeviceSN).Set,
+		Bytes:   payload,
+		Hex:     hex.EncodeToString(payload),
+	}, nil
+}
+
 func (c *Client) validateDryRunTarget() error {
 	if c.cfg.DeviceSN == "" {
 		return fmt.Errorf("DELTA_3 dry-run requires ECOFLOW_DELTA3_DEVICE_SN or --sn")
@@ -126,6 +142,17 @@ func (c *Client) ExecuteBackupReserve(ctx context.Context, percent int, guards W
 	}
 	return c.executeSet(ctx, func(seq int) ([]byte, error) {
 		return BuildSetBackupReservePayload(c.cfg.DeviceSN, percent, seq)
+	})
+}
+
+func (c *Client) ExecuteGridBypassDisabled(ctx context.Context, disabled bool, guards WriteGuards) (Status, error) {
+	guards.Command = "set_grid_bypass_disabled"
+	guards.DeviceType = c.cfg.DeviceType
+	if err := guards.Validate(); err != nil {
+		return Status{}, err
+	}
+	return c.executeSet(ctx, func(seq int) ([]byte, error) {
+		return BuildSetGridBypassDisabledPayload(c.cfg.DeviceSN, disabled, seq)
 	})
 }
 

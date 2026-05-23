@@ -66,6 +66,15 @@ func BuildSetBackupReservePayload(deviceSN string, percent int, seq int) ([]byte
 	return encodeSetCommandHeader(deviceSN, seq, pdata), nil
 }
 
+func BuildSetGridBypassDisabledPayload(deviceSN string, disabled bool, seq int) ([]byte, error) {
+	value := uint64(0)
+	if disabled {
+		value = 1
+	}
+	pdata := append(encodeTag(26, wireVarint), encodeVarint(value)...)
+	return encodeSetCommandHeader(deviceSN, seq, pdata), nil
+}
+
 func DecodeSnapshot(deviceType string, deviceSN string, raw []byte) (Status, error) {
 	status := Status{DeviceType: deviceType, DeviceSN: deviceSN}
 	raw = maybeBase64(raw)

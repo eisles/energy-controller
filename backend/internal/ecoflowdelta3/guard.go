@@ -48,7 +48,7 @@ func (g WriteGuards) Validate() error {
 
 func allowedCommand(command string) bool {
 	switch command {
-	case "set_ac_charge_power", "set_backup_reserve_soc":
+	case "set_ac_charge_power", "set_backup_reserve_soc", "set_grid_bypass_disabled":
 		return true
 	default:
 		return false

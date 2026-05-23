@@ -29,6 +29,24 @@ func TestRunDryRunDoesNotRequireCredentials(t *testing.T) {
 	}
 }
 
+func TestRunDryRunGridBypassDisabled(t *testing.T) {
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"--sn", "SN123", "--device-type", "DELTA_3", "--grid-bypass-disabled=true"}, emptyEnv, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got output
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Mode != "dry-run" || got.Write["sent"] != false || got.Write["command"] != "set_grid_bypass_disabled" {
+		t.Fatalf("output = %#v", got)
+	}
+	if !strings.Contains(got.Write["hex"].(string), "d00101") {
+		t.Fatalf("hex = %s, want grid bypass command bytes", got.Write["hex"])
+	}
+}
+
 func TestRunDryRunRequiresDeviceSN(t *testing.T) {
 	err := run(context.Background(), []string{"--device-type", "DELTA_3", "--set-ac-charge-w", "100"}, emptyEnv, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "ECOFLOW_DELTA3_DEVICE_SN") {

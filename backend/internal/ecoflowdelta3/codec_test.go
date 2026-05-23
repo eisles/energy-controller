@@ -57,6 +57,20 @@ func TestBuildSetBackupReservePayload(t *testing.T) {
 	}
 }
 
+func TestBuildSetGridBypassDisabledPayload(t *testing.T) {
+	payload, err := BuildSetGridBypassDisabledPayload("SN123", true, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers, err := decodeHeaderMessage(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hex.EncodeToString(headers[0].PData); got != "d00101" {
+		t.Fatalf("pdata hex = %s, want d00101", got)
+	}
+}
+
 func TestDecodeSnapshotDisplayUpload(t *testing.T) {
 	display := []byte{}
 	display = appendFloatField(display, 3, 123.4)
