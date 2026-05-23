@@ -225,3 +225,46 @@ go run ./cmd/ecoflow-write-test --execute --watts 1000 --expected-current-limit 
 ```
 
 バックアップリザーブや energy strategy modes の検証も同 CLI で行えます。実行前後は必ず `/api/status` と EcoFlow app の両方で反映を確認してください。
+
+## DELTA_3 系 private MQTT/protobuf 検証 CLI
+
+DELTA 3 Plus / DELTA 3 Max Plus 相当機で public API から SOC や入出力が取れない場合は、`ecoflow-delta3-probe` で EcoFlow app 系の private MQTT/protobuf 経路を検証できます。これは LAN 内ローカル API ではなく、EcoFlow cloud MQTT broker に接続する検証ツールです。
+
+既定は read-only probe または dry-run です。自動制御 loop からは呼ばれません。
+
+```env
+ECOFLOW_PRIVATE_API_HOST=api.ecoflow.com
+ECOFLOW_PRIVATE_EMAIL=...
+ECOFLOW_PRIVATE_PASSWORD=...
+ECOFLOW_DELTA3_DEVICE_SN=...
+ECOFLOW_DELTA3_DEVICE_TYPE=DELTA_3
+ECOFLOW_DELTA3_MQTT_CLIENT_ID=
+```
+
+read-only probe:
+
+```bash
+cd backend
+go run ./cmd/ecoflow-delta3-probe --timeout 20s
+```
+
+AC充電Wの dry-run:
+
+```bash
+cd backend
+go run ./cmd/ecoflow-delta3-probe --set-ac-charge-w 100
+```
+
+実送信は、既存の write gate に加えて `--execute` と `--allow-private-api-write` が必要です。
+
+```bash
+cd backend
+MOCK_MODE=false \
+SIMULATION_MODE=false \
+ENABLE_REAL_CONTROL=true \
+AUTO_CONTROL_ENABLED=false \
+CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND \
+go run ./cmd/ecoflow-delta3-probe --set-ac-charge-w 100 --execute --allow-private-api-write
+```
+
+この CLI の write 対象は `set_ac_charge_power` と `set_backup_reserve_soc` の one-shot 検証だけです。SwitchBot 制御や既存の余剰追従自動制御には接続しません。
