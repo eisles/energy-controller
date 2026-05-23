@@ -40,7 +40,7 @@ func (c *Client) Probe(ctx context.Context) (Status, error) {
 		defer transport.Disconnect()
 	}
 	topics := BuildTopics(session.UserID, c.cfg.DeviceSN)
-	replies, err := transport.Request(ctx, topics.Get, BuildGetSnapshotPayload(NextSeq()), []string{topics.Data, topics.GetReply}, c.cfg.Timeout)
+	replies, err := transport.Request(ctx, topics.Get, BuildGetSnapshotPayload(NextSeq()), []string{topics.GetReply, topics.Data}, c.cfg.Timeout)
 	if err != nil {
 		return Status{}, err
 	}

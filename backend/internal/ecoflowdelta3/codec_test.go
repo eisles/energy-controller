@@ -63,12 +63,22 @@ func TestDecodeSnapshotDisplayUpload(t *testing.T) {
 	display = appendFloatField(display, 4, 456.2)
 	display = appendIntField(display, 7, 1)
 	display = appendIntField(display, 8, 30)
+	display = appendIntField(display, 13, 14)
+	display = appendIntField(display, 25, 1)
+	display = appendIntField(display, 33, 4)
 	display = appendFloatField(display, 54, 400)
+	display = appendIntField(display, 76, 1)
+	display = appendIntField(display, 146, 1)
+	display = appendIntField(display, 147, 1)
 	display = appendIntField(display, 209, 100)
 	display = appendFloatField(display, 242, 71.6)
 	display = appendFloatField(display, 262, 72.2)
+	display = appendIntField(display, 270, 95)
+	display = appendIntField(display, 271, 10)
 	display = appendIntField(display, 281, 2)
+	display = appendIntField(display, 282, 3)
 	display = appendFloatField(display, 361, 88.8)
+	display = appendIntField(display, 367, 14)
 	display = appendFloatField(display, 368, 401.1)
 	payload := encodeHeaderMessage(delta3Header{PData: display, Src: 2, CmdFunc: 254, CmdID: 21, Seq: 1})
 
@@ -85,10 +95,46 @@ func TestDecodeSnapshotDisplayUpload(t *testing.T) {
 	assertIntPtr(t, "BMSBatterySoc", status.BMSBatterySoc, 72)
 	assertIntPtr(t, "CMSBatterySoc", status.CMSBatterySoc, 72)
 	assertIntPtr(t, "BackupReserveSoc", status.BackupReserveSoc, 30)
+	assertIntPtr(t, "MaxChargeSoc", status.MaxChargeSoc, 95)
+	assertIntPtr(t, "MinDischargeSoc", status.MinDischargeSoc, 10)
 	assertIntPtr(t, "ChargingState", status.ChargingState, 2)
+	assertIntPtr(t, "BMSChargingState", status.BMSChargingState, 2)
+	assertIntPtr(t, "CMSChargingState", status.CMSChargingState, 3)
 	if status.BackupReserveEnabled == nil || !*status.BackupReserveEnabled {
 		t.Fatalf("BackupReserveEnabled = %v, want true", status.BackupReserveEnabled)
 	}
+	if status.GridBypassDisabled == nil || !*status.GridBypassDisabled {
+		t.Fatalf("GridBypassDisabled = %v, want true", status.GridBypassDisabled)
+	}
+	if status.ACOutputEnabled == nil || !*status.ACOutputEnabled {
+		t.Fatalf("ACOutputEnabled = %v, want true", status.ACOutputEnabled)
+	}
+	if status.DCOutputEnabled == nil || *status.DCOutputEnabled {
+		t.Fatalf("DCOutputEnabled = %v, want false", status.DCOutputEnabled)
+	}
+	if status.USBOutputEnabled == nil || !*status.USBOutputEnabled {
+		t.Fatalf("USBOutputEnabled = %v, want true", status.USBOutputEnabled)
+	}
+	if status.XBoostEnabled == nil || !*status.XBoostEnabled {
+		t.Fatalf("XBoostEnabled = %v, want true", status.XBoostEnabled)
+	}
+	if status.OutputPowerOffMemory == nil || !*status.OutputPowerOffMemory {
+		t.Fatalf("OutputPowerOffMemory = %v, want true", status.OutputPowerOffMemory)
+	}
+	if status.DecodedMessages != 1 {
+		t.Fatalf("DecodedMessages = %d, want 1", status.DecodedMessages)
+	}
+}
+
+func TestDecodeSnapshotRuntimeUpload(t *testing.T) {
+	runtime := appendIntField(nil, 24, 7)
+	payload := encodeHeaderMessage(delta3Header{PData: runtime, Src: 2, CmdFunc: 254, CmdID: 22, Seq: 1})
+
+	status, err := DecodeSnapshot("DELTA_3", "SN123", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertIntPtr(t, "PCSWorkMode", status.PCSWorkMode, 7)
 	if status.DecodedMessages != 1 {
 		t.Fatalf("DecodedMessages = %d, want 1", status.DecodedMessages)
 	}
@@ -113,6 +159,9 @@ func TestDecodeSnapshotSkipsKnownFloatWithUnexpectedWireType(t *testing.T) {
 func TestDecodeSnapshotSetReply(t *testing.T) {
 	reply := []byte{}
 	reply = appendIntField(reply, 2, 1)
+	backup := appendIntField(nil, 1, 1)
+	backup = appendIntField(backup, 2, 30)
+	reply = appendBytesField(reply, 43, backup)
 	reply = appendIntField(reply, 54, 100)
 	payload := encodeHeaderMessage(delta3Header{PData: reply, Src: 2, CmdFunc: 254, CmdID: 18, Seq: 123})
 	status, err := DecodeSnapshot("DELTA_3", "SN123", payload)
@@ -123,6 +172,10 @@ func TestDecodeSnapshotSetReply(t *testing.T) {
 		t.Fatalf("LastSetReplyConfigOK = %v, want true", status.LastSetReplyConfigOK)
 	}
 	assertIntPtr(t, "LastSetReplyACChargeLimit", status.LastSetReplyACChargeLimit, 100)
+	assertIntPtr(t, "LastSetReplyBackupReserveSoc", status.LastSetReplyBackupReserveSoc, 30)
+	if status.LastSetReplyBackupReserveEnabled == nil || !*status.LastSetReplyBackupReserveEnabled {
+		t.Fatalf("LastSetReplyBackupReserveEnabled = %v, want true", status.LastSetReplyBackupReserveEnabled)
+	}
 	assertIntPtr(t, "LastSetReplySeq", status.LastSetReplySeq, 123)
 }
 

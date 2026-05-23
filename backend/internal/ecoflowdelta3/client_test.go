@@ -80,6 +80,48 @@ func TestExecuteACChargePowerAcceptsConfigOKSetReplyAfterDataMessage(t *testing.
 	}
 }
 
+func TestProbeWaitsForFullGetReplyBeforeTelemetry(t *testing.T) {
+	var gotReplyTopics []string
+	client := NewClientWithTransport(Config{
+		PrivateAPIHost: "api.test",
+		Email:          "user@example.com",
+		Password:       "secret",
+		DeviceSN:       "SN123",
+		DeviceType:     "DELTA_3",
+		HTTPClient:     newPrivateHTTPClient(t),
+		Timeout:        time.Second,
+	}, fakeTransport{
+		onRequest: func(_ string, _ []byte, replyTopics []string) {
+			gotReplyTopics = append([]string(nil), replyTopics...)
+		},
+		replies: []MQTTMessage{
+			{Topic: "/app/user-1/SN123/thing/property/get_reply", Payload: displayPayload(t, 30, true)},
+		},
+	})
+	status, err := client.Probe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotReplyTopics) != 2 || !strings.HasSuffix(gotReplyTopics[0], "/thing/property/get_reply") {
+		t.Fatalf("reply topics = %#v, want get_reply first", gotReplyTopics)
+	}
+	assertIntPtr(t, "BackupReserveSoc", status.BackupReserveSoc, 30)
+	if status.BackupReserveEnabled == nil || !*status.BackupReserveEnabled {
+		t.Fatalf("BackupReserveEnabled = %v, want true", status.BackupReserveEnabled)
+	}
+}
+
+func displayPayload(t *testing.T, backupReserveSoc int, backupReserveEnabled bool) []byte {
+	t.Helper()
+	enabled := 0
+	if backupReserveEnabled {
+		enabled = 1
+	}
+	display := appendIntField(nil, 7, enabled)
+	display = appendIntField(display, 8, backupReserveSoc)
+	return encodeHeaderMessage(delta3Header{PData: display, Src: 2, CmdFunc: 254, CmdID: 21, Seq: 1})
+}
+
 func validWriteGuards() WriteGuards {
 	return WriteGuards{
 		MockMode:             false,
@@ -107,9 +149,13 @@ func setReplyPayload(configOK bool, seq int) []byte {
 type fakeTransport struct {
 	replies      []MQTTMessage
 	buildReplies func(payload []byte) []MQTTMessage
+	onRequest    func(publishTopic string, payload []byte, replyTopics []string)
 }
 
-func (f fakeTransport) Request(_ context.Context, _ string, payload []byte, _ []string, _ time.Duration) ([]MQTTMessage, error) {
+func (f fakeTransport) Request(_ context.Context, publishTopic string, payload []byte, replyTopics []string, _ time.Duration) ([]MQTTMessage, error) {
+	if f.onRequest != nil {
+		f.onRequest(publishTopic, payload, replyTopics)
+	}
 	if f.buildReplies != nil {
 		return f.buildReplies(payload), nil
 	}

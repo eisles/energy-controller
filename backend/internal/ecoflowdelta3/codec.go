@@ -283,6 +283,8 @@ func decodePayload(header delta3Header, raw []byte) Status {
 	switch {
 	case header.CmdFunc == 254 && header.CmdID == 21:
 		return decodeDisplayUpload(raw)
+	case header.CmdFunc == 254 && header.CmdID == 22:
+		return decodeRuntimeUpload(raw)
 	case header.CmdFunc == 254 && header.CmdID == 18:
 		status := decodeSetReply(raw)
 		status.LastSetReplySeq = &header.Seq
@@ -314,20 +316,66 @@ func decodeDisplayUpload(raw []byte) Status {
 			raw = assignBoolVarint(raw, wire, &s.BackupReserveEnabled)
 		case 8:
 			raw = assignIntVarint(raw, wire, &s.BackupReserveSoc)
+		case 13, 14, 15, 16:
+			raw = assignFlowEnabled(raw, wire, &s.USBOutputEnabled)
+		case 25:
+			raw = assignBoolVarint(raw, wire, &s.XBoostEnabled)
+		case 33:
+			raw = assignFlowEnabled(raw, wire, &s.DCOutputEnabled)
 		case 54:
 			raw = assignFloat(raw, wire, &s.ACInW)
+		case 76:
+			raw = assignBoolVarint(raw, wire, &s.ACOutputEnabled)
+		case 146:
+			raw = assignBoolVarint(raw, wire, &s.GridBypassDisabled)
+		case 147:
+			raw = assignBoolVarint(raw, wire, &s.OutputPowerOffMemory)
 		case 209:
 			raw = assignIntVarint(raw, wire, &s.ACChargeLimitW)
 		case 242:
 			raw = assignFloat(raw, wire, &s.BMSBatterySoc)
 		case 262:
 			raw = assignFloat(raw, wire, &s.CMSBatterySoc)
+		case 270:
+			raw = assignIntVarint(raw, wire, &s.MaxChargeSoc)
+		case 271:
+			raw = assignIntVarint(raw, wire, &s.MinDischargeSoc)
 		case 281:
 			raw = assignIntVarint(raw, wire, &s.ChargingState)
+			s.BMSChargingState = s.ChargingState
+		case 282:
+			raw = assignIntVarint(raw, wire, &s.CMSChargingState)
 		case 361:
 			raw = assignFloat(raw, wire, &s.PVInW)
+		case 367:
+			raw = assignFlowEnabled(raw, wire, &s.ACOutputEnabled)
 		case 368:
 			raw = assignFloat(raw, wire, &s.ACOutW)
+		default:
+			var skipped bool
+			raw, skipped = skipValue(wire, raw)
+			if !skipped {
+				s.UnsupportedMessages++
+				return s
+			}
+		}
+	}
+	s.DecodedMessages = 1
+	return s
+}
+
+func decodeRuntimeUpload(raw []byte) Status {
+	var s Status
+	for len(raw) > 0 {
+		field, wire, rest, ok := readTag(raw)
+		if !ok {
+			s.UnsupportedMessages++
+			return s
+		}
+		raw = rest
+		switch field {
+		case 24:
+			raw = assignIntVarint(raw, wire, &s.PCSWorkMode)
 		default:
 			var skipped bool
 			raw, skipped = skipValue(wire, raw)
@@ -411,6 +459,20 @@ func decodeSetReply(raw []byte) Status {
 			raw = assignBoolVarint(raw, wire, &s.LastSetReplyConfigOK)
 		case 54:
 			raw = assignIntVarint(raw, wire, &s.LastSetReplyACChargeLimit)
+		case 43:
+			value, next, ok := readBytes(raw)
+			if !ok {
+				s.UnsupportedMessages++
+				return s
+			}
+			backup := decodeEnergyBackup(value)
+			if backup.BackupReserveEnabled != nil {
+				s.LastSetReplyBackupReserveEnabled = backup.BackupReserveEnabled
+			}
+			if backup.BackupReserveSoc != nil {
+				s.LastSetReplyBackupReserveSoc = backup.BackupReserveSoc
+			}
+			raw = next
 		default:
 			var skipped bool
 			raw, skipped = skipValue(wire, raw)
@@ -421,6 +483,32 @@ func decodeSetReply(raw []byte) Status {
 		}
 	}
 	s.DecodedMessages = 1
+	return s
+}
+
+func decodeEnergyBackup(raw []byte) Status {
+	var s Status
+	for len(raw) > 0 {
+		field, wire, rest, ok := readTag(raw)
+		if !ok {
+			s.UnsupportedMessages++
+			return s
+		}
+		raw = rest
+		switch field {
+		case 1:
+			raw = assignBoolVarint(raw, wire, &s.BackupReserveEnabled)
+		case 2:
+			raw = assignIntVarint(raw, wire, &s.BackupReserveSoc)
+		default:
+			var skipped bool
+			raw, skipped = skipValue(wire, raw)
+			if !skipped {
+				s.UnsupportedMessages++
+				return s
+			}
+		}
+	}
 	return s
 }
 
@@ -469,6 +557,25 @@ func assignBoolVarint(raw []byte, wire int, target **bool) []byte {
 	}
 	boolValue := value != 0
 	*target = &boolValue
+	return next
+}
+
+func assignFlowEnabled(raw []byte, wire int, target **bool) []byte {
+	if wire != wireVarint {
+		next, skipped := skipValue(wire, raw)
+		if !skipped {
+			return nil
+		}
+		return next
+	}
+	value, next, ok := readVarint(raw)
+	if !ok {
+		return nil
+	}
+	if value == 14 || value == 4 {
+		boolValue := value == 14
+		*target = &boolValue
+	}
 	return next
 }
 
