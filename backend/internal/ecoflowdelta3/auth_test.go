@@ -44,12 +44,37 @@ func TestLoginParsesTokenUserAndMQTTCredentials(t *testing.T) {
 	if session.MQTT.URL != "mqtt.ecoflow.com" || session.MQTT.Port != 8883 || session.MQTT.Username != "acct" || session.MQTT.Password != "pass" {
 		t.Fatalf("mqtt = %#v", session.MQTT)
 	}
-	if session.MQTT.ClientID != "EnergyController_user-1" {
+	if !strings.HasPrefix(session.MQTT.ClientID, "ANDROID_") || !strings.HasSuffix(session.MQTT.ClientID, "_user-1") {
 		t.Fatalf("client id = %q", session.MQTT.ClientID)
+	}
+	randomHex := strings.TrimSuffix(strings.TrimPrefix(session.MQTT.ClientID, "ANDROID_"), "_user-1")
+	if len(randomHex) != 32 {
+		t.Fatalf("client id random hex = %q", randomHex)
+	}
+}
+
+func TestLoginParsesStringMQTTPort(t *testing.T) {
+	client := NewAuthClient(Config{
+		PrivateAPIHost: "api.test",
+		Email:          "user@example.com",
+		Password:       "secret",
+		HTTPClient:     newPrivateHTTPClientWithPort(t, `"8883"`),
+	})
+	session, err := client.Login(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.MQTT.Port != 8883 {
+		t.Fatalf("mqtt port = %d", session.MQTT.Port)
 	}
 }
 
 func newPrivateHTTPClient(t *testing.T) *http.Client {
+	t.Helper()
+	return newPrivateHTTPClientWithPort(t, `8883`)
+}
+
+func newPrivateHTTPClientWithPort(t *testing.T, portJSON string) *http.Client {
 	t.Helper()
 	return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		switch r.URL.Path {
@@ -69,7 +94,7 @@ func newPrivateHTTPClient(t *testing.T) *http.Client {
 			if got := r.Header.Get("authorization"); got != "Bearer token-1" {
 				t.Fatalf("authorization = %q", got)
 			}
-			return jsonResponse(`{"code":"0","message":"Success","data":{"url":"mqtt.ecoflow.com","port":8883,"certificateAccount":"acct","certificatePassword":"pass"}}`), nil
+			return jsonResponse(`{"code":"0","message":"Success","data":{"url":"mqtt.ecoflow.com","port":` + portJSON + `,"certificateAccount":"acct","certificatePassword":"pass"}}`), nil
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}

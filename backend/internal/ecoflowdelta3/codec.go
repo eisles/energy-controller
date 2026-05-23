@@ -39,7 +39,7 @@ func BuildGetSnapshotPayload(seq int) []byte {
 		Src:  32,
 		Dest: 32,
 		Seq:  seq,
-		From: "EnergyController",
+		From: "HomeAssistant",
 	}
 	return encodeHeaderMessage(header)
 }

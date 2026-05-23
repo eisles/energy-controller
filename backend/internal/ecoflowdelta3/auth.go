@@ -3,11 +3,15 @@ package ecoflowdelta3
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 )
 
 type AuthClient struct {
@@ -109,11 +113,14 @@ func (c *AuthClient) Certification(ctx context.Context, token string, userID str
 	}
 	clientID := c.cfg.MQTTClientID
 	if clientID == "" {
-		clientID = "EnergyController_" + userID
+		clientID, err = newPrivateMQTTClientID(userID)
+		if err != nil {
+			return MQTTInfo{}, err
+		}
 	}
 	return MQTTInfo{
 		URL:      payload.Data.URL,
-		Port:     payload.Data.Port,
+		Port:     int(payload.Data.Port),
 		Username: payload.Data.CertificateAccount,
 		Password: payload.Data.CertificatePassword,
 		ClientID: clientID,
@@ -127,6 +134,14 @@ func buildLoginBody(email string, password string) ([]byte, error) {
 		"scene":    "IOT_APP",
 		"userType": "ECOFLOW",
 	})
+}
+
+func newPrivateMQTTClientID(userID string) (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generate EcoFlow MQTT client id: %w", err)
+	}
+	return fmt.Sprintf("ANDROID_%s_%s", strings.ToUpper(hex.EncodeToString(b[:])), userID), nil
 }
 
 type privateLoginResponse struct {
@@ -146,8 +161,28 @@ type certificationResponse struct {
 	Message string `json:"message"`
 	Data    struct {
 		URL                 string `json:"url"`
-		Port                int    `json:"port"`
+		Port                mqttPort `json:"port"`
 		CertificateAccount  string `json:"certificateAccount"`
 		CertificatePassword string `json:"certificatePassword"`
 	} `json:"data"`
+}
+
+type mqttPort int
+
+func (p *mqttPort) UnmarshalJSON(raw []byte) error {
+	var n int
+	if err := json.Unmarshal(raw, &n); err == nil {
+		*p = mqttPort(n)
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return err
+	}
+	parsed, err := strconv.Atoi(s)
+	if err != nil {
+		return fmt.Errorf("parse MQTT port %q: %w", s, err)
+	}
+	*p = mqttPort(parsed)
+	return nil
 }

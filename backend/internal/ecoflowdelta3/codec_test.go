@@ -17,7 +17,7 @@ func TestBuildGetSnapshotPayload(t *testing.T) {
 		t.Fatalf("headers = %d, want 1", len(headers))
 	}
 	header := headers[0]
-	if header.Src != 32 || header.Dest != 32 || header.Seq != 123 || header.From != "EnergyController" {
+	if header.Src != 32 || header.Dest != 32 || header.Seq != 123 || header.From != "HomeAssistant" {
 		t.Fatalf("header = %#v", header)
 	}
 	if len(header.PData) != 0 {
