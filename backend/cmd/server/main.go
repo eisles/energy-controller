@@ -316,24 +316,30 @@ func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusPro
 			logger.Warn("failed to save night charge plan log", "error", err)
 		}
 	}
-	if surplusControlCommandRepository != nil && !nightPlanOwnsControl {
-		previous, err := surplusControlCommandRepository.LatestSurplusControlWriteCandidateLog(ctx)
-		if err != nil {
-			logger.Warn("failed to load latest surplus control write candidate log", "error", err)
+	if surplusControlCommandRepository != nil {
+		if nightPlanOwnsControl {
+			if err := surplusControlCommandRepository.InsertSurplusControlCommandLog(ctx, nightOwnedSurplusCommandLog(status)); err != nil {
+				logger.Warn("failed to save night-owned surplus control skip log", "error", err)
+			}
 		} else {
-			commandLog := control.EvaluateSurplusCommandGuard(control.SurplusCommandGuardInput{
-				Status:                 status,
-				MockMode:               cfg.MockMode,
-				SimulationMode:         cfg.SimulationMode,
-				EnableRealControl:      cfg.EnableRealControl,
-				AutoControl:            cfg.AutoControlEnabled,
-				ConfirmEcoFlowWrite:    cfg.ConfirmEcoFlowWrite,
-				RealControlTrialActive: realControlTrialActive(cfg),
-				Previous:               previous,
-			}, cfg.ControlSettings)
-			commandLog = control.ExecuteSurplusCommand(ctx, commandLog, writeClient)
-			if err := surplusControlCommandRepository.InsertSurplusControlCommandLog(ctx, commandLog); err != nil {
-				logger.Warn("failed to save surplus control command log", "error", err)
+			previous, err := surplusControlCommandRepository.LatestSurplusControlWriteCandidateLog(ctx)
+			if err != nil {
+				logger.Warn("failed to load latest surplus control write candidate log", "error", err)
+			} else {
+				commandLog := control.EvaluateSurplusCommandGuard(control.SurplusCommandGuardInput{
+					Status:                 status,
+					MockMode:               cfg.MockMode,
+					SimulationMode:         cfg.SimulationMode,
+					EnableRealControl:      cfg.EnableRealControl,
+					AutoControl:            cfg.AutoControlEnabled,
+					ConfirmEcoFlowWrite:    cfg.ConfirmEcoFlowWrite,
+					RealControlTrialActive: realControlTrialActive(cfg),
+					Previous:               previous,
+				}, cfg.ControlSettings)
+				commandLog = control.ExecuteSurplusCommand(ctx, commandLog, writeClient)
+				if err := surplusControlCommandRepository.InsertSurplusControlCommandLog(ctx, commandLog); err != nil {
+					logger.Warn("failed to save surplus control command log", "error", err)
+				}
 			}
 		}
 	}
@@ -485,6 +491,39 @@ func nightPlanOwnsEnergyControl(plan domain.NightChargePlan, measuredAt time.Tim
 	}
 	hour := measuredAt.Hour()
 	return hour >= 23 || hour < 7
+}
+
+func nightOwnedSurplusCommandLog(status domain.Status) domain.SurplusControlCommandLog {
+	decisionReason := "night charge plan owns control"
+	strategyState := "NIGHT_CHARGE_WINDOW"
+	if status.NightChargePlan != nil {
+		strategyState = status.NightChargePlan.StrategyState
+		if status.NightChargePlan.ActionSummary != "" {
+			decisionReason += ": " + status.NightChargePlan.ActionSummary
+		} else if status.NightChargePlan.Reason != "" {
+			decisionReason += ": " + status.NightChargePlan.Reason
+		}
+	}
+	return domain.SurplusControlCommandLog{
+		MeasuredAt:               status.UpdatedAt,
+		StrategyState:            strategyState,
+		CommandKind:              "none",
+		CommandFingerprint:       "night-charge-owns-control",
+		GridW:                    status.GridW,
+		ImportW:                  status.ImportW,
+		ExportW:                  status.ExportW,
+		BatterySoc:               status.BatterySoc,
+		BatteryInputW:            status.BatteryInputW,
+		BatteryOutputW:           status.BatteryOutputW,
+		PreviousACChargeLimitW:   intPtr(status.ACChargeLimitW),
+		PreviousBackupReserveSoc: status.BackupReserveSoc,
+		CommandSent:              false,
+		DryRun:                   true,
+		WouldWrite:               false,
+		SuppressedReason:         "night charge plan owns control",
+		DecisionReason:           decisionReason,
+		CreatedAt:                status.UpdatedAt,
+	}
 }
 
 func realControlTrialActive(cfg config.Config) bool {

@@ -2,7 +2,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
-import { decisionReasonLabel, guardReasonLabel, strategyStateLabel, writeCandidateLabel } from "@/lib/display-labels";
+import { decisionReasonLabel, decisionSummaryLabel, guardReasonLabel, strategyStateLabel, writeCandidateLabel } from "@/lib/display-labels";
 import type { Delta3Status, EnergyStatus, NightChargePlan, SurplusPlan } from "@/lib/types";
 import type { ReactNode } from "react";
 
@@ -154,12 +154,13 @@ export function StatusDecisionSection({
   headerControls?: ReactNode;
 }) {
   const netBatteryW = status.batteryInputW - status.batteryOutputW;
+  const decisionSummary = decisionSummaryLabel(status.lastDecisionReason);
   return (
-    <CollapsibleSection title="制御判断" summary={status.lastDecisionReason || "-"} open={open} onToggle={onToggle} headerControls={headerControls}>
+    <CollapsibleSection title="制御判断" summary={decisionSummary} open={open} onToggle={onToggle} headerControls={headerControls}>
       <Card className="decision-panel section">
         <CardHeader>
           <CardDescription>Last decision</CardDescription>
-          <CardTitle>{status.lastDecisionReason || "-"}</CardTitle>
+          <CardTitle>{decisionSummary}</CardTitle>
         </CardHeader>
         <CardContent className="detail-strip" aria-label="status detail">
           <Detail label="Mode" value={<Badge variant="secondary">{status.mode || "-"}</Badge>} />
@@ -278,9 +279,9 @@ export function NightChargePlanSection({
             <Detail label="取得元" value={plan.targetForecast?.provider || "-"} />
             <Detail label="天気コード" value={plan.targetForecast ? `${plan.targetForecast.weatherCode}` : "-"} />
           </div>
-          {plan.actionSummary ? <p className="planner-reason">Dry-run計画: {plan.actionSummary}</p> : null}
+          {plan.actionSummary ? <p className="planner-reason">未送信計画: {decisionSummaryLabel(plan.actionSummary)}</p> : null}
           {plan.commandBlockReason ? <p className="planner-reason">抑制: {guardReasonLabel(plan.commandBlockReason)}</p> : null}
-          <p className="planner-reason">{plan.reason || "-"}</p>
+          <p className="planner-reason">{decisionSummaryLabel(plan.reason)}</p>
         </CardContent>
       </Card>
     </CollapsibleSection>
@@ -330,7 +331,7 @@ export function SurplusPlanSection({
             <Detail label="TOU ON" value={yesNo(plan.shouldEnableTouMode)} />
           </div>
           <p className="planner-reason">{surplusActionLabel(plan)}</p>
-          <p className="planner-reason">{plan.reason || "-"}</p>
+          <p className="planner-reason">{decisionSummaryLabel(plan.reason)}</p>
         </CardContent>
       </Card>
     </CollapsibleSection>

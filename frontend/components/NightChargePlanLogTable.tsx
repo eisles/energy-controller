@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { guardReasonLabel, strategyStateLabel, writeCandidateLabel } from "@/lib/display-labels";
+import { decisionSummaryLabel, guardReasonLabel, strategyStateLabel, writeCandidateLabel } from "@/lib/display-labels";
 import type { NightChargePlanLog } from "@/lib/types";
 
 type NightChargePlanLogTableProps = {
@@ -92,7 +92,7 @@ export function NightChargePlanLogTable({ logs, error, page, pageSize, total, on
                       <Badge variant={log.wouldWrite ? "warning" : log.shouldChargeTonight ? "secondary" : "success"}>
                         {log.wouldWrite ? writeCandidateLabel(log.wouldWrite) : log.shouldChargeTonight ? "充電必要" : "問題なし"}
                       </Badge>
-                      <p>{log.actionSummary || log.reason || "-"}</p>
+                      <p>{decisionSummaryLabel(log.actionSummary || log.reason)}</p>
                       {log.commandBlockReason ? <p className="readonly-note">抑制: {guardReasonLabel(log.commandBlockReason)}</p> : null}
                     </TableCell>
                   </TableRow>

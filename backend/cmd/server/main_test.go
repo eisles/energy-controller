@@ -191,6 +191,90 @@ func TestRecordStatusPersistsDelta3AuxSuppressionOnStatus(t *testing.T) {
 	}
 }
 
+func TestRecordStatusPersistsNightOwnedSurplusSkipLogWithoutWriteCandidate(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "energy.db"))
+	if err != nil {
+		t.Fatalf("store.Open failed: %v", err)
+	}
+	defer db.Close()
+
+	now := time.Date(2026, 5, 25, 0, 10, 0, 0, time.FixedZone("JST", 9*60*60))
+	reserve := 48
+	provider := stubStatusProvider{
+		status: domain.Status{
+			GridW:              2440,
+			ImportW:            2440,
+			ExportW:            0,
+			BatterySoc:         38,
+			BatteryInputW:      1419,
+			BatteryOutputW:     1031,
+			ACChargeLimitW:     1500,
+			BackupReserveSoc:   &reserve,
+			State:              "real-control",
+			Mode:               "nature-cloud+ecoflow-read",
+			LastDecisionReason: "importing from grid, do not charge",
+			UpdatedAt:          now,
+			NightChargePlan: &domain.NightChargePlan{
+				StrategyState:             "NIGHT_CHARGE_WINDOW",
+				RecommendedMode:           "tou",
+				RecommendedNightTargetSoc: 48,
+				ShouldChargeTonight:       true,
+				ActionSummary:             "推奨modeはtou; 深夜目標SOCを48%へ設定",
+				Reason:                    "target daytime solar forecast is strong; keep night charging modest",
+				CommandBlockReason:        "night charge settings already match plan",
+			},
+		},
+	}
+	surplusRepository := store.NewSurplusControlCommandRepository(db)
+
+	recordStatus(
+		context.Background(),
+		config.Config{Clock: fixedMainClock{now: now}},
+		provider,
+		store.NewStatusRepository(db),
+		store.NewLogRepository(db),
+		store.NewNightChargePlanRepository(db),
+		surplusRepository,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		nil,
+		slog.Default(),
+	)
+
+	logs, total, err := surplusRepository.ListSurplusControlCommandLogsPage(context.Background(), 10, 0, store.SurplusControlCommandLogPageFilter{})
+	if err != nil {
+		t.Fatalf("ListSurplusControlCommandLogsPage failed: %v", err)
+	}
+	if total != 1 || len(logs) != 1 {
+		t.Fatalf("surplus skip logs = %d/%d, want 1/1", len(logs), total)
+	}
+	log := logs[0]
+	if log.WouldWrite || log.CommandSent || !log.DryRun {
+		t.Fatalf("WouldWrite,CommandSent,DryRun = %v,%v,%v; want false,false,true", log.WouldWrite, log.CommandSent, log.DryRun)
+	}
+	if log.ErrorMessage != nil {
+		t.Fatalf("ErrorMessage = %q, want nil so skip log is not a write candidate", *log.ErrorMessage)
+	}
+	if log.SuppressedReason != "night charge plan owns control" {
+		t.Fatalf("SuppressedReason = %q", log.SuppressedReason)
+	}
+	if !strings.Contains(log.DecisionReason, "推奨modeはtou") {
+		t.Fatalf("DecisionReason = %q, want night plan action summary", log.DecisionReason)
+	}
+	latestCandidate, err := surplusRepository.LatestSurplusControlWriteCandidateLog(context.Background())
+	if err != nil {
+		t.Fatalf("LatestSurplusControlWriteCandidateLog failed: %v", err)
+	}
+	if latestCandidate != nil {
+		t.Fatalf("LatestSurplusControlWriteCandidateLog = %+v, want nil for skip-only log", latestCandidate)
+	}
+}
+
 func TestRealControlTrialActiveRequiresFutureDeadline(t *testing.T) {
 	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
 	if realControlTrialActive(config.Config{Clock: fixedMainClock{now: now}}) {

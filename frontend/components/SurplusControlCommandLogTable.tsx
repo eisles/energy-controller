@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { commandResultLabel, guardReasonLabel, strategyStateLabel } from "@/lib/display-labels";
+import { commandResultLabel, decisionSummaryLabel, guardReasonLabel, strategyStateLabel } from "@/lib/display-labels";
 import type { SurplusControlCommandLog } from "@/lib/types";
 
 type Props = {
@@ -76,9 +76,9 @@ export function SurplusControlCommandLogTable({ logs, error, page, pageSize, tot
                       <Badge variant={log.commandSent ? "warning" : log.dryRun ? "secondary" : "success"}>
                         {commandResultLabel(log)}
                       </Badge>
-                      <p>{log.decisionReason || "-"}</p>
+                      <p>{decisionSummaryLabel(log.decisionReason)}</p>
                       <p className="readonly-note">{actionFlags(log)}</p>
-                      {log.modeGuardReason ? <p className="readonly-note">Mode: {log.modeGuardReason}</p> : null}
+                      {log.modeGuardReason ? <p className="readonly-note">Mode: {guardReasonLabel(log.modeGuardReason)}</p> : null}
                       {log.suppressedReason ? <p className="readonly-note">抑制: {guardReasonLabel(log.suppressedReason)}</p> : null}
                       {log.errorMessage ? <p className="inline-error">{log.errorMessage}</p> : null}
                     </TableCell>
@@ -154,24 +154,24 @@ function commandKindLabel(value: string) {
     return "AC上限";
   }
   if (value === "backup_reserve") {
-    return "Reserve";
+    return "バックアップリザーブ";
   }
   if (value === "energy_mode") {
-    return "Mode";
+    return "動作モード";
   }
   if (value === "mixed") {
-    return "複合";
+    return "複合操作";
   }
-  return "候補なし";
+  return "操作なし";
 }
 
 function actionFlags(log: SurplusControlCommandLog) {
   const actions: string[] = [];
-  if (log.shouldAdjustAcChargeLimit) actions.push("AC");
-  if (log.shouldSetBackupReserve) actions.push("Reserve");
-  if (log.shouldDisableEnergyModes) actions.push("Modes OFF");
+  if (log.shouldAdjustAcChargeLimit) actions.push("AC充電上限");
+  if (log.shouldSetBackupReserve) actions.push("バックアップリザーブ");
+  if (log.shouldDisableEnergyModes) actions.push("動作モードOFF");
   if (log.shouldEnableTouMode) actions.push("TOU ON");
-  return actions.length > 0 ? actions.join(" / ") : "no action";
+  return actions.length > 0 ? actions.join(" / ") : "操作なし";
 }
 
 function formatDateTime(value: string) {
