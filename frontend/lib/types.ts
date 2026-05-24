@@ -15,6 +15,7 @@ export type EnergyStatus = {
   batteryFullEnergyWh?: number | null;
   surplusPlan?: SurplusPlan | null;
   nightChargePlan?: NightChargePlan | null;
+  delta3AuxPlan?: Delta3AuxPlan | null;
   targetChargeW: number;
   state: string;
   mode: string;
@@ -59,6 +60,21 @@ export type SurplusPlan = {
   shouldEnableTouMode: boolean;
   wouldWrite: boolean;
   actionSummary: string;
+  reason: string;
+};
+
+export type Delta3AuxPlan = {
+  mode: string;
+  strategyState: string;
+  recommendedAcChargeLimitW: number;
+  currentAcChargeLimitW?: number | null;
+  delta3Soc?: number | null;
+  delta3MaxChargeSoc?: number | null;
+  residualExportW: number;
+  safetyMarginW: number;
+  wouldWrite: boolean;
+  shouldAdjustAcChargeLimit: boolean;
+  suppressedReason?: string;
   reason: string;
 };
 
@@ -309,6 +325,35 @@ export type SurplusControlCommandLog = {
 
 export type SurplusControlCommandLogsPage = {
   items: SurplusControlCommandLog[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type Delta3AuxControlCommandLog = {
+  id: number;
+  measuredAt: string;
+  strategyState: string;
+  commandFingerprint: string;
+  gridW: number;
+  importW: number;
+  exportW: number;
+  residualExportW: number;
+  delta3Soc: number | null;
+  previousAcChargeLimitW: number | null;
+  targetAcChargeLimitW: number | null;
+  commandSent: boolean;
+  dryRun: boolean;
+  wouldWrite: boolean;
+  shouldAdjustAcChargeLimit: boolean;
+  suppressedReason: string;
+  decisionReason: string;
+  errorMessage: string | null;
+  createdAt: string;
+};
+
+export type Delta3AuxControlCommandLogsPage = {
+  items: Delta3AuxControlCommandLog[];
   total: number;
   limit: number;
   offset: number;

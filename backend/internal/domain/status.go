@@ -46,6 +46,7 @@ type Status struct {
 	BatteryFullEnergyWh              *int             `json:"batteryFullEnergyWh,omitempty"`
 	SurplusPlan                      *SurplusPlan     `json:"surplusPlan,omitempty"`
 	NightChargePlan                  *NightChargePlan `json:"nightChargePlan,omitempty"`
+	Delta3AuxPlan                    *Delta3AuxPlan   `json:"delta3AuxPlan,omitempty"`
 	TargetChargeW                    int              `json:"targetChargeW"`
 	State                            string           `json:"state"`
 	Mode                             string           `json:"mode"`
@@ -74,6 +75,21 @@ type SurplusPlan struct {
 	WouldWrite                  bool   `json:"wouldWrite"`
 	ActionSummary               string `json:"actionSummary"`
 	Reason                      string `json:"reason"`
+}
+
+type Delta3AuxPlan struct {
+	Mode                      string `json:"mode"`
+	StrategyState             string `json:"strategyState"`
+	RecommendedACChargeLimitW int    `json:"recommendedAcChargeLimitW"`
+	CurrentACChargeLimitW     *int   `json:"currentAcChargeLimitW,omitempty"`
+	Delta3Soc                 *int   `json:"delta3Soc,omitempty"`
+	Delta3MaxChargeSoc        *int   `json:"delta3MaxChargeSoc,omitempty"`
+	ResidualExportW           int    `json:"residualExportW"`
+	SafetyMarginW             int    `json:"safetyMarginW"`
+	WouldWrite                bool   `json:"wouldWrite"`
+	ShouldAdjustACChargeLimit bool   `json:"shouldAdjustAcChargeLimit"`
+	SuppressedReason          string `json:"suppressedReason,omitempty"`
+	Reason                    string `json:"reason"`
 }
 
 type WeatherForecast struct {
@@ -339,6 +355,28 @@ type SurplusControlCommandLog struct {
 	ShouldDisableEnergyModes  bool      `json:"shouldDisableEnergyModes"`
 	ShouldEnableTOUMode       bool      `json:"shouldEnableTouMode"`
 	ModeGuardReason           string    `json:"modeGuardReason"`
+	SuppressedReason          string    `json:"suppressedReason"`
+	DecisionReason            string    `json:"decisionReason"`
+	ErrorMessage              *string   `json:"errorMessage"`
+	CreatedAt                 time.Time `json:"createdAt"`
+}
+
+type Delta3AuxControlCommandLog struct {
+	ID                        int64     `json:"id"`
+	MeasuredAt                time.Time `json:"measuredAt"`
+	StrategyState             string    `json:"strategyState"`
+	CommandFingerprint        string    `json:"commandFingerprint"`
+	GridW                     int       `json:"gridW"`
+	ImportW                   int       `json:"importW"`
+	ExportW                   int       `json:"exportW"`
+	ResidualExportW           int       `json:"residualExportW"`
+	Delta3Soc                 *int      `json:"delta3Soc"`
+	PreviousACChargeLimitW    *int      `json:"previousAcChargeLimitW"`
+	TargetACChargeLimitW      *int      `json:"targetAcChargeLimitW"`
+	CommandSent               bool      `json:"commandSent"`
+	DryRun                    bool      `json:"dryRun"`
+	WouldWrite                bool      `json:"wouldWrite"`
+	ShouldAdjustACChargeLimit bool      `json:"shouldAdjustAcChargeLimit"`
 	SuppressedReason          string    `json:"suppressedReason"`
 	DecisionReason            string    `json:"decisionReason"`
 	ErrorMessage              *string   `json:"errorMessage"`

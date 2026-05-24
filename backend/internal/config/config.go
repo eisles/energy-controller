@@ -21,44 +21,48 @@ func (realClock) Now() time.Time {
 }
 
 type Config struct {
-	AppEnv                string
-	HTTPPort              string
-	DBPath                string
-	FrontendDir           string
-	MockMode              bool
-	SimulationMode        bool
-	EnableRealControl     bool
-	AutoControlEnabled    bool
-	ConfirmEcoFlowWrite   string
-	RealControlTrialUntil time.Time
-	NatureMode            string
-	NatureAccessToken     string
-	NatureApplianceID     string
-	NatureLocalBaseURL    string
-	EcoFlowAccessKey      string
-	EcoFlowSecretKey      string
-	EcoFlowDeviceSN       string
-	EcoFlowBaseURL        string
-	Delta3ReadEnabled     bool
-	Delta3PrivateAPIHost  string
-	Delta3PrivateEmail    string
-	Delta3PrivatePassword string
-	Delta3DeviceSN        string
-	Delta3DeviceType      string
-	Delta3MQTTClientID    string
-	Delta3Timeout         time.Duration
-	WeatherEnabled        bool
-	WeatherLatitude       float64
-	WeatherLongitude      float64
-	WeatherTimezone       string
-	WeatherBaseURL        string
-	NotificationEnabled   bool
-	NotificationProvider  string
-	SlackWebhookURL       string
-	ManualChargeAlert     ManualChargeAlertConfig
-	PollInterval          time.Duration
-	ControlSettings       control.Settings
-	Clock                 Clock
+	AppEnv                  string
+	HTTPPort                string
+	DBPath                  string
+	FrontendDir             string
+	MockMode                bool
+	SimulationMode          bool
+	EnableRealControl       bool
+	AutoControlEnabled      bool
+	ConfirmEcoFlowWrite     string
+	RealControlTrialUntil   time.Time
+	NatureMode              string
+	NatureAccessToken       string
+	NatureApplianceID       string
+	NatureLocalBaseURL      string
+	EcoFlowAccessKey        string
+	EcoFlowSecretKey        string
+	EcoFlowDeviceSN         string
+	EcoFlowBaseURL          string
+	Delta3ReadEnabled       bool
+	Delta3PrivateAPIHost    string
+	Delta3PrivateEmail      string
+	Delta3PrivatePassword   string
+	Delta3DeviceSN          string
+	Delta3DeviceType        string
+	Delta3MQTTClientID      string
+	Delta3Timeout           time.Duration
+	Delta3AllowAutoWrite    bool
+	Delta3ExecuteWrite      bool
+	Delta3AllowPrivateWrite bool
+	Delta3Aux               Delta3AuxConfig
+	WeatherEnabled          bool
+	WeatherLatitude         float64
+	WeatherLongitude        float64
+	WeatherTimezone         string
+	WeatherBaseURL          string
+	NotificationEnabled     bool
+	NotificationProvider    string
+	SlackWebhookURL         string
+	ManualChargeAlert       ManualChargeAlertConfig
+	PollInterval            time.Duration
+	ControlSettings         control.Settings
+	Clock                   Clock
 }
 
 type ManualChargeAlertConfig struct {
@@ -66,6 +70,19 @@ type ManualChargeAlertConfig struct {
 	SocThreshold     int
 	ConsecutiveCount int
 	Cooldown         time.Duration
+}
+
+type Delta3AuxConfig struct {
+	Enabled                   bool
+	MinChargeW                int
+	MaxChargeW                int
+	SafetyMarginW             int
+	MinCommandDiffW           int
+	MaxIncreaseStepW          int
+	MaxDecreaseStepW          int
+	MinCommandInterval        time.Duration
+	StopImportThresholdW      int
+	TargetMaxSocBufferPercent int
 }
 
 func Load() Config {
@@ -79,40 +96,55 @@ func Load() Config {
 		}
 	}
 	return Config{
-		AppEnv:                env("APP_ENV", "local"),
-		HTTPPort:              env("HTTP_PORT", "8080"),
-		DBPath:                env("DB_PATH", "./data/energy.db"),
-		FrontendDir:           env("FRONTEND_DIR", "../frontend/out"),
-		MockMode:              envBool("MOCK_MODE", true),
-		SimulationMode:        envBool("SIMULATION_MODE", true),
-		EnableRealControl:     envBool("ENABLE_REAL_CONTROL", false),
-		AutoControlEnabled:    envBool("AUTO_CONTROL_ENABLED", false),
-		ConfirmEcoFlowWrite:   env("CONFIRM_ECOFLOW_WRITE", ""),
-		RealControlTrialUntil: realControlTrialUntil,
-		NatureMode:            env("NATURE_MODE", "cloud"),
-		NatureAccessToken:     env("NATURE_ACCESS_TOKEN", ""),
-		NatureApplianceID:     env("NATURE_APPLIANCE_ID", ""),
-		NatureLocalBaseURL:    env("NATURE_LOCAL_BASE_URL", "http://remo-e.local"),
-		EcoFlowAccessKey:      env("ECOFLOW_ACCESS_KEY", ""),
-		EcoFlowSecretKey:      env("ECOFLOW_SECRET_KEY", ""),
-		EcoFlowDeviceSN:       env("ECOFLOW_DEVICE_SN", ""),
-		EcoFlowBaseURL:        env("ECOFLOW_BASE_URL", "https://api-e.ecoflow.com"),
-		Delta3ReadEnabled:     envBool("ECOFLOW_DELTA3_READ_ENABLED", false),
-		Delta3PrivateAPIHost:  env("ECOFLOW_PRIVATE_API_HOST", "api.ecoflow.com"),
-		Delta3PrivateEmail:    env("ECOFLOW_PRIVATE_EMAIL", ""),
-		Delta3PrivatePassword: env("ECOFLOW_PRIVATE_PASSWORD", ""),
-		Delta3DeviceSN:        env("ECOFLOW_DELTA3_DEVICE_SN", ""),
-		Delta3DeviceType:      env("ECOFLOW_DELTA3_DEVICE_TYPE", "DELTA_3"),
-		Delta3MQTTClientID:    env("ECOFLOW_DELTA3_MQTT_CLIENT_ID", ""),
-		Delta3Timeout:         time.Duration(envInt("ECOFLOW_DELTA3_TIMEOUT_SEC", 20)) * time.Second,
-		WeatherEnabled:        envBool("WEATHER_FORECAST_ENABLED", weatherLatitudeRaw != "" && weatherLongitudeRaw != ""),
-		WeatherLatitude:       parseFloat(weatherLatitudeRaw, 0),
-		WeatherLongitude:      parseFloat(weatherLongitudeRaw, 0),
-		WeatherTimezone:       env("WEATHER_TIMEZONE", "Asia/Tokyo"),
-		WeatherBaseURL:        env("WEATHER_BASE_URL", "https://api.open-meteo.com"),
-		NotificationEnabled:   envBool("NOTIFICATION_ENABLED", false),
-		NotificationProvider:  env("NOTIFICATION_PROVIDER", "slack"),
-		SlackWebhookURL:       env("SLACK_WEBHOOK_URL", ""),
+		AppEnv:                  env("APP_ENV", "local"),
+		HTTPPort:                env("HTTP_PORT", "8080"),
+		DBPath:                  env("DB_PATH", "./data/energy.db"),
+		FrontendDir:             env("FRONTEND_DIR", "../frontend/out"),
+		MockMode:                envBool("MOCK_MODE", true),
+		SimulationMode:          envBool("SIMULATION_MODE", true),
+		EnableRealControl:       envBool("ENABLE_REAL_CONTROL", false),
+		AutoControlEnabled:      envBool("AUTO_CONTROL_ENABLED", false),
+		ConfirmEcoFlowWrite:     env("CONFIRM_ECOFLOW_WRITE", ""),
+		RealControlTrialUntil:   realControlTrialUntil,
+		NatureMode:              env("NATURE_MODE", "cloud"),
+		NatureAccessToken:       env("NATURE_ACCESS_TOKEN", ""),
+		NatureApplianceID:       env("NATURE_APPLIANCE_ID", ""),
+		NatureLocalBaseURL:      env("NATURE_LOCAL_BASE_URL", "http://remo-e.local"),
+		EcoFlowAccessKey:        env("ECOFLOW_ACCESS_KEY", ""),
+		EcoFlowSecretKey:        env("ECOFLOW_SECRET_KEY", ""),
+		EcoFlowDeviceSN:         env("ECOFLOW_DEVICE_SN", ""),
+		EcoFlowBaseURL:          env("ECOFLOW_BASE_URL", "https://api-e.ecoflow.com"),
+		Delta3ReadEnabled:       envBool("ECOFLOW_DELTA3_READ_ENABLED", false),
+		Delta3PrivateAPIHost:    env("ECOFLOW_PRIVATE_API_HOST", "api.ecoflow.com"),
+		Delta3PrivateEmail:      env("ECOFLOW_PRIVATE_EMAIL", ""),
+		Delta3PrivatePassword:   env("ECOFLOW_PRIVATE_PASSWORD", ""),
+		Delta3DeviceSN:          env("ECOFLOW_DELTA3_DEVICE_SN", ""),
+		Delta3DeviceType:        env("ECOFLOW_DELTA3_DEVICE_TYPE", "DELTA_3"),
+		Delta3MQTTClientID:      env("ECOFLOW_DELTA3_MQTT_CLIENT_ID", ""),
+		Delta3Timeout:           time.Duration(envInt("ECOFLOW_DELTA3_TIMEOUT_SEC", 20)) * time.Second,
+		Delta3AllowAutoWrite:    envBool("ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL", false),
+		Delta3ExecuteWrite:      envBool("ECOFLOW_DELTA3_EXECUTE", false),
+		Delta3AllowPrivateWrite: envBool("ECOFLOW_DELTA3_ALLOW_PRIVATE_API_WRITE", false),
+		Delta3Aux: Delta3AuxConfig{
+			Enabled:                   envBool("DELTA3_AUX_ENABLED", false),
+			MinChargeW:                envInt("DELTA3_AUX_MIN_CHARGE_W", 100),
+			MaxChargeW:                envInt("DELTA3_AUX_MAX_CHARGE_W", 1500),
+			SafetyMarginW:             envInt("DELTA3_AUX_SAFETY_MARGIN_W", 50),
+			MinCommandDiffW:           envInt("DELTA3_AUX_MIN_COMMAND_DIFF_W", 100),
+			MaxIncreaseStepW:          envInt("DELTA3_AUX_MAX_INCREASE_STEP_W", 300),
+			MaxDecreaseStepW:          envInt("DELTA3_AUX_MAX_DECREASE_STEP_W", 500),
+			MinCommandInterval:        time.Duration(envInt("DELTA3_AUX_MIN_COMMAND_INTERVAL_SEC", 120)) * time.Second,
+			StopImportThresholdW:      envInt("DELTA3_AUX_STOP_IMPORT_THRESHOLD_W", 50),
+			TargetMaxSocBufferPercent: envInt("DELTA3_AUX_TARGET_MAX_SOC_BUFFER_PERCENT", 2),
+		},
+		WeatherEnabled:       envBool("WEATHER_FORECAST_ENABLED", weatherLatitudeRaw != "" && weatherLongitudeRaw != ""),
+		WeatherLatitude:      parseFloat(weatherLatitudeRaw, 0),
+		WeatherLongitude:     parseFloat(weatherLongitudeRaw, 0),
+		WeatherTimezone:      env("WEATHER_TIMEZONE", "Asia/Tokyo"),
+		WeatherBaseURL:       env("WEATHER_BASE_URL", "https://api.open-meteo.com"),
+		NotificationEnabled:  envBool("NOTIFICATION_ENABLED", false),
+		NotificationProvider: env("NOTIFICATION_PROVIDER", "slack"),
+		SlackWebhookURL:      env("SLACK_WEBHOOK_URL", ""),
 		ManualChargeAlert: ManualChargeAlertConfig{
 			ExportThresholdW: envInt("MANUAL_CHARGE_ALERT_EXPORT_W", 700),
 			SocThreshold:     envInt("MANUAL_CHARGE_ALERT_SOC", 95),

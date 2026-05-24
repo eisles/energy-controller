@@ -88,7 +88,7 @@ export function Delta3StatusCard({
 }) {
   const unavailableReason = fetchError || status?.lastError || "read-only status is not loaded";
   const available = !fetchError && Boolean(status?.available);
-  const auxiliaryPlan = buildAuxiliaryBatteryPlan(sourceStatus, status);
+  const auxiliaryPlan = sourceStatus.delta3AuxPlan;
   return (
     <Card className="delta3-status-card section">
       <CardHeader>
@@ -120,12 +120,14 @@ export function Delta3StatusCard({
               <Detail label="Updated" value={formatDateTime(status.updatedAt || "")} />
             </div>
             <div className="detail-strip planner-secondary" aria-label="DELTA 3 Plus auxiliary battery plan">
-              <Detail label="補助計画" value={auxiliaryPlan.state} />
-              <Detail label="推奨補助充電" value={nullableWatt(auxiliaryPlan.recommendedChargeW)} />
-              <Detail label="残余売電" value={nullableWatt(sourceStatus.exportW)} />
-              <Detail label="安全余力" value="50 W" />
-              <Detail label="実行" value="read-only" />
-              <Detail label="理由" value={auxiliaryPlan.reason} />
+              <Detail label="補助計画" value={auxiliaryPlan?.strategyState || "UNAVAILABLE"} />
+              <Detail label="推奨AC上限" value={nullableWatt(auxiliaryPlan?.recommendedAcChargeLimitW)} />
+              <Detail label="現在AC上限" value={nullableWatt(auxiliaryPlan?.currentAcChargeLimitW)} />
+              <Detail label="残余売電" value={nullableWatt(auxiliaryPlan?.residualExportW ?? sourceStatus.exportW)} />
+              <Detail label="安全余力" value={nullableWatt(auxiliaryPlan?.safetyMarginW)} />
+              <Detail label="実行" value={auxiliaryPlan?.wouldWrite ? "would write" : "read-only"} />
+              <Detail label="抑制" value={auxiliaryPlan?.suppressedReason || "-"} />
+              <Detail label="理由" value={auxiliaryPlan?.reason || "-"} />
             </div>
           </>
         ) : (
@@ -484,29 +486,6 @@ function nullableOnOff(value: boolean | null | undefined) {
 
 function nullableWatt(value: number | null | undefined) {
   return value === null || value === undefined ? "-" : `${value} W`;
-}
-
-function buildAuxiliaryBatteryPlan(sourceStatus: EnergyStatus, delta3Status: Delta3Status | null) {
-  if (!delta3Status?.available) {
-    return { state: "未判定", recommendedChargeW: null, reason: "DELTA 3 Plus状態未取得" };
-  }
-  const exportW = Math.max(0, sourceStatus.exportW);
-  const soc = delta3Status.soc ?? null;
-  const maxSoc = delta3Status.maxChargeSoc ?? 100;
-  if (soc !== null && soc >= maxSoc) {
-    return { state: "候補外", recommendedChargeW: null, reason: `SOCが最大充電SOC ${maxSoc}% 以上` };
-  }
-  if (exportW <= 0) {
-    return { state: "待機", recommendedChargeW: null, reason: "売電がないため補助充電しない" };
-  }
-  const safetyMarginW = 50;
-  const availableW = exportW - safetyMarginW;
-  const minDelta3ChargeW = 100;
-  if (availableW < minDelta3ChargeW) {
-    return { state: "待機", recommendedChargeW: null, reason: `売電 ${exportW}W は最低補助充電 ${minDelta3ChargeW}W と安全余力を下回る` };
-  }
-  const recommendedChargeW = Math.min(1500, Math.floor(availableW / 100) * 100);
-  return { state: "補助充電候補", recommendedChargeW, reason: "DELTA Pro 3優先後の残余売電をDELTA 3 Plusで吸収する候補" };
 }
 
 function yesNo(value: boolean) {

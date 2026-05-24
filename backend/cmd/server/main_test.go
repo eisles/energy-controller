@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eisles/energy-controller/backend/internal/api"
 	"github.com/eisles/energy-controller/backend/internal/config"
 	"github.com/eisles/energy-controller/backend/internal/domain"
 	"github.com/eisles/energy-controller/backend/internal/store"
@@ -37,6 +38,14 @@ func (p stubStatusProvider) LastCommandActualW() *int {
 
 func (p stubStatusProvider) LastCommandSent() bool {
 	return p.commandSent
+}
+
+type stubDelta3StatusReader struct {
+	status api.Delta3StatusResponse
+}
+
+func (r stubDelta3StatusReader) CurrentStatus(context.Context) api.Delta3StatusResponse {
+	return r.status
 }
 
 func TestRecordStatusPersistsWouldSendLogWithoutCommandSent(t *testing.T) {
@@ -75,6 +84,9 @@ func TestRecordStatusPersistsWouldSendLogWithoutCommandSent(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
+		nil,
+		nil,
 		slog.Default(),
 	)
 
@@ -93,6 +105,89 @@ func TestRecordStatusPersistsWouldSendLogWithoutCommandSent(t *testing.T) {
 	}
 	if !strings.Contains(logs[0].DecisionReason, "would-send") {
 		t.Fatalf("DecisionReason = %q, want would-send marker", logs[0].DecisionReason)
+	}
+}
+
+func TestRecordStatusPersistsDelta3AuxSuppressionOnStatus(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "energy.db"))
+	if err != nil {
+		t.Fatalf("store.Open failed: %v", err)
+	}
+	defer db.Close()
+
+	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
+	provider := stubStatusProvider{
+		status: domain.Status{
+			GridW:     -900,
+			ImportW:   0,
+			ExportW:   900,
+			State:     "simulation",
+			Mode:      "mock",
+			UpdatedAt: now,
+			SurplusPlan: &domain.SurplusPlan{
+				StrategyState: "HOLD",
+				Reason:        "DELTA Pro 3 priority is already satisfied",
+			},
+		},
+	}
+	currentLimitW := 100
+	soc := 50
+	maxSoc := 100
+	statusRepository := store.NewStatusRepository(db)
+
+	recordStatus(
+		context.Background(),
+		config.Config{
+			MockMode:          true,
+			SimulationMode:    true,
+			EnableRealControl: false,
+			Delta3ReadEnabled: true,
+			Delta3Aux: config.Delta3AuxConfig{
+				Enabled:                   true,
+				MinChargeW:                100,
+				MaxChargeW:                1500,
+				SafetyMarginW:             50,
+				MinCommandDiffW:           100,
+				MaxIncreaseStepW:          300,
+				MaxDecreaseStepW:          500,
+				MinCommandInterval:        2 * time.Minute,
+				StopImportThresholdW:      50,
+				TargetMaxSocBufferPercent: 2,
+			},
+		},
+		provider,
+		statusRepository,
+		store.NewLogRepository(db),
+		nil,
+		nil,
+		store.NewDelta3AuxControlCommandRepository(db),
+		nil,
+		nil,
+		nil,
+		stubDelta3StatusReader{status: api.Delta3StatusResponse{
+			Available:      true,
+			SOC:            &soc,
+			ACChargeLimitW: &currentLimitW,
+			MaxChargeSoc:   &maxSoc,
+		}},
+		nil,
+		nil,
+		nil,
+		slog.Default(),
+	)
+
+	got, err := statusRepository.CurrentStatus(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentStatus failed: %v", err)
+	}
+	if got.Delta3AuxPlan == nil {
+		t.Fatal("Delta3AuxPlan = nil, want persisted plan")
+	}
+	if got.Delta3AuxPlan.WouldWrite {
+		t.Fatal("Delta3AuxPlan.WouldWrite = true, want false under mock/simulation guard")
+	}
+	if !strings.Contains(got.Delta3AuxPlan.SuppressedReason, "mock mode") {
+		t.Fatalf("SuppressedReason = %q, want mock mode guard", got.Delta3AuxPlan.SuppressedReason)
 	}
 }
 

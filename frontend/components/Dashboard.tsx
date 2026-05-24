@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { ControlPanel } from "@/components/ControlPanel";
+import { Delta3AuxControlCommandLogTable } from "@/components/Delta3AuxControlCommandLogTable";
 import { DryRunPlanHistory } from "@/components/DryRunPlanHistory";
 import { EnergyCharts } from "@/components/EnergyCharts";
 import { EnergyMeterLogTable } from "@/components/EnergyMeterLogTable";
@@ -27,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import {
   fetchEnergyMeterLogsPage,
   fetchDelta3Status,
+  fetchDelta3AuxControlCommandLogsPage,
   fetchLogs,
   fetchLogsPage,
   fetchNightChargePlanLogsPage,
@@ -40,6 +42,7 @@ import type {
   EnergyMeterLog,
   EnergyStatus,
   Delta3Status,
+  Delta3AuxControlCommandLog,
   NightChargeDailySummary,
   NightChargePlanLog,
   PowerLog,
@@ -71,6 +74,7 @@ const energyMeterLogPageSize = 25;
 const nightChargePlanLogPageSize = 25;
 const nightChargeSummaryPageSize = 25;
 const surplusControlCommandLogPageSize = 25;
+const delta3AuxControlCommandLogPageSize = 25;
 const dryRunPlanLimit = 10;
 
 type DashboardSectionKey =
@@ -80,6 +84,7 @@ type DashboardSectionKey =
   | "tariffSummary"
   | "nightDryRun"
   | "surplusCommand"
+  | "delta3AuxCommand"
   | "nightPlanLog"
   | "nightSummary"
   | "surplusDryRun"
@@ -96,6 +101,7 @@ const defaultSectionOrder: DashboardSectionKey[] = [
   "tariffSummary",
   "nightDryRun",
   "surplusCommand",
+  "delta3AuxCommand",
   "nightPlanLog",
   "nightSummary",
   "surplusDryRun",
@@ -113,6 +119,7 @@ const initialDashboardSections: Record<DashboardSectionKey, boolean> = {
   tariffSummary: true,
   nightDryRun: false,
   surplusCommand: false,
+  delta3AuxCommand: false,
   nightPlanLog: false,
   nightSummary: false,
   surplusDryRun: false,
@@ -155,6 +162,9 @@ export function Dashboard() {
   const [surplusCommandLogs, setSurplusCommandLogs] = useState<SurplusControlCommandLog[]>([]);
   const [surplusCommandPage, setSurplusCommandPage] = useState(1);
   const [surplusCommandTotal, setSurplusCommandTotal] = useState(0);
+  const [delta3AuxCommandLogs, setDelta3AuxCommandLogs] = useState<Delta3AuxControlCommandLog[]>([]);
+  const [delta3AuxCommandPage, setDelta3AuxCommandPage] = useState(1);
+  const [delta3AuxCommandTotal, setDelta3AuxCommandTotal] = useState(0);
   const [nightChargeSummaries, setNightChargeSummaries] = useState<NightChargeDailySummary[]>([]);
   const [nightChargeSummaryPage, setNightChargeSummaryPage] = useState(1);
   const [nightChargeSummaryFromInput, setNightChargeSummaryFromInput] = useState("");
@@ -193,6 +203,7 @@ export function Dashboard() {
   const [nightDryRunPlanError, setNightDryRunPlanError] = useState<string | null>(null);
   const [nightChargePlanError, setNightChargePlanError] = useState<string | null>(null);
   const [surplusCommandError, setSurplusCommandError] = useState<string | null>(null);
+  const [delta3AuxCommandError, setDelta3AuxCommandError] = useState<string | null>(null);
   const [nightChargeSummaryError, setNightChargeSummaryError] = useState<string | null>(null);
   const [energyMeterError, setEnergyMeterError] = useState<string | null>(null);
   const [tariffError, setTariffError] = useState<string | null>(null);
@@ -468,6 +479,39 @@ export function Dashboard() {
       window.clearInterval(timer);
     };
   }, [surplusCommandPage]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDelta3AuxCommandLogPage() {
+      try {
+        const nextPage = await fetchDelta3AuxControlCommandLogsPage({
+          limit: delta3AuxControlCommandLogPageSize,
+          offset: (delta3AuxCommandPage - 1) * delta3AuxControlCommandLogPageSize
+        });
+        if (!cancelled) {
+          setDelta3AuxCommandLogs(nextPage.items);
+          setDelta3AuxCommandTotal(nextPage.total);
+          setDelta3AuxCommandError(null);
+          const totalPages = Math.max(1, Math.ceil(nextPage.total / delta3AuxControlCommandLogPageSize));
+          if (delta3AuxCommandPage > totalPages) {
+            setDelta3AuxCommandPage(totalPages);
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setDelta3AuxCommandError(err instanceof Error ? err.message : "delta3 auxiliary command logs request failed");
+        }
+      }
+    }
+
+    loadDelta3AuxCommandLogPage();
+    const timer = window.setInterval(loadDelta3AuxCommandLogPage, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [delta3AuxCommandPage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -779,6 +823,25 @@ export function Dashboard() {
               pageSize={surplusControlCommandLogPageSize}
               total={surplusCommandTotal}
               onPageChange={setSurplusCommandPage}
+            />
+          </CollapsibleSection>
+        );
+      case "delta3AuxCommand":
+        return (
+          <CollapsibleSection
+            title="DELTA 3 Plus 補助充電ログ"
+            summary={pagedLogSectionSummary(delta3AuxCommandTotal, delta3AuxCommandPage, delta3AuxControlCommandLogPageSize, delta3AuxCommandError)}
+            open={openSections.delta3AuxCommand}
+            onToggle={() => toggleSection("delta3AuxCommand")}
+            headerControls={headerControls}
+          >
+            <Delta3AuxControlCommandLogTable
+              logs={delta3AuxCommandLogs}
+              error={delta3AuxCommandError}
+              page={delta3AuxCommandPage}
+              pageSize={delta3AuxControlCommandLogPageSize}
+              total={delta3AuxCommandTotal}
+              onPageChange={setDelta3AuxCommandPage}
             />
           </CollapsibleSection>
         );
@@ -1094,6 +1157,7 @@ function dashboardSectionLabel(section: DashboardSectionKey) {
     tariffSummary: "料金概算",
     nightDryRun: "夜間制御 dry-run 履歴",
     surplusCommand: "余剰追従 実行ログ",
+    delta3AuxCommand: "DELTA 3 Plus 補助充電ログ",
     nightPlanLog: "夜間充電計画ログ",
     nightSummary: "夜間充電 日次検証ログ",
     surplusDryRun: "余剰追従 dry-run 履歴",

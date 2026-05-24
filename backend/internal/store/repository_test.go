@@ -33,7 +33,15 @@ func TestStatusRepositoryUpdatesAndReadsCurrentStatus(t *testing.T) {
 		Mode:                "mock",
 		LastDecisionReason:  "export power is above start threshold",
 		LastError:           &lastError,
-		UpdatedAt:           now,
+		Delta3AuxPlan: &domain.Delta3AuxPlan{
+			Mode:                      "read-only",
+			StrategyState:             "READY",
+			RecommendedACChargeLimitW: 300,
+			ResidualExportW:           850,
+			SafetyMarginW:             50,
+			Reason:                    "test delta3 aux plan",
+		},
+		UpdatedAt: now,
 	}
 
 	if err := repo.UpdateCurrentStatus(context.Background(), want); err != nil {
@@ -53,8 +61,51 @@ func TestStatusRepositoryUpdatesAndReadsCurrentStatus(t *testing.T) {
 	if got.BatteryFullEnergyWh == nil || *got.BatteryFullEnergyWh != fullEnergyWh {
 		t.Fatalf("BatteryFullEnergyWh = %v, want %d", got.BatteryFullEnergyWh, fullEnergyWh)
 	}
+	if got.Delta3AuxPlan == nil || got.Delta3AuxPlan.StrategyState != "READY" || got.Delta3AuxPlan.RecommendedACChargeLimitW != 300 {
+		t.Fatalf("Delta3AuxPlan = %+v, want READY 300W", got.Delta3AuxPlan)
+	}
 	if !got.UpdatedAt.Equal(now) {
 		t.Fatalf("UpdatedAt = %s, want %s", got.UpdatedAt, now)
+	}
+}
+
+func TestDelta3AuxControlCommandRepositoryInsertsAndPages(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewDelta3AuxControlCommandRepository(db)
+	base := time.Date(2026, 5, 24, 10, 0, 0, 0, time.UTC)
+	soc := 70
+	previous := 100
+	target := 300
+
+	if err := repo.InsertDelta3AuxControlCommandLog(context.Background(), domain.Delta3AuxControlCommandLog{
+		MeasuredAt:                base,
+		StrategyState:             "READY",
+		CommandFingerprint:        "delta3_aux;state=READY;ac=300;adjust_ac=true",
+		GridW:                     -900,
+		ImportW:                   0,
+		ExportW:                   900,
+		ResidualExportW:           900,
+		Delta3Soc:                 &soc,
+		PreviousACChargeLimitW:    &previous,
+		TargetACChargeLimitW:      &target,
+		DryRun:                    true,
+		WouldWrite:                true,
+		ShouldAdjustACChargeLimit: true,
+		DecisionReason:            "test",
+		CreatedAt:                 base,
+	}); err != nil {
+		t.Fatalf("InsertDelta3AuxControlCommandLog failed: %v", err)
+	}
+
+	logs, total, err := repo.ListDelta3AuxControlCommandLogsPage(context.Background(), 25, 0, Delta3AuxControlCommandLogPageFilter{})
+	if err != nil {
+		t.Fatalf("ListDelta3AuxControlCommandLogsPage failed: %v", err)
+	}
+	if total != 1 || len(logs) != 1 {
+		t.Fatalf("total=%d len=%d, want 1/1", total, len(logs))
+	}
+	if logs[0].Delta3Soc == nil || *logs[0].Delta3Soc != soc || logs[0].TargetACChargeLimitW == nil || *logs[0].TargetACChargeLimitW != target {
+		t.Fatalf("unexpected log: %+v", logs[0])
 	}
 }
 

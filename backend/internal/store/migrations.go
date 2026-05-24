@@ -183,6 +183,27 @@ func migrate(db *sql.DB) error {
 			last_error TEXT,
 			updated_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS delta3_aux_control_command_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			measured_at TEXT NOT NULL,
+			strategy_state TEXT NOT NULL,
+			command_fingerprint TEXT NOT NULL,
+			grid_w INTEGER NOT NULL,
+			import_w INTEGER NOT NULL,
+			export_w INTEGER NOT NULL,
+			residual_export_w INTEGER NOT NULL,
+			delta3_soc INTEGER,
+			previous_ac_charge_limit_w INTEGER,
+			target_ac_charge_limit_w INTEGER,
+			command_sent INTEGER NOT NULL,
+			dry_run INTEGER NOT NULL,
+			would_write INTEGER NOT NULL,
+			should_adjust_ac_charge_limit INTEGER NOT NULL,
+			suppressed_reason TEXT NOT NULL,
+			decision_reason TEXT NOT NULL,
+			error_message TEXT,
+			created_at TEXT NOT NULL
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
@@ -220,6 +241,7 @@ func migrate(db *sql.DB) error {
 		"battery_full_energy_wh",
 		"surplus_plan_json",
 		"night_charge_plan_json",
+		"delta3_aux_plan_json",
 	} {
 		if err := addKnownColumnIfMissing(db, "current_status", column); err != nil {
 			return err
@@ -316,6 +338,7 @@ var knownMigrationColumns = map[string]map[string]string{
 		"battery_full_energy_wh": "INTEGER",
 		"surplus_plan_json":      "TEXT",
 		"night_charge_plan_json": "TEXT",
+		"delta3_aux_plan_json":   "TEXT",
 	},
 	"tariff_plans": {
 		"export_rate_yen": "REAL NOT NULL DEFAULT 7.0",

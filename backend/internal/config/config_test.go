@@ -22,6 +22,19 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	t.Setenv("ECOFLOW_DELTA3_DEVICE_TYPE", "DELTA_3_PLUS")
 	t.Setenv("ECOFLOW_DELTA3_MQTT_CLIENT_ID", "delta3-client")
 	t.Setenv("ECOFLOW_DELTA3_TIMEOUT_SEC", "12")
+	t.Setenv("ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL", "true")
+	t.Setenv("ECOFLOW_DELTA3_EXECUTE", "true")
+	t.Setenv("ECOFLOW_DELTA3_ALLOW_PRIVATE_API_WRITE", "true")
+	t.Setenv("DELTA3_AUX_ENABLED", "true")
+	t.Setenv("DELTA3_AUX_MIN_CHARGE_W", "120")
+	t.Setenv("DELTA3_AUX_MAX_CHARGE_W", "1300")
+	t.Setenv("DELTA3_AUX_SAFETY_MARGIN_W", "60")
+	t.Setenv("DELTA3_AUX_MIN_COMMAND_DIFF_W", "120")
+	t.Setenv("DELTA3_AUX_MAX_INCREASE_STEP_W", "250")
+	t.Setenv("DELTA3_AUX_MAX_DECREASE_STEP_W", "450")
+	t.Setenv("DELTA3_AUX_MIN_COMMAND_INTERVAL_SEC", "180")
+	t.Setenv("DELTA3_AUX_STOP_IMPORT_THRESHOLD_W", "70")
+	t.Setenv("DELTA3_AUX_TARGET_MAX_SOC_BUFFER_PERCENT", "4")
 	t.Setenv("WEATHER_LATITUDE", "35.1")
 	t.Setenv("WEATHER_LONGITUDE", "139.2")
 	t.Setenv("WEATHER_TIMEZONE", "Asia/Tokyo")
@@ -92,6 +105,18 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	}
 	if cfg.Delta3Timeout != 12*time.Second {
 		t.Fatalf("Delta3Timeout = %s, want 12s", cfg.Delta3Timeout)
+	}
+	if !cfg.Delta3AllowAutoWrite || !cfg.Delta3ExecuteWrite || !cfg.Delta3AllowPrivateWrite {
+		t.Fatalf("unexpected delta3 write gates: auto=%v execute=%v private=%v", cfg.Delta3AllowAutoWrite, cfg.Delta3ExecuteWrite, cfg.Delta3AllowPrivateWrite)
+	}
+	if !cfg.Delta3Aux.Enabled || cfg.Delta3Aux.MinChargeW != 120 || cfg.Delta3Aux.MaxChargeW != 1300 || cfg.Delta3Aux.SafetyMarginW != 60 {
+		t.Fatalf("unexpected delta3 aux config: %+v", cfg.Delta3Aux)
+	}
+	if cfg.Delta3Aux.MinCommandDiffW != 120 || cfg.Delta3Aux.MaxIncreaseStepW != 250 || cfg.Delta3Aux.MaxDecreaseStepW != 450 {
+		t.Fatalf("unexpected delta3 aux command steps: %+v", cfg.Delta3Aux)
+	}
+	if cfg.Delta3Aux.MinCommandInterval != 180*time.Second || cfg.Delta3Aux.StopImportThresholdW != 70 || cfg.Delta3Aux.TargetMaxSocBufferPercent != 4 {
+		t.Fatalf("unexpected delta3 aux guard config: %+v", cfg.Delta3Aux)
 	}
 	if !cfg.WeatherEnabled {
 		t.Fatal("WeatherEnabled = false, want true")

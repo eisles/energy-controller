@@ -42,14 +42,14 @@ type Delta3StatusResponse struct {
 }
 
 func delta3StatusHandler(cfg config.Config, logger *slog.Logger) http.HandlerFunc {
-	reader := newDelta3StatusReader(cfg, logger, nil)
+	reader := NewDelta3StatusReader(cfg, logger)
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := reader.CurrentStatus(r.Context())
 		writeJSON(w, http.StatusOK, response)
 	}
 }
 
-type delta3StatusReader struct {
+type Delta3StatusReader struct {
 	cfg        config.Config
 	logger     *slog.Logger
 	client     delta3ProbeClient
@@ -59,11 +59,15 @@ type delta3StatusReader struct {
 	cacheUntil time.Time
 }
 
-func newDelta3StatusReader(cfg config.Config, logger *slog.Logger, client delta3ProbeClient) *delta3StatusReader {
+func NewDelta3StatusReader(cfg config.Config, logger *slog.Logger) *Delta3StatusReader {
+	return newDelta3StatusReader(cfg, logger, nil)
+}
+
+func newDelta3StatusReader(cfg config.Config, logger *slog.Logger, client delta3ProbeClient) *Delta3StatusReader {
 	if client == nil && cfg.Delta3ReadEnabled {
 		client = ecoflowdelta3.NewClient(delta3ProbeConfig(cfg))
 	}
-	return &delta3StatusReader{
+	return &Delta3StatusReader{
 		cfg:    cfg,
 		logger: logger,
 		client: client,
@@ -71,7 +75,7 @@ func newDelta3StatusReader(cfg config.Config, logger *slog.Logger, client delta3
 	}
 }
 
-func (r *delta3StatusReader) CurrentStatus(ctx context.Context) Delta3StatusResponse {
+func (r *Delta3StatusReader) CurrentStatus(ctx context.Context) Delta3StatusResponse {
 	if !r.cfg.Delta3ReadEnabled {
 		return readDelta3Status(ctx, r.cfg, r.client, r.logger)
 	}
