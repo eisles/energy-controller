@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phase 7 DELTA 3 Plus 余剰補助充電制御 実装計画</title>
+  <style>
+    body {
+      margin: 0;
+      background: #f8fafc;
+      color: #111827;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.7;
+    }
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 40px 24px 72px;
+    }
+    h1, h2, h3 {
+      line-height: 1.35;
+      color: #0f172a;
+    }
+    h1 {
+      margin: 0 0 24px;
+      font-size: 32px;
+    }
+    h2 {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid #dbe3ef;
+      font-size: 24px;
+    }
+    h3 {
+      margin-top: 28px;
+      font-size: 18px;
+    }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    pre {
+      overflow: auto;
+      padding: 14px 16px;
+      border: 1px solid #dbe3ef;
+      border-radius: 8px;
+      background: #0f172a;
+      color: #e5e7eb;
+    }
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #e2e8f0;
+    }
+    pre code {
+      padding: 0;
+      background: transparent;
+    }
+    ul, ol {
+      padding-left: 1.35rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      background: #fff;
+    }
+    th, td {
+      border: 1px solid #dbe3ef;
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #edf2f7;
+    }
+    .note {
+      padding: 12px 14px;
+      border-left: 4px solid #2563eb;
+      background: #eff6ff;
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Phase 7 DELTA 3 Plus 余剰補助充電制御 実装計画</h1>
+
+  <h2>目的</h2>
+  <p>DELTA Pro 3 の余剰追従だけでは吸収しきれない売電がある場合に、DELTA 3 Plus を補助バッテリーとして使い、売電を減らす。</p>
+  <p>DELTA 3 Plus は実機検証で read-only status 取得、AC 充電上限 100W / 200W の one-shot write と readback、低い最低 AC 充電値による細かい余剰吸収への適性が確認済みである。</p>
+  <p>今回の実装では、frontend の簡易計算に留めている補助充電候補を backend の planner / guard / log に移し、DELTA Pro 3 優先後の残余売電に対して DELTA 3 Plus の推奨 AC 充電上限を計算できるようにする。</p>
+
+  <h2>非目的</h2>
+  <ul>
+    <li>DELTA 3 Plus を DELTA Pro 3 より先に充電する制御はしない。</li>
+    <li>SwitchBot スマートプラグ連携はこの計画では実装しない。</li>
+    <li>DELTA 3 Plus の放電制御、AC output ON/OFF、grid bypass 設定変更はこの計画では実装しない。</li>
+    <li>private API の秘密情報、device SN、token をログ・画面・docs に出さない。</li>
+    <li>EcoFlow AC 出力を家庭用コンセントや系統へ戻す構成は扱わない。</li>
+  </ul>
+
+  <h2>現状</h2>
+  <h3>DELTA Pro 3 側</h3>
+  <p><code>backend/internal/control/surplus_planner.go</code> に DELTA Pro 3 向けの余剰追従 planner があり、<code>IDLE</code> / <code>READY</code> / <code>CHARGING</code> / <code>RECOVERING</code> / <code>PASSTHROUGH</code> を扱う。</p>
+  <p><code>backend/internal/control/surplus_executor.go</code> には guard と executor があり、実機 write は mock/simulation/real-control/auto-control/confirmation/trial-window/minimum-interval/duplicate/expected-current の各条件を通った場合だけ候補になる。</p>
+  <h3>DELTA 3 Plus 側</h3>
+  <p><code>GET /api/delta3/status</code> で SOC、AC 入力、AC 出力、AC 充電上限、最大充電 SOC、最低放電 SOC、backup reserve、gridBypassDisabled、acOutputEnabled を取得できる。</p>
+  <p>現在の <code>buildAuxiliaryBatteryPlan()</code> は frontend 内の簡易計算であり、実行 guard や永続ログと連携していない。</p>
+
+  <h2>制御方針</h2>
+  <h3>優先順位</h3>
+  <ol>
+    <li>DELTA Pro 3 の既存余剰追従を優先する。</li>
+    <li>DELTA Pro 3 が追加吸収できない、または追加後も残余売電がある場合だけ DELTA 3 Plus を候補にする。</li>
+    <li>DELTA 3 Plus は 100W 単位の補助吸収先として扱う。</li>
+    <li>買電に転じた場合は DELTA 3 Plus 補助充電を下げる、または停止する。</li>
+  </ol>
+
+  <h3>残余売電の考え方</h3>
+  <p>Nature Remo E の <code>exportW</code> は家全体の系統結果であり、DELTA Pro 3 / DELTA 3 Plus の現時点の入出力を含んだ値である。DELTA Pro 3 に AC 充電上限引き上げ候補がある場合、DELTA 3 Plus は原則待機する。</p>
+  <p>DELTA Pro 3 が満充電に近い、AC 充電上限に近い、または追加吸収できない場合だけ DELTA 3 Plus の補助充電候補を作る。</p>
+  <p>直近 DELTA Pro 3 command が minimum interval 内、expected current mismatch、または error retry cooldown 中の場合は、DELTA Pro 3 の状態確定待ちとして DELTA 3 Plus を待機させる。2 台を同時に増加 write しないため、DELTA 3 Plus の増加候補は Pro 3 command の settle / verification window が終わってから作る。</p>
+
+  <h3>推奨 AC 充電上限</h3>
+  <pre><code>currentLimitW = currentDelta3ACChargeLimitW
+residualHeadroomW = exportW - Delta3AuxSafetyMarginW
+if currentLimitW is unknown:
+    no command candidate
+if residualHeadroomW &lt; Delta3AuxMinCommandDiffW:
+    hold currentLimitW
+targetW = currentLimitW + roundDownTo100(residualHeadroomW)
+targetW = clamp(targetW, Delta3AuxMinChargeW, Delta3AuxMaxChargeW)
+targetW = limitStep(currentDelta3ACChargeLimitW, targetW, Delta3AuxMaxIncreaseStepW, Delta3AuxMaxDecreaseStepW)</code></pre>
+  <p><code>exportW</code> は DELTA 3 Plus の現在の充電負荷を差し引いた後の系統結果なので、次の target は <code>exportW</code> から絶対値を作り直さない。既存の充電上限を維持し、残余余力がある場合だけ増加する。</p>
+  <p><code>Delta3AuxMinChargeW</code> 未満の残余余力は、最低 AC 充電量へ切り上げない。小さい売電を 100W へ丸めて買電へ振らせないため、増加候補は <code>Delta3AuxMinCommandDiffW</code> 以上の残余余力がある場合だけ作る。</p>
+  <pre><code>importW &gt;= Delta3AuxStopImportThresholdW
+=&gt; reduceW = roundUpTo100(importW + Delta3AuxSafetyMarginW)
+=&gt; targetW = max(Delta3AuxMinChargeW, currentLimitW - reduceW)</code></pre>
+  <p>買電中に no-op を stop として扱わない。前回 command で DELTA 3 Plus が充電中の場合、no-op ではその充電上限が残り、買電を長引かせる可能性があるため、既知の安全最小値へ下げる。0W command は送らない。</p>
+
+  <h3>SOC 条件</h3>
+  <pre><code>delta3Soc &gt;= min(delta3MaxChargeSoc, 100) - Delta3AuxTargetMaxSocBufferPercent
+=&gt; 補助候補から外す</code></pre>
+
+  <h3>mode 条件</h3>
+  <p>今回の自動制御 write 対象は DELTA 3 Plus の AC 充電上限だけに限定する。grid bypass、AC output、backup reserve、min discharge SOC、max charge SOC は read-only 条件としてログに残すが、自動変更しない。</p>
+
+  <h2>データ/API 設計</h2>
+  <h3>backend domain</h3>
+  <pre><code>type Delta3AuxPlan struct {
+    Mode                         string `json:"mode"`
+    StrategyState                string `json:"strategyState"`
+    RecommendedACChargeLimitW    int    `json:"recommendedAcChargeLimitW"`
+    CurrentACChargeLimitW        *int   `json:"currentAcChargeLimitW,omitempty"`
+    Delta3Soc                    *int   `json:"delta3Soc,omitempty"`
+    Delta3MaxChargeSoc           *int   `json:"delta3MaxChargeSoc,omitempty"`
+    ResidualExportW              int    `json:"residualExportW"`
+    SafetyMarginW                int    `json:"safetyMarginW"`
+    WouldWrite                   bool   `json:"wouldWrite"`
+    ShouldAdjustACChargeLimit    bool   `json:"shouldAdjustAcChargeLimit"`
+    SuppressedReason             string `json:"suppressedReason,omitempty"`
+    Reason                       string `json:"reason"`
+}</code></pre>
+
+  <h3>command log</h3>
+  <pre><code>CREATE TABLE delta3_aux_control_command_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  measured_at TEXT NOT NULL,
+  strategy_state TEXT NOT NULL,
+  grid_w INTEGER NOT NULL,
+  import_w INTEGER NOT NULL,
+  export_w INTEGER NOT NULL,
+  residual_export_w INTEGER NOT NULL,
+  delta3_soc INTEGER,
+  previous_ac_charge_limit_w INTEGER,
+  target_ac_charge_limit_w INTEGER,
+  would_write INTEGER NOT NULL,
+  dry_run INTEGER NOT NULL,
+  command_sent INTEGER NOT NULL,
+  command_fingerprint TEXT NOT NULL,
+  suppressed_reason TEXT,
+  decision_reason TEXT NOT NULL,
+  error_message TEXT,
+  created_at TEXT NOT NULL
+);</code></pre>
+
+  <h3>API</h3>
+  <pre><code>GET /api/delta3/aux-plan
+GET /api/delta3/aux-commands?limit=25&amp;offset=0</code></pre>
+
+  <h2>実装ステップ</h2>
+  <ol>
+    <li>設定追加: <code>DELTA3_AUX_ENABLED=false</code> を既定にし、min/max/safety/interval/diff/step/trial gate に加えて、既存 <code>ecoflowdelta3.WriteGuards</code> の <code>Execute</code> / <code>AllowPrivateAPIWrite</code> に対応する <code>ECOFLOW_DELTA3_EXECUTE</code> / <code>ECOFLOW_DELTA3_ALLOW_PRIVATE_API_WRITE</code> を追加する。</li>
+    <li>domain / planner: <code>Delta3AuxPlan</code> と pure function の <code>PlanDelta3AuxCharging</code> を追加する。</li>
+    <li>repository / migration / API: <code>current_status.delta3_aux_plan_json</code>、<code>delta3_aux_control_command_logs</code>、<code>GET /api/delta3/aux-plan</code>、paging API を追加する。</li>
+    <li>guard / executor: DELTA 3 Plus 専用 guard evaluator と AC 充電上限 writer interface を追加する。</li>
+    <li>server 接続: status 保存処理に DELTA 3 Plus aux plan / command log を追加し、read 失敗時も既存 status を止めない。</li>
+    <li>frontend: backend plan 表示に置き換え、DELTA 3 Plus 補助充電ログを画面下部のログブロックに追加する。</li>
+    <li>README: dry-run、実制御 env、trial window、停止手順を追記する。</li>
+  </ol>
+
+  <h2>レビュー観点</h2>
+  <ul>
+    <li>既定値で実機 write が走らないこと。</li>
+    <li>DELTA Pro 3 と DELTA 3 Plus が同時に増加 write しないこと。</li>
+    <li>DELTA 3 Plus の private API 認証を frontend に出さないこと。</li>
+    <li>DELTA 3 Plus status 取得失敗で <code>/api/status</code> が壊れないこと。</li>
+    <li>command interval / duplicate suppression / fingerprint が DELTA Pro 3 と独立していること。</li>
+    <li>100W 未満の売電で DELTA 3 Plus write 候補を作らないこと。</li>
+    <li>既に補助充電中の残余売電では current limit を維持し、絶対 target を残余売電だけで作り直さないこと。</li>
+    <li>買電中は no-op ではなく安全最小値への減少候補を作ること。</li>
+    <li>0W write を暗黙に追加しないこと。</li>
+    <li>unit test が network なしで通ること。</li>
+  </ul>
+
+  <h2>検証コマンド</h2>
+  <pre><code>cd backend &amp;&amp; rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build
+rtk docker compose up -d --build
+rtk curl -fsS http://localhost:${HTTP_PORT:-8080}/api/status
+rtk docker compose down
+rtk git diff --check
+rtk codex review --uncommitted</code></pre>
+
+  <h2>ロールバック / 運用メモ</h2>
+  <ul>
+    <li><code>DELTA3_AUX_ENABLED=false</code> で補助充電 planner / write 候補を停止できる。</li>
+    <li><code>ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=false</code> で server からの DELTA 3 Plus write を止められる。</li>
+    <li><code>AUTO_CONTROL_ENABLED=false</code> で DELTA Pro 3 / DELTA 3 Plus の自動 write 全体を止められる。</li>
+    <li><code>SIMULATION_MODE=true</code> または <code>ENABLE_REAL_CONTROL=false</code> で実機 write を止められる。</li>
+    <li>command log は削除せず、検証材料として残す。</li>
+  </ul>
+
+  <h2>未実装 TODO</h2>
+  <ul>
+    <li>SwitchBot スマートプラグによる DELTA 3 Plus AC 給電 ON/OFF。</li>
+    <li>DELTA 3 Plus の AC output / grid bypass / backup reserve 自動操作。</li>
+    <li>DELTA Pro 3 と DELTA 3 Plus を統合した複数バッテリー optimizer。</li>
+    <li>DELTA 3 Plus の充電効率を実測ログから学習する補正。</li>
+  </ul>
+</main>
+</body>
+</html>
