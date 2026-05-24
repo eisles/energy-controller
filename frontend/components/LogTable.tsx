@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { commandResultLabel } from "@/lib/display-labels";
 import type { PowerLog } from "@/lib/types";
 
 type LogTableProps = {
@@ -136,7 +137,7 @@ export function LogTable({
                       <Badge variant="secondary">{log.mode || "-"}</Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={log.commandSent ? "warning" : "success"}>{log.commandSent ? "sent" : "not sent"}</Badge>
+                      <Badge variant={log.commandSent ? "warning" : "success"}>{commandResultLabel({ commandSent: log.commandSent })}</Badge>
                     </TableCell>
                     <TableCell className="reason-cell">{log.decisionReason || "-"}</TableCell>
                     <TableCell className="reason-cell">{log.errorMessage || "-"}</TableCell>

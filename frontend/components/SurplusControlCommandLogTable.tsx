@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { commandResultLabel, guardReasonLabel, strategyStateLabel } from "@/lib/display-labels";
 import type { SurplusControlCommandLog } from "@/lib/types";
 
 type Props = {
@@ -29,7 +30,7 @@ export function SurplusControlCommandLogTable({ logs, error, page, pageSize, tot
             <CardDescription>Dry-run command audit</CardDescription>
             <CardTitle>余剰追従コマンド履歴</CardTitle>
           </div>
-          <Badge variant="secondary">dry-run</Badge>
+          <Badge variant="secondary">未送信</Badge>
         </div>
       </CardHeader>
       <CardContent>
@@ -63,7 +64,7 @@ export function SurplusControlCommandLogTable({ logs, error, page, pageSize, tot
                   <TableRow key={log.id}>
                     <TableCell>{formatDateTime(log.measuredAt)}</TableCell>
                     <TableCell>
-                      <Badge variant={log.wouldWrite ? "warning" : "secondary"}>{log.strategyState || "-"}</Badge>
+                      <Badge variant={log.wouldWrite ? "warning" : "secondary"}>{strategyStateLabel(log.strategyState)}</Badge>
                       <br />
                       <span className="readonly-note">{commandKindLabel(log.commandKind)}</span>
                     </TableCell>
@@ -73,12 +74,12 @@ export function SurplusControlCommandLogTable({ logs, error, page, pageSize, tot
                     <TableCell>{formatChange(log.previousBackupReserveSoc, log.targetBackupReserveSoc, "%")}</TableCell>
                     <TableCell className="reason-cell">
                       <Badge variant={log.commandSent ? "warning" : log.dryRun ? "secondary" : "success"}>
-                        {log.commandSent ? "sent" : log.dryRun ? "dry-run" : "no write"}
+                        {commandResultLabel(log)}
                       </Badge>
                       <p>{log.decisionReason || "-"}</p>
                       <p className="readonly-note">{actionFlags(log)}</p>
                       {log.modeGuardReason ? <p className="readonly-note">Mode: {log.modeGuardReason}</p> : null}
-                      {log.suppressedReason ? <p className="readonly-note">Guard: {log.suppressedReason}</p> : null}
+                      {log.suppressedReason ? <p className="readonly-note">抑制: {guardReasonLabel(log.suppressedReason)}</p> : null}
                       {log.errorMessage ? <p className="inline-error">{log.errorMessage}</p> : null}
                     </TableCell>
                   </TableRow>

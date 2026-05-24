@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { guardReasonLabel, strategyStateLabel, writeCandidateLabel } from "@/lib/display-labels";
 import type { NightChargePlanLog } from "@/lib/types";
 
 type NightChargePlanLogTableProps = {
@@ -29,7 +30,7 @@ export function NightChargePlanLogTable({ logs, error, page, pageSize, total, on
             <CardDescription>Read-only audit</CardDescription>
             <CardTitle>夜間計画・結果</CardTitle>
           </div>
-          <Badge variant="secondary">no write</Badge>
+          <Badge variant="secondary">未送信</Badge>
         </div>
       </CardHeader>
       <CardContent>
@@ -65,7 +66,7 @@ export function NightChargePlanLogTable({ logs, error, page, pageSize, total, on
                   <TableRow key={log.id}>
                     <TableCell>{formatDateTime(log.measuredAt)}</TableCell>
                     <TableCell>
-                      <Badge variant="secondary">{log.strategyState || "-"}</Badge>
+                      <Badge variant="secondary">{strategyStateLabel(log.strategyState)}</Badge>
                     </TableCell>
                     <TableCell>{modeLabel(log.recommendedMode)}</TableCell>
                     <TableCell>{`${log.batterySoc}% -> ${log.recommendedNightTargetSoc}%`}</TableCell>
@@ -89,10 +90,10 @@ export function NightChargePlanLogTable({ logs, error, page, pageSize, total, on
                     <TableCell>{formatGrid(log)}</TableCell>
                     <TableCell className="reason-cell">
                       <Badge variant={log.wouldWrite ? "warning" : log.shouldChargeTonight ? "secondary" : "success"}>
-                        {log.wouldWrite ? "would write" : log.shouldChargeTonight ? "charge needed" : "ok"}
+                        {log.wouldWrite ? writeCandidateLabel(log.wouldWrite) : log.shouldChargeTonight ? "充電必要" : "問題なし"}
                       </Badge>
                       <p>{log.actionSummary || log.reason || "-"}</p>
-                      {log.commandBlockReason ? <p className="readonly-note">Guard: {log.commandBlockReason}</p> : null}
+                      {log.commandBlockReason ? <p className="readonly-note">抑制: {guardReasonLabel(log.commandBlockReason)}</p> : null}
                     </TableCell>
                   </TableRow>
                 ))

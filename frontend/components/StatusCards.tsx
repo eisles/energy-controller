@@ -2,6 +2,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
+import { decisionReasonLabel, guardReasonLabel, strategyStateLabel, writeCandidateLabel } from "@/lib/display-labels";
 import type { Delta3Status, EnergyStatus, NightChargePlan, SurplusPlan } from "@/lib/types";
 import type { ReactNode } from "react";
 
@@ -120,14 +121,14 @@ export function Delta3StatusCard({
               <Detail label="Updated" value={formatDateTime(status.updatedAt || "")} />
             </div>
             <div className="detail-strip planner-secondary" aria-label="DELTA 3 Plus auxiliary battery plan">
-              <Detail label="補助計画" value={auxiliaryPlan?.strategyState || "UNAVAILABLE"} />
+              <Detail label="補助計画" value={strategyStateLabel(auxiliaryPlan?.strategyState || "UNAVAILABLE")} />
               <Detail label="推奨AC上限" value={nullableWatt(auxiliaryPlan?.recommendedAcChargeLimitW)} />
               <Detail label="現在AC上限" value={nullableWatt(auxiliaryPlan?.currentAcChargeLimitW)} />
               <Detail label="残余売電" value={nullableWatt(auxiliaryPlan?.residualExportW ?? sourceStatus.exportW)} />
               <Detail label="安全余力" value={nullableWatt(auxiliaryPlan?.safetyMarginW)} />
-              <Detail label="実行" value={auxiliaryPlan?.wouldWrite ? "would write" : "read-only"} />
-              <Detail label="抑制" value={auxiliaryPlan?.suppressedReason || "-"} />
-              <Detail label="理由" value={auxiliaryPlan?.reason || "-"} />
+              <Detail label="実行" value={writeCandidateLabel(auxiliaryPlan?.wouldWrite)} />
+              <Detail label="抑制" value={guardReasonLabel(auxiliaryPlan?.suppressedReason)} />
+              <Detail label="理由" value={decisionReasonLabel(auxiliaryPlan?.reason)} />
             </div>
           </>
         ) : (
@@ -220,12 +221,12 @@ export function NightChargePlanSection({
               <CardDescription>Weather forecast planner</CardDescription>
               <CardTitle>深夜充電プラン</CardTitle>
             </div>
-            <Badge variant={plan.wouldWrite ? "warning" : "secondary"}>{plan.wouldWrite ? "would write" : "read-only"}</Badge>
+            <Badge variant={plan.wouldWrite ? "warning" : "secondary"}>{writeCandidateLabel(plan.wouldWrite)}</Badge>
           </div>
         </CardHeader>
         <CardContent>
           <div className="detail-strip" aria-label="night charging planner detail">
-            <Detail label="状態" value={plan.strategyState || "-"} />
+            <Detail label="状態" value={strategyStateLabel(plan.strategyState)} />
             <Detail label="PV期待度" value={`${plan.solarForecastScore}/100`} />
             <Detail label="推奨mode" value={modeLabel(plan.recommendedMode)} />
             <Detail label="推奨深夜SOC" value={`${plan.recommendedNightTargetSoc}%`} />
@@ -278,7 +279,7 @@ export function NightChargePlanSection({
             <Detail label="天気コード" value={plan.targetForecast ? `${plan.targetForecast.weatherCode}` : "-"} />
           </div>
           {plan.actionSummary ? <p className="planner-reason">Dry-run計画: {plan.actionSummary}</p> : null}
-          {plan.commandBlockReason ? <p className="planner-reason">Write guard: {plan.commandBlockReason}</p> : null}
+          {plan.commandBlockReason ? <p className="planner-reason">抑制: {guardReasonLabel(plan.commandBlockReason)}</p> : null}
           <p className="planner-reason">{plan.reason || "-"}</p>
         </CardContent>
       </Card>
@@ -310,12 +311,12 @@ export function SurplusPlanSection({
               <CardDescription>Read-only planner</CardDescription>
               <CardTitle>余剰追従プラン</CardTitle>
             </div>
-            <Badge variant={plan.wouldWrite ? "warning" : "secondary"}>{plan.wouldWrite ? "would write" : "read-only"}</Badge>
+            <Badge variant={plan.wouldWrite ? "warning" : "secondary"}>{writeCandidateLabel(plan.wouldWrite)}</Badge>
           </div>
         </CardHeader>
         <CardContent>
           <div className="detail-strip" aria-label="surplus planner detail">
-            <Detail label="状態" value={plan.strategyState || "-"} />
+            <Detail label="状態" value={strategyStateLabel(plan.strategyState)} />
             <Detail label="Net battery" value={formatNetBatteryFlow(plan.netBatteryW)} />
             <Detail label="開始必要売電" value={`${plan.requiredStartExportW} W`} />
             <Detail label="開始余力" value={formatSignedW(plan.availableStartMarginW)} />
@@ -341,11 +342,11 @@ function logRangeSummary(status: EnergyStatus) {
 }
 
 function surplusPlanSummary(plan: SurplusPlan) {
-  return `${plan.strategyState || "-"} / ${surplusActionLabel(plan)}`;
+  return `${strategyStateLabel(plan.strategyState)} / ${surplusActionLabel(plan)}`;
 }
 
 function nightPlanSummary(plan: NightChargePlan) {
-  return `${plan.strategyState || "-"} / 推奨深夜SOC ${plan.recommendedNightTargetSoc}% / PV ${formatDecimal(plan.dailyEstimatedPvKwh || plan.estimatedPvKwh)} kWh`;
+  return `${strategyStateLabel(plan.strategyState)} / 推奨深夜SOC ${plan.recommendedNightTargetSoc}% / PV ${formatDecimal(plan.dailyEstimatedPvKwh || plan.estimatedPvKwh)} kWh`;
 }
 
 function MetricCard({ metric }: { metric: Metric }) {
@@ -417,10 +418,10 @@ function formatSignedW(value: number) {
 
 function chargeRecommendationDescription(exportW: number, targetChargeW: number) {
   if (exportW > 0 && targetChargeW > 0) {
-    return `余剰あり: ${targetChargeW}W充電推奨 / read-onlyで未送信`;
+    return `余剰あり: ${targetChargeW}W充電推奨 / 未送信`;
   }
   if (targetChargeW > 0) {
-    return `${targetChargeW}W充電推奨 / read-onlyで未送信`;
+    return `${targetChargeW}W充電推奨 / 未送信`;
   }
   if (exportW > 0) {
     return "余剰あり / 充電推奨なし";
@@ -430,7 +431,7 @@ function chargeRecommendationDescription(exportW: number, targetChargeW: number)
 
 function surplusActionLabel(plan: SurplusPlan) {
   if (plan.actionSummary) {
-    return `Dry-run計画: ${plan.actionSummary} / read-onlyで未送信`;
+    return `未送信計画: ${plan.actionSummary}`;
   }
   const reserveLabel =
     plan.recommendedBackupReserveSoc !== null && plan.recommendedBackupReserveSoc !== undefined
@@ -447,28 +448,28 @@ function surplusActionLabel(plan: SurplusPlan) {
     surplusActions.push(`AC充電を${plan.recommendedAcChargeLimitW}Wへ調整`);
   }
   if (plan.shouldDisableEnergyModes) {
-    surplusActions.push("energy strategy modesを全OFFに");
+    surplusActions.push("動作モードを全OFFに");
   }
   if (plan.shouldEnableTouMode) {
     surplusActions.push("TOUをONに戻す");
   }
   if (surplusActions.length > 0) {
-    return `売電抑制: 充電開始には${surplusActions.join("、")}する推奨です。read-onlyのため未送信です。`;
+    return `売電抑制: 充電開始には${surplusActions.join("、")}する推奨です。未送信です。`;
   }
   if (plan.shouldRaiseBackupReserve && reserveLabel) {
-    return `売電抑制: 充電開始にはリザーブを${reserveLabel}へ引き上げる推奨です。read-onlyのため未送信です。`;
+    return `売電抑制: 充電開始にはリザーブを${reserveLabel}へ引き上げる推奨です。未送信です。`;
   }
   if (plan.shouldLowerBackupReserve && reserveLabel) {
-    return `買電抑制: AC充電を下げ、リザーブをデフォルトの${reserveLabel}へ戻す推奨です。read-onlyのため未送信です。`;
+    return `買電抑制: AC充電を下げ、リザーブをデフォルトの${reserveLabel}へ戻す推奨です。未送信です。`;
   }
   if (plan.recommendedAcChargeLimitW === 0 && plan.shouldAdjustAcChargeLimit) {
-    return "買電抑制: AC充電を0Wへ下げる推奨です。read-onlyのため未送信です。";
+    return "買電抑制: AC充電を0Wへ下げる推奨です。未送信です。";
   }
   if (plan.recommendedAcChargeLimitW > 0 && plan.shouldAdjustAcChargeLimit) {
-    return `売電抑制: ${plan.recommendedAcChargeLimitW}W充電に回す推奨です。read-onlyのため未送信です。`;
+    return `売電抑制: ${plan.recommendedAcChargeLimitW}W充電に回す推奨です。未送信です。`;
   }
   if (plan.recommendedAcChargeLimitW > 0) {
-    return `売電抑制: ${plan.recommendedAcChargeLimitW}W充電候補です。read-onlyのため未送信です。`;
+    return `売電抑制: ${plan.recommendedAcChargeLimitW}W充電候補です。未送信です。`;
   }
   return "売電抑制: 現在は追加充電の推奨はありません。";
 }

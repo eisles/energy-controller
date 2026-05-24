@@ -3,6 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { commandResultLabel } from "@/lib/display-labels";
 import type { PowerLog } from "@/lib/types";
 
 type DryRunPlanHistoryProps = {
@@ -32,7 +33,7 @@ export function DryRunPlanHistory({
             <CardDescription>Read-only audit</CardDescription>
             <CardTitle>{title}</CardTitle>
           </div>
-          <Badge variant="secondary">no write</Badge>
+          <Badge variant="secondary">未送信</Badge>
         </div>
       </CardHeader>
       <CardContent>
@@ -63,7 +64,7 @@ export function DryRunPlanHistory({
                     <TableCell>{formatBattery(log)}</TableCell>
                     <TableCell className="reason-cell">{extractDryRunPlan(log.decisionReason, marker)}</TableCell>
                     <TableCell>
-                      <Badge variant={log.commandSent ? "warning" : "success"}>{log.commandSent ? "sent" : "not sent"}</Badge>
+                      <Badge variant={log.commandSent ? "warning" : "success"}>{commandResultLabel({ commandSent: log.commandSent })}</Badge>
                     </TableCell>
                   </TableRow>
                 ))

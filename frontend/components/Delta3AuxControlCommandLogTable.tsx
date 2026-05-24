@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { commandResultLabel, decisionReasonLabel, guardReasonLabel, strategyStateLabel } from "@/lib/display-labels";
 import type { Delta3AuxControlCommandLog } from "@/lib/types";
 
 type Props = {
@@ -62,7 +63,7 @@ export function Delta3AuxControlCommandLogTable({ logs, error, page, pageSize, t
                   <TableRow key={log.id}>
                     <TableCell>{formatDateTime(log.measuredAt)}</TableCell>
                     <TableCell>
-                      <Badge variant={log.wouldWrite ? "warning" : "secondary"}>{log.strategyState || "-"}</Badge>
+                      <Badge variant={log.wouldWrite ? "warning" : "secondary"}>{strategyStateLabel(log.strategyState)}</Badge>
                     </TableCell>
                     <TableCell>{formatGrid(log)}</TableCell>
                     <TableCell>
@@ -73,10 +74,10 @@ export function Delta3AuxControlCommandLogTable({ logs, error, page, pageSize, t
                     <TableCell>{formatChange(log.previousAcChargeLimitW, log.targetAcChargeLimitW, "W")}</TableCell>
                     <TableCell className="reason-cell">
                       <Badge variant={log.commandSent ? "warning" : log.dryRun ? "secondary" : "success"}>
-                        {log.commandSent ? "sent" : log.dryRun ? "dry-run" : "no write"}
+                        {commandResultLabel(log)}
                       </Badge>
-                      <p>{log.decisionReason || "-"}</p>
-                      {log.suppressedReason ? <p className="readonly-note">Guard: {log.suppressedReason}</p> : null}
+                      <p>{decisionReasonLabel(log.decisionReason)}</p>
+                      {log.suppressedReason ? <p className="readonly-note">抑制: {guardReasonLabel(log.suppressedReason)}</p> : null}
                       {log.errorMessage ? <p className="inline-error">{log.errorMessage}</p> : null}
                     </TableCell>
                   </TableRow>

@@ -52,7 +52,7 @@ export function NightChargeSummaryTable({
             <CardDescription>Read-only audit</CardDescription>
             <CardTitle>夜間サマリー</CardTitle>
           </div>
-          <Badge variant="secondary">no write</Badge>
+          <Badge variant="secondary">未送信</Badge>
         </div>
       </CardHeader>
       <CardContent>
