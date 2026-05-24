@@ -14,6 +14,14 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	t.Setenv("ECOFLOW_SECRET_KEY", "ecoflow-secret")
 	t.Setenv("ECOFLOW_DEVICE_SN", "ecoflow-device")
 	t.Setenv("ECOFLOW_BASE_URL", "https://api-e.ecoflow.test")
+	t.Setenv("ECOFLOW_DELTA3_READ_ENABLED", "true")
+	t.Setenv("ECOFLOW_PRIVATE_API_HOST", "api.delta3.test")
+	t.Setenv("ECOFLOW_PRIVATE_EMAIL", "delta3@example.com")
+	t.Setenv("ECOFLOW_PRIVATE_PASSWORD", "delta3-password")
+	t.Setenv("ECOFLOW_DELTA3_DEVICE_SN", "delta3-device")
+	t.Setenv("ECOFLOW_DELTA3_DEVICE_TYPE", "DELTA_3_PLUS")
+	t.Setenv("ECOFLOW_DELTA3_MQTT_CLIENT_ID", "delta3-client")
+	t.Setenv("ECOFLOW_DELTA3_TIMEOUT_SEC", "12")
 	t.Setenv("WEATHER_LATITUDE", "35.1")
 	t.Setenv("WEATHER_LONGITUDE", "139.2")
 	t.Setenv("WEATHER_TIMEZONE", "Asia/Tokyo")
@@ -72,6 +80,18 @@ func TestLoadControlSettingsFromEnvironment(t *testing.T) {
 	}
 	if cfg.EcoFlowBaseURL != "https://api-e.ecoflow.test" {
 		t.Fatalf("EcoFlowBaseURL = %q, want https://api-e.ecoflow.test", cfg.EcoFlowBaseURL)
+	}
+	if !cfg.Delta3ReadEnabled {
+		t.Fatal("Delta3ReadEnabled = false, want true")
+	}
+	if cfg.Delta3PrivateAPIHost != "api.delta3.test" || cfg.Delta3PrivateEmail != "delta3@example.com" || cfg.Delta3PrivatePassword != "delta3-password" {
+		t.Fatalf("unexpected delta3 private config: host=%q email=%q", cfg.Delta3PrivateAPIHost, cfg.Delta3PrivateEmail)
+	}
+	if cfg.Delta3DeviceSN != "delta3-device" || cfg.Delta3DeviceType != "DELTA_3_PLUS" || cfg.Delta3MQTTClientID != "delta3-client" {
+		t.Fatalf("unexpected delta3 device config: sn=%q type=%q client=%q", cfg.Delta3DeviceSN, cfg.Delta3DeviceType, cfg.Delta3MQTTClientID)
+	}
+	if cfg.Delta3Timeout != 12*time.Second {
+		t.Fatalf("Delta3Timeout = %s, want 12s", cfg.Delta3Timeout)
 	}
 	if !cfg.WeatherEnabled {
 		t.Fatal("WeatherEnabled = false, want true")

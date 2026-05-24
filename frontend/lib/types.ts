@@ -26,6 +26,23 @@ export type EnergyStatus = {
   updatedAt: string;
 };
 
+export type Delta3Status = {
+  available: boolean;
+  deviceType?: string;
+  soc?: number | null;
+  acInW?: number | null;
+  acOutW?: number | null;
+  acChargeLimitW?: number | null;
+  gridBypassDisabled?: boolean | null;
+  acOutputEnabled?: boolean | null;
+  maxChargeSoc?: number | null;
+  minDischargeSoc?: number | null;
+  backupReserveSoc?: number | null;
+  backupReserveEnabled?: boolean | null;
+  updatedAt?: string;
+  lastError?: string | null;
+};
+
 export type SurplusPlan = {
   mode: string;
   strategyState: string;

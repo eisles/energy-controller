@@ -80,6 +80,91 @@ func TestExecuteACChargePowerAcceptsConfigOKSetReplyAfterDataMessage(t *testing.
 	}
 }
 
+func TestExecuteRemainingDelta3CommandsAcceptSetReply(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(*Client, context.Context, WriteGuards) (Status, error)
+	}{
+		{name: "min discharge", call: func(c *Client, ctx context.Context, guards WriteGuards) (Status, error) {
+			return c.ExecuteMinDischargeSoc(ctx, 10, guards)
+		}},
+		{name: "max charge", call: func(c *Client, ctx context.Context, guards WriteGuards) (Status, error) {
+			return c.ExecuteMaxChargeSoc(ctx, 95, guards)
+		}},
+		{name: "energy backup enabled", call: func(c *Client, ctx context.Context, guards WriteGuards) (Status, error) {
+			return c.ExecuteEnergyBackupEnabled(ctx, false, 25, guards)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newTestClientWithTransport(t, fakeTransport{buildReplies: func(payload []byte) []MQTTMessage {
+				return []MQTTMessage{{Topic: "/app/user-1/SN123/thing/property/set_reply", Payload: setReplyPayload(true, mustPayloadSeq(t, payload))}}
+			}})
+			status, err := tt.call(client, context.Background(), validWriteGuards())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status.LastSetReplyConfigOK == nil || !*status.LastSetReplyConfigOK {
+				t.Fatalf("LastSetReplyConfigOK = %v, want true", status.LastSetReplyConfigOK)
+			}
+		})
+	}
+}
+
+func TestExecuteRemainingDelta3CommandsRequireWriteGate(t *testing.T) {
+	client := newTestClientWithTransport(t, fakeTransport{})
+	guards := validWriteGuards()
+	guards.Execute = false
+	tests := []struct {
+		name string
+		call func(*Client, context.Context, WriteGuards) (Status, error)
+	}{
+		{name: "min discharge", call: func(c *Client, ctx context.Context, guards WriteGuards) (Status, error) {
+			return c.ExecuteMinDischargeSoc(ctx, 10, guards)
+		}},
+		{name: "max charge", call: func(c *Client, ctx context.Context, guards WriteGuards) (Status, error) {
+			return c.ExecuteMaxChargeSoc(ctx, 95, guards)
+		}},
+		{name: "energy backup enabled", call: func(c *Client, ctx context.Context, guards WriteGuards) (Status, error) {
+			return c.ExecuteEnergyBackupEnabled(ctx, false, 25, guards)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.call(client, context.Background(), guards)
+			if err == nil || !strings.Contains(err.Error(), "--execute") {
+				t.Fatalf("error = %v, want write gate error", err)
+			}
+		})
+	}
+}
+
+func TestExecuteRemainingDelta3CommandsRequireSetReply(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(*Client, context.Context, WriteGuards) (Status, error)
+	}{
+		{name: "min discharge", call: func(c *Client, ctx context.Context, guards WriteGuards) (Status, error) {
+			return c.ExecuteMinDischargeSoc(ctx, 10, guards)
+		}},
+		{name: "max charge", call: func(c *Client, ctx context.Context, guards WriteGuards) (Status, error) {
+			return c.ExecuteMaxChargeSoc(ctx, 95, guards)
+		}},
+		{name: "energy backup enabled", call: func(c *Client, ctx context.Context, guards WriteGuards) (Status, error) {
+			return c.ExecuteEnergyBackupEnabled(ctx, false, 25, guards)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newTestClientWithTransport(t, fakeTransport{replies: []MQTTMessage{{Topic: "/app/device/property/SN123", Payload: BuildGetSnapshotPayload(1)}}})
+			_, err := tt.call(client, context.Background(), validWriteGuards())
+			if err == nil || !strings.Contains(err.Error(), "did not return set acknowledgement") {
+				t.Fatalf("error = %v, want missing acknowledgement error", err)
+			}
+		})
+	}
+}
+
 func TestProbeWaitsForFullGetReplyBeforeTelemetry(t *testing.T) {
 	var gotReplyTopics []string
 	client := NewClientWithTransport(Config{
@@ -109,6 +194,19 @@ func TestProbeWaitsForFullGetReplyBeforeTelemetry(t *testing.T) {
 	if status.BackupReserveEnabled == nil || !*status.BackupReserveEnabled {
 		t.Fatalf("BackupReserveEnabled = %v, want true", status.BackupReserveEnabled)
 	}
+}
+
+func newTestClientWithTransport(t *testing.T, transport fakeTransport) *Client {
+	t.Helper()
+	return NewClientWithTransport(Config{
+		PrivateAPIHost: "api.test",
+		Email:          "user@example.com",
+		Password:       "secret",
+		DeviceSN:       "SN123",
+		DeviceType:     "DELTA_3",
+		HTTPClient:     newPrivateHTTPClient(t),
+		Timeout:        time.Second,
+	}, transport)
 }
 
 func displayPayload(t *testing.T, backupReserveSoc int, backupReserveEnabled bool) []byte {

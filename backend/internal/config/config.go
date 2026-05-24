@@ -39,6 +39,14 @@ type Config struct {
 	EcoFlowSecretKey      string
 	EcoFlowDeviceSN       string
 	EcoFlowBaseURL        string
+	Delta3ReadEnabled     bool
+	Delta3PrivateAPIHost  string
+	Delta3PrivateEmail    string
+	Delta3PrivatePassword string
+	Delta3DeviceSN        string
+	Delta3DeviceType      string
+	Delta3MQTTClientID    string
+	Delta3Timeout         time.Duration
 	WeatherEnabled        bool
 	WeatherLatitude       float64
 	WeatherLongitude      float64
@@ -89,6 +97,14 @@ func Load() Config {
 		EcoFlowSecretKey:      env("ECOFLOW_SECRET_KEY", ""),
 		EcoFlowDeviceSN:       env("ECOFLOW_DEVICE_SN", ""),
 		EcoFlowBaseURL:        env("ECOFLOW_BASE_URL", "https://api-e.ecoflow.com"),
+		Delta3ReadEnabled:     envBool("ECOFLOW_DELTA3_READ_ENABLED", false),
+		Delta3PrivateAPIHost:  env("ECOFLOW_PRIVATE_API_HOST", "api.ecoflow.com"),
+		Delta3PrivateEmail:    env("ECOFLOW_PRIVATE_EMAIL", ""),
+		Delta3PrivatePassword: env("ECOFLOW_PRIVATE_PASSWORD", ""),
+		Delta3DeviceSN:        env("ECOFLOW_DELTA3_DEVICE_SN", ""),
+		Delta3DeviceType:      env("ECOFLOW_DELTA3_DEVICE_TYPE", "DELTA_3"),
+		Delta3MQTTClientID:    env("ECOFLOW_DELTA3_MQTT_CLIENT_ID", ""),
+		Delta3Timeout:         time.Duration(envInt("ECOFLOW_DELTA3_TIMEOUT_SEC", 20)) * time.Second,
 		WeatherEnabled:        envBool("WEATHER_FORECAST_ENABLED", weatherLatitudeRaw != "" && weatherLongitudeRaw != ""),
 		WeatherLatitude:       parseFloat(weatherLatitudeRaw, 0),
 		WeatherLongitude:      parseFloat(weatherLongitudeRaw, 0),

@@ -71,6 +71,48 @@ func TestBuildSetGridBypassDisabledPayload(t *testing.T) {
 	}
 }
 
+func TestBuildSetMinDischargeSocPayload(t *testing.T) {
+	payload, err := BuildSetMinDischargeSocPayload("SN123", 10, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers, err := decodeHeaderMessage(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hex.EncodeToString(headers[0].PData); got != "90020a" {
+		t.Fatalf("pdata hex = %s, want 90020a", got)
+	}
+}
+
+func TestBuildSetMaxChargeSocPayload(t *testing.T) {
+	payload, err := BuildSetMaxChargeSocPayload("SN123", 95, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers, err := decodeHeaderMessage(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hex.EncodeToString(headers[0].PData); got != "88025f" {
+		t.Fatalf("pdata hex = %s, want 88025f", got)
+	}
+}
+
+func TestBuildSetEnergyBackupEnabledPayload(t *testing.T) {
+	payload, err := BuildSetEnergyBackupEnabledPayload("SN123", false, 25, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers, err := decodeHeaderMessage(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := hex.EncodeToString(headers[0].PData); got != "da020408001019" {
+		t.Fatalf("pdata hex = %s, want da020408001019", got)
+	}
+}
+
 func TestDecodeSnapshotDisplayUpload(t *testing.T) {
 	display := []byte{}
 	display = appendFloatField(display, 3, 123.4)

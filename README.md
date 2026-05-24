@@ -233,12 +233,14 @@ DELTA 3 Plus / DELTA 3 Max Plus 相当機で public API から SOC や入出力�
 既定は read-only probe または dry-run です。自動制御 loop からは呼ばれません。
 
 ```env
+ECOFLOW_DELTA3_READ_ENABLED=false
 ECOFLOW_PRIVATE_API_HOST=api.ecoflow.com
 ECOFLOW_PRIVATE_EMAIL=...
 ECOFLOW_PRIVATE_PASSWORD=...
 ECOFLOW_DELTA3_DEVICE_SN=...
 ECOFLOW_DELTA3_DEVICE_TYPE=DELTA_3
 ECOFLOW_DELTA3_MQTT_CLIENT_ID=
+ECOFLOW_DELTA3_TIMEOUT_SEC=20
 ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=false
 ```
 
@@ -262,6 +264,17 @@ grid bypass disabled の dry-run:
 cd backend
 go run ./cmd/ecoflow-delta3-probe --grid-bypass-disabled=true
 ```
+
+残り候補の dry-run:
+
+```bash
+cd backend
+go run ./cmd/ecoflow-delta3-probe --min-discharge-soc 10
+go run ./cmd/ecoflow-delta3-probe --max-charge-soc 95
+go run ./cmd/ecoflow-delta3-probe --energy-backup-enabled=false --energy-backup-start-soc 25
+```
+
+dashboard で DELTA 3 Plus の read-only 状態を表示する場合は、private API 認証情報に加えて `ECOFLOW_DELTA3_READ_ENABLED=true` を設定します。表示対象は SOC、AC入力/出力、AC充電上限、`gridBypassDisabled`、`acOutputEnabled` です。取得失敗時は dashboard 内で unavailable と表示し、既存 `/api/status` には影響しません。
 
 実送信は、既存の write gate に加えて `--execute` と `--allow-private-api-write` が必要です。既存の自動制御を止めずに DELTA_3 系の one-shot 検証を行う場合は、追加で `ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=true` または `--allow-auto-control-overlap` が必要です。
 
@@ -288,4 +301,4 @@ CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND \
 go run ./cmd/ecoflow-delta3-probe --set-ac-charge-w 100 --execute --allow-private-api-write
 ```
 
-この CLI の write 対象は `set_ac_charge_power`、`set_backup_reserve_soc`、`set_grid_bypass_disabled` の one-shot 検証だけです。SwitchBot 制御や既存の余剰追従自動制御には接続しません。
+この CLI の write 対象は `set_ac_charge_power`、`set_backup_reserve_soc`、`set_grid_bypass_disabled`、`set_min_discharge_soc`、`set_max_charge_soc`、`set_energy_backup_enabled` の one-shot 検証だけです。SwitchBot 制御や既存の余剰追従自動制御には接続しません。

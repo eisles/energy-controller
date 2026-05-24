@@ -48,7 +48,7 @@ func (g WriteGuards) Validate() error {
 
 func allowedCommand(command string) bool {
 	switch command {
-	case "set_ac_charge_power", "set_backup_reserve_soc", "set_grid_bypass_disabled":
+	case "set_ac_charge_power", "set_backup_reserve_soc", "set_grid_bypass_disabled", "set_min_discharge_soc", "set_max_charge_soc", "set_energy_backup_enabled":
 		return true
 	default:
 		return false
@@ -69,6 +69,20 @@ func ValidateACChargePower(deviceType string, watts int) error {
 func ValidateBackupReserveSoc(percent int) error {
 	if percent < 5 || percent > 100 {
 		return fmt.Errorf("backup reserve SOC must be 5-100%%: %d", percent)
+	}
+	return nil
+}
+
+func ValidateMaxChargeSoc(percent int) error {
+	if percent < 50 || percent > 100 {
+		return fmt.Errorf("max charge SOC must be 50-100%%: %d", percent)
+	}
+	return nil
+}
+
+func ValidateMinDischargeSoc(percent int) error {
+	if percent < 0 || percent > 30 {
+		return fmt.Errorf("min discharge SOC must be 0-30%%: %d", percent)
 	}
 	return nil
 }

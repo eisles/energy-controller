@@ -58,11 +58,30 @@ func BuildSetBackupReservePayload(deviceSN string, percent int, seq int) ([]byte
 	if err := ValidateBackupReserveSoc(percent); err != nil {
 		return nil, err
 	}
-	inner := append(encodeTag(1, wireVarint), encodeVarint(1)...)
-	inner = append(inner, encodeTag(2, wireVarint)...)
-	inner = append(inner, encodeVarint(uint64(percent))...)
-	pdata := append(encodeTag(43, wireBytes), encodeVarint(uint64(len(inner)))...)
-	pdata = append(pdata, inner...)
+	pdata := buildEnergyBackupPData(true, percent)
+	return encodeSetCommandHeader(deviceSN, seq, pdata), nil
+}
+
+func BuildSetEnergyBackupEnabledPayload(deviceSN string, enabled bool, startSoc int, seq int) ([]byte, error) {
+	if err := ValidateBackupReserveSoc(startSoc); err != nil {
+		return nil, err
+	}
+	return encodeSetCommandHeader(deviceSN, seq, buildEnergyBackupPData(enabled, startSoc)), nil
+}
+
+func BuildSetMaxChargeSocPayload(deviceSN string, percent int, seq int) ([]byte, error) {
+	if err := ValidateMaxChargeSoc(percent); err != nil {
+		return nil, err
+	}
+	pdata := append(encodeTag(33, wireVarint), encodeVarint(uint64(percent))...)
+	return encodeSetCommandHeader(deviceSN, seq, pdata), nil
+}
+
+func BuildSetMinDischargeSocPayload(deviceSN string, percent int, seq int) ([]byte, error) {
+	if err := ValidateMinDischargeSoc(percent); err != nil {
+		return nil, err
+	}
+	pdata := append(encodeTag(34, wireVarint), encodeVarint(uint64(percent))...)
 	return encodeSetCommandHeader(deviceSN, seq, pdata), nil
 }
 
@@ -73,6 +92,18 @@ func BuildSetGridBypassDisabledPayload(deviceSN string, disabled bool, seq int) 
 	}
 	pdata := append(encodeTag(26, wireVarint), encodeVarint(value)...)
 	return encodeSetCommandHeader(deviceSN, seq, pdata), nil
+}
+
+func buildEnergyBackupPData(enabled bool, startSoc int) []byte {
+	value := uint64(0)
+	if enabled {
+		value = 1
+	}
+	inner := append(encodeTag(1, wireVarint), encodeVarint(value)...)
+	inner = append(inner, encodeTag(2, wireVarint)...)
+	inner = append(inner, encodeVarint(uint64(startSoc))...)
+	pdata := append(encodeTag(43, wireBytes), encodeVarint(uint64(len(inner)))...)
+	return append(pdata, inner...)
 }
 
 func DecodeSnapshot(deviceType string, deviceSN string, raw []byte) (Status, error) {

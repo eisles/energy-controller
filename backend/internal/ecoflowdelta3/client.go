@@ -107,6 +107,54 @@ func (c *Client) BuildDryRunGridBypassDisabled(disabled bool) (CommandPayload, e
 	}, nil
 }
 
+func (c *Client) BuildDryRunMinDischargeSoc(percent int) (CommandPayload, error) {
+	if err := c.validateDryRunTarget(); err != nil {
+		return CommandPayload{}, err
+	}
+	payload, err := BuildSetMinDischargeSocPayload(c.cfg.DeviceSN, percent, 1)
+	if err != nil {
+		return CommandPayload{}, err
+	}
+	return CommandPayload{
+		Command: "set_min_discharge_soc",
+		Topic:   BuildTopics("USER_ID", c.cfg.DeviceSN).Set,
+		Bytes:   payload,
+		Hex:     hex.EncodeToString(payload),
+	}, nil
+}
+
+func (c *Client) BuildDryRunMaxChargeSoc(percent int) (CommandPayload, error) {
+	if err := c.validateDryRunTarget(); err != nil {
+		return CommandPayload{}, err
+	}
+	payload, err := BuildSetMaxChargeSocPayload(c.cfg.DeviceSN, percent, 1)
+	if err != nil {
+		return CommandPayload{}, err
+	}
+	return CommandPayload{
+		Command: "set_max_charge_soc",
+		Topic:   BuildTopics("USER_ID", c.cfg.DeviceSN).Set,
+		Bytes:   payload,
+		Hex:     hex.EncodeToString(payload),
+	}, nil
+}
+
+func (c *Client) BuildDryRunEnergyBackupEnabled(enabled bool, startSoc int) (CommandPayload, error) {
+	if err := c.validateDryRunTarget(); err != nil {
+		return CommandPayload{}, err
+	}
+	payload, err := BuildSetEnergyBackupEnabledPayload(c.cfg.DeviceSN, enabled, startSoc, 1)
+	if err != nil {
+		return CommandPayload{}, err
+	}
+	return CommandPayload{
+		Command: "set_energy_backup_enabled",
+		Topic:   BuildTopics("USER_ID", c.cfg.DeviceSN).Set,
+		Bytes:   payload,
+		Hex:     hex.EncodeToString(payload),
+	}, nil
+}
+
 func (c *Client) validateDryRunTarget() error {
 	if c.cfg.DeviceSN == "" {
 		return fmt.Errorf("DELTA_3 dry-run requires ECOFLOW_DELTA3_DEVICE_SN or --sn")
@@ -153,6 +201,48 @@ func (c *Client) ExecuteGridBypassDisabled(ctx context.Context, disabled bool, g
 	}
 	return c.executeSet(ctx, func(seq int) ([]byte, error) {
 		return BuildSetGridBypassDisabledPayload(c.cfg.DeviceSN, disabled, seq)
+	})
+}
+
+func (c *Client) ExecuteMinDischargeSoc(ctx context.Context, percent int, guards WriteGuards) (Status, error) {
+	if err := ValidateMinDischargeSoc(percent); err != nil {
+		return Status{}, err
+	}
+	guards.Command = "set_min_discharge_soc"
+	guards.DeviceType = c.cfg.DeviceType
+	if err := guards.Validate(); err != nil {
+		return Status{}, err
+	}
+	return c.executeSet(ctx, func(seq int) ([]byte, error) {
+		return BuildSetMinDischargeSocPayload(c.cfg.DeviceSN, percent, seq)
+	})
+}
+
+func (c *Client) ExecuteMaxChargeSoc(ctx context.Context, percent int, guards WriteGuards) (Status, error) {
+	if err := ValidateMaxChargeSoc(percent); err != nil {
+		return Status{}, err
+	}
+	guards.Command = "set_max_charge_soc"
+	guards.DeviceType = c.cfg.DeviceType
+	if err := guards.Validate(); err != nil {
+		return Status{}, err
+	}
+	return c.executeSet(ctx, func(seq int) ([]byte, error) {
+		return BuildSetMaxChargeSocPayload(c.cfg.DeviceSN, percent, seq)
+	})
+}
+
+func (c *Client) ExecuteEnergyBackupEnabled(ctx context.Context, enabled bool, startSoc int, guards WriteGuards) (Status, error) {
+	if err := ValidateBackupReserveSoc(startSoc); err != nil {
+		return Status{}, err
+	}
+	guards.Command = "set_energy_backup_enabled"
+	guards.DeviceType = c.cfg.DeviceType
+	if err := guards.Validate(); err != nil {
+		return Status{}, err
+	}
+	return c.executeSet(ctx, func(seq int) ([]byte, error) {
+		return BuildSetEnergyBackupEnabledPayload(c.cfg.DeviceSN, enabled, startSoc, seq)
 	})
 }
 

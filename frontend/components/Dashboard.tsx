@@ -14,6 +14,7 @@ import { NightChargeSummaryTable } from "@/components/NightChargeSummaryTable";
 import { SolarForecastPanel } from "@/components/SolarForecastPanel";
 import {
   NightChargePlanSection,
+  Delta3StatusCard,
   StatusCards,
   StatusChartSection,
   StatusDecisionSection,
@@ -25,6 +26,7 @@ import { TariffSummaryPanel } from "@/components/TariffSummaryPanel";
 import { Button } from "@/components/ui/button";
 import {
   fetchEnergyMeterLogsPage,
+  fetchDelta3Status,
   fetchLogs,
   fetchLogsPage,
   fetchNightChargePlanLogsPage,
@@ -37,6 +39,7 @@ import {
 import type {
   EnergyMeterLog,
   EnergyStatus,
+  Delta3Status,
   NightChargeDailySummary,
   NightChargePlanLog,
   PowerLog,
@@ -141,6 +144,7 @@ const initialStatus: EnergyStatus = {
 
 export function Dashboard() {
   const [status, setStatus] = useState<EnergyStatus>(initialStatus);
+  const [delta3Status, setDelta3Status] = useState<Delta3Status | null>(null);
   const [chartLogs, setChartLogs] = useState<PowerLog[]>([]);
   const [tableLogs, setTableLogs] = useState<PowerLog[]>([]);
   const [dryRunPlanLogs, setDryRunPlanLogs] = useState<PowerLog[]>([]);
@@ -183,6 +187,7 @@ export function Dashboard() {
   const [tariffRefreshToken, setTariffRefreshToken] = useState(0);
   const [logRange, setLogRange] = useState<LogRange>(logRanges[1]);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [delta3StatusError, setDelta3StatusError] = useState<string | null>(null);
   const [logsError, setLogsError] = useState<string | null>(null);
   const [dryRunPlanError, setDryRunPlanError] = useState<string | null>(null);
   const [nightDryRunPlanError, setNightDryRunPlanError] = useState<string | null>(null);
@@ -289,6 +294,39 @@ export function Dashboard() {
       window.clearInterval(timer);
     };
   }, [logRange]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let inFlight = false;
+
+    async function loadDelta3Status() {
+      if (inFlight) {
+        return;
+      }
+      inFlight = true;
+      try {
+        const nextStatus = await fetchDelta3Status();
+        if (!cancelled) {
+          setDelta3Status(nextStatus);
+          setDelta3StatusError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setDelta3Status(null);
+          setDelta3StatusError(err instanceof Error ? err.message : "DELTA 3 status request failed");
+        }
+      } finally {
+        inFlight = false;
+      }
+    }
+
+    loadDelta3Status();
+    const timer = window.setInterval(loadDelta3Status, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -864,6 +902,7 @@ export function Dashboard() {
     <main className="page-shell">
       <Header status={status} />
       <StatusCards status={status} fetchError={statusError} />
+      <Delta3StatusCard status={delta3Status} sourceStatus={status} fetchError={delta3StatusError} />
       <section className="sortable-dashboard" aria-label="dashboard blocks">
         {visibleSectionOrder.map((section, index) => {
           const sortControls = (
