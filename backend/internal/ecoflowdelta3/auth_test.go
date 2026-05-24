@@ -71,14 +71,27 @@ func TestLoginParsesStringMQTTPort(t *testing.T) {
 
 func newPrivateHTTPClient(t *testing.T) *http.Client {
 	t.Helper()
-	return newPrivateHTTPClientWithPort(t, `8883`)
+	return newCountingPrivateHTTPClientWithPort(t, `8883`, nil)
 }
 
 func newPrivateHTTPClientWithPort(t *testing.T, portJSON string) *http.Client {
 	t.Helper()
+	return newCountingPrivateHTTPClientWithPort(t, portJSON, nil)
+}
+
+type privateHTTPCallCounts struct {
+	login         int
+	certification int
+}
+
+func newCountingPrivateHTTPClientWithPort(t *testing.T, portJSON string, counts *privateHTTPCallCounts) *http.Client {
+	t.Helper()
 	return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		switch r.URL.Path {
 		case "/auth/login":
+			if counts != nil {
+				counts.login++
+			}
 			if r.Method != http.MethodPost {
 				t.Fatalf("login method = %s", r.Method)
 			}
@@ -91,6 +104,9 @@ func newPrivateHTTPClientWithPort(t *testing.T, portJSON string) *http.Client {
 			}
 			return jsonResponse(`{"code":"0","message":"Success","data":{"token":"token-1","user":{"userId":"user-1","name":"Sato"}}}`), nil
 		case "/iot-auth/app/certification":
+			if counts != nil {
+				counts.certification++
+			}
 			if got := r.Header.Get("authorization"); got != "Bearer token-1" {
 				t.Fatalf("authorization = %q", got)
 			}

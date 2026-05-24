@@ -2,6 +2,7 @@ package ecoflowdelta3
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -196,6 +197,67 @@ func TestProbeWaitsForFullGetReplyBeforeTelemetry(t *testing.T) {
 	}
 }
 
+func TestProbeReusesPrivateSession(t *testing.T) {
+	counts := &privateHTTPCallCounts{}
+	client := NewClientWithTransport(Config{
+		PrivateAPIHost: "api.test",
+		Email:          "user@example.com",
+		Password:       "secret",
+		DeviceSN:       "SN123",
+		DeviceType:     "DELTA_3",
+		HTTPClient:     newCountingPrivateHTTPClientWithPort(t, `8883`, counts),
+		Timeout:        time.Second,
+	}, fakeTransport{
+		replies: []MQTTMessage{
+			{Topic: "/app/user-1/SN123/thing/property/get_reply", Payload: displayPayload(t, 30, true)},
+		},
+	})
+
+	if _, err := client.Probe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Probe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if counts.login != 1 || counts.certification != 1 {
+		t.Fatalf("login calls = %d certification calls = %d, want 1 each", counts.login, counts.certification)
+	}
+}
+
+func TestProbeRefreshesPrivateSessionAfterAuthFailure(t *testing.T) {
+	counts := &privateHTTPCallCounts{}
+	transport := &authRetryTransport{
+		failOnCall: 2,
+		replies: []MQTTMessage{
+			{Topic: "/app/user-1/SN123/thing/property/get_reply", Payload: displayPayload(t, 30, true)},
+		},
+	}
+	client := NewClientWithTransport(Config{
+		PrivateAPIHost: "api.test",
+		Email:          "user@example.com",
+		Password:       "secret",
+		DeviceSN:       "SN123",
+		DeviceType:     "DELTA_3",
+		HTTPClient:     newCountingPrivateHTTPClientWithPort(t, `8883`, counts),
+		Timeout:        time.Second,
+	}, transport)
+
+	if _, err := client.Probe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Probe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if counts.login != 2 || counts.certification != 2 {
+		t.Fatalf("login calls = %d certification calls = %d, want 2 each after refresh", counts.login, counts.certification)
+	}
+	if transport.calls != 3 {
+		t.Fatalf("transport calls = %d, want initial success, auth failure, retry success", transport.calls)
+	}
+}
+
 func newTestClientWithTransport(t *testing.T, transport fakeTransport) *Client {
 	t.Helper()
 	return NewClientWithTransport(Config{
@@ -265,6 +327,26 @@ func (f fakeTransport) Publish(context.Context, string, []byte, time.Duration) e
 }
 
 func (f fakeTransport) Disconnect() {}
+
+type authRetryTransport struct {
+	replies    []MQTTMessage
+	failOnCall int
+	calls      int
+}
+
+func (t *authRetryTransport) Request(context.Context, string, []byte, []string, time.Duration) ([]MQTTMessage, error) {
+	t.calls++
+	if t.calls == t.failOnCall {
+		return nil, fmt.Errorf("EcoFlow MQTT request failed: not authorized")
+	}
+	return t.replies, nil
+}
+
+func (t *authRetryTransport) Publish(context.Context, string, []byte, time.Duration) error {
+	return nil
+}
+
+func (t *authRetryTransport) Disconnect() {}
 
 func mustPayloadSeq(t *testing.T, payload []byte) int {
 	t.Helper()

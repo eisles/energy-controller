@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -65,6 +66,101 @@ func TestReadDelta3StatusMapsReadOnlyFields(t *testing.T) {
 	}
 }
 
+func TestDelta3StatusReaderCachesSuccessfulProbe(t *testing.T) {
+	calls := 0
+	now := time.Date(2026, 5, 24, 13, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	reader := newDelta3StatusReader(validDelta3Config(), nil, fakeDelta3Client{
+		status: delta3StatusFixture(82),
+		calls:  &calls,
+	})
+	reader.now = func() time.Time { return now }
+
+	first := reader.CurrentStatus(context.Background())
+	second := reader.CurrentStatus(context.Background())
+
+	if !first.Available || !second.Available {
+		t.Fatalf("responses should be available: first=%+v second=%+v", first, second)
+	}
+	if calls != 1 {
+		t.Fatalf("Probe calls = %d, want 1", calls)
+	}
+	if second.Cached != true {
+		t.Fatalf("second Cached = false, want true")
+	}
+}
+
+func TestDelta3StatusReaderBacksOffBusyError(t *testing.T) {
+	calls := 0
+	now := time.Date(2026, 5, 24, 13, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	reader := newDelta3StatusReader(validDelta3Config(), nil, fakeDelta3Client{
+		err:   errors.New("EcoFlow private login returned code=1001 message=Server is too busy"),
+		calls: &calls,
+	})
+	reader.now = func() time.Time { return now }
+
+	first := reader.CurrentStatus(context.Background())
+	now = now.Add(9 * time.Minute)
+	second := reader.CurrentStatus(context.Background())
+	now = now.Add(2 * time.Minute)
+	third := reader.CurrentStatus(context.Background())
+
+	if first.Available || second.Available || third.Available {
+		t.Fatalf("responses should be unavailable: first=%+v second=%+v third=%+v", first, second, third)
+	}
+	if calls != 2 {
+		t.Fatalf("Probe calls = %d, want 2 after busy backoff expires", calls)
+	}
+	if !second.Cached {
+		t.Fatalf("second Cached = false, want true during busy backoff")
+	}
+}
+
+func TestDelta3StatusReaderDoesNotCacheContextCancellation(t *testing.T) {
+	calls := 0
+	now := time.Date(2026, 5, 24, 13, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	reader := newDelta3StatusReader(validDelta3Config(), nil, fakeDelta3Client{
+		err:   context.Canceled,
+		calls: &calls,
+	})
+	reader.now = func() time.Time { return now }
+
+	first := reader.CurrentStatus(context.Background())
+	second := reader.CurrentStatus(context.Background())
+
+	if first.Available || second.Available {
+		t.Fatalf("responses should be unavailable: first=%+v second=%+v", first, second)
+	}
+	if calls != 2 {
+		t.Fatalf("Probe calls = %d, want 2 because context cancellation is not cached", calls)
+	}
+	if second.Cached {
+		t.Fatalf("second Cached = true, want false for context cancellation")
+	}
+}
+
+func TestDelta3StatusReaderCachesContextDeadlineExceeded(t *testing.T) {
+	calls := 0
+	now := time.Date(2026, 5, 24, 13, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	reader := newDelta3StatusReader(validDelta3Config(), nil, fakeDelta3Client{
+		err:   context.DeadlineExceeded,
+		calls: &calls,
+	})
+	reader.now = func() time.Time { return now }
+
+	first := reader.CurrentStatus(context.Background())
+	second := reader.CurrentStatus(context.Background())
+
+	if first.Available || second.Available {
+		t.Fatalf("responses should be unavailable: first=%+v second=%+v", first, second)
+	}
+	if calls != 1 {
+		t.Fatalf("Probe calls = %d, want 1 because probe deadline errors are cached", calls)
+	}
+	if !second.Cached {
+		t.Fatalf("second Cached = false, want true for probe deadline error")
+	}
+}
+
 func validDelta3Config() config.Config {
 	return config.Config{
 		Delta3ReadEnabled:     true,
@@ -77,12 +173,34 @@ func validDelta3Config() config.Config {
 	}
 }
 
+func delta3StatusFixture(soc int) ecoflowdelta3.Status {
+	acInW := 100
+	acOutW := 380
+	acLimitW := 100
+	gridBypassDisabled := false
+	acOutputEnabled := true
+	return ecoflowdelta3.Status{
+		DeviceType:         "DELTA_3",
+		CMSBatterySoc:      &soc,
+		ACInW:              &acInW,
+		ACOutW:             &acOutW,
+		ACChargeLimitW:     &acLimitW,
+		GridBypassDisabled: &gridBypassDisabled,
+		ACOutputEnabled:    &acOutputEnabled,
+	}
+}
+
 type fakeDelta3Client struct {
 	status ecoflowdelta3.Status
+	err    error
+	calls  *int
 }
 
 func (f fakeDelta3Client) Probe(context.Context) (ecoflowdelta3.Status, error) {
-	return f.status, nil
+	if f.calls != nil {
+		*f.calls++
+	}
+	return f.status, f.err
 }
 
 type panicDelta3Client struct{}

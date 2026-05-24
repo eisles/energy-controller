@@ -4,12 +4,21 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"strings"
+	"sync"
 )
 
 type Client struct {
-	cfg       Config
-	auth      *AuthClient
-	transport MQTTTransport
+	cfg        Config
+	auth       sessionAuthenticator
+	transport  MQTTTransport
+	sessionMu  sync.Mutex
+	session    Session
+	hasSession bool
+}
+
+type sessionAuthenticator interface {
+	Login(ctx context.Context) (Session, error)
 }
 
 func NewClient(cfg Config) *Client {
@@ -26,10 +35,23 @@ func (c *Client) Probe(ctx context.Context) (Status, error) {
 	if missing := c.cfg.MissingReadCredentials(); len(missing) > 0 {
 		return Status{DeviceType: c.cfg.DeviceType, DeviceSN: c.cfg.DeviceSN}, fmt.Errorf("EcoFlow DELTA_3 probe missing required env: %v", missing)
 	}
-	session, err := c.auth.Login(ctx)
+	session, fromCache, err := c.cachedSession(ctx)
 	if err != nil {
 		return Status{}, err
 	}
+	status, err := c.probeWithSession(ctx, session)
+	if err != nil && fromCache && isSessionAuthError(err) {
+		c.invalidateSession()
+		session, _, sessionErr := c.cachedSession(ctx)
+		if sessionErr != nil {
+			return Status{}, sessionErr
+		}
+		return c.probeWithSession(ctx, session)
+	}
+	return status, err
+}
+
+func (c *Client) probeWithSession(ctx context.Context, session Session) (Status, error) {
 	transport := c.transport
 	if transport == nil {
 		paho, err := NewPahoTransport(session.MQTT)
@@ -250,10 +272,23 @@ func (c *Client) executeSet(ctx context.Context, build func(seq int) ([]byte, er
 	if missing := c.cfg.MissingReadCredentials(); len(missing) > 0 {
 		return Status{DeviceType: c.cfg.DeviceType, DeviceSN: c.cfg.DeviceSN}, fmt.Errorf("EcoFlow DELTA_3 write missing required env: %v", missing)
 	}
-	session, err := c.auth.Login(ctx)
+	session, fromCache, err := c.cachedSession(ctx)
 	if err != nil {
 		return Status{}, err
 	}
+	status, err := c.executeSetWithSession(ctx, session, build)
+	if err != nil && fromCache && isSessionAuthError(err) {
+		c.invalidateSession()
+		session, _, sessionErr := c.cachedSession(ctx)
+		if sessionErr != nil {
+			return Status{}, sessionErr
+		}
+		return c.executeSetWithSession(ctx, session, build)
+	}
+	return status, err
+}
+
+func (c *Client) executeSetWithSession(ctx context.Context, session Session, build func(seq int) ([]byte, error)) (Status, error) {
 	transport := c.transport
 	if transport == nil {
 		paho, err := NewPahoTransport(session.MQTT)
@@ -296,4 +331,38 @@ func (c *Client) executeSet(ctx context.Context, build func(seq int) ([]byte, er
 		return status, fmt.Errorf("DELTA_3 private write was rejected by device")
 	}
 	return status, nil
+}
+
+func (c *Client) cachedSession(ctx context.Context) (Session, bool, error) {
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+	if c.hasSession {
+		return c.session, true, nil
+	}
+	session, err := c.auth.Login(ctx)
+	if err != nil {
+		return Session{}, false, err
+	}
+	c.session = session
+	c.hasSession = true
+	return session, false, nil
+}
+
+func (c *Client) invalidateSession() {
+	c.sessionMu.Lock()
+	defer c.sessionMu.Unlock()
+	c.session = Session{}
+	c.hasSession = false
+}
+
+func isSessionAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "unauthorized") ||
+		strings.Contains(message, "not authorized") ||
+		strings.Contains(message, "forbidden") ||
+		strings.Contains(message, "token expired") ||
+		strings.Contains(message, "bad username or password")
 }
