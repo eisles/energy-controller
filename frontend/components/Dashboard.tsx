@@ -29,6 +29,7 @@ import { VerificationPanel } from "@/components/VerificationPanel";
 import {
   fetchEnergyMeterLogsPage,
   fetchDelta3Status,
+  fetchDeviceStatuses,
   fetchDelta3AuxControlCommandLogsPage,
   fetchLogs,
   fetchLogsPage,
@@ -42,6 +43,7 @@ import {
 import type {
   EnergyMeterLog,
   EnergyStatus,
+  DeviceStatus,
   Delta3Status,
   Delta3AuxControlCommandLog,
   NightChargeDailySummary,
@@ -156,6 +158,7 @@ const initialStatus: EnergyStatus = {
 export function Dashboard() {
   const [status, setStatus] = useState<EnergyStatus>(initialStatus);
   const [delta3Status, setDelta3Status] = useState<Delta3Status | null>(null);
+  const [deviceStatuses, setDeviceStatuses] = useState<DeviceStatus[]>([]);
   const [chartLogs, setChartLogs] = useState<PowerLog[]>([]);
   const [tableLogs, setTableLogs] = useState<PowerLog[]>([]);
   const [dryRunPlanLogs, setDryRunPlanLogs] = useState<PowerLog[]>([]);
@@ -324,15 +327,26 @@ export function Dashboard() {
       }
       inFlight = true;
       try {
-        const nextStatus = await fetchDelta3Status();
+        const nextStatuses = await fetchDeviceStatuses();
         if (!cancelled) {
-          setDelta3Status(nextStatus);
+          setDeviceStatuses(nextStatuses);
+          setDelta3Status(nextStatuses.find((device) => device.kind === "ecoflow_delta3_plus")?.status ?? null);
           setDelta3StatusError(null);
         }
       } catch (err) {
-        if (!cancelled) {
-          setDelta3Status(null);
-          setDelta3StatusError(err instanceof Error ? err.message : "DELTA 3 status request failed");
+        try {
+          const nextStatus = await fetchDelta3Status();
+          if (!cancelled) {
+            setDeviceStatuses([]);
+            setDelta3Status(nextStatus);
+            setDelta3StatusError(null);
+          }
+        } catch (fallbackErr) {
+          if (!cancelled) {
+            setDeviceStatuses([]);
+            setDelta3Status(null);
+            setDelta3StatusError(fallbackErr instanceof Error ? fallbackErr.message : err instanceof Error ? err.message : "DELTA 3 status request failed");
+          }
         }
       } finally {
         inFlight = false;
@@ -1050,7 +1064,7 @@ export function Dashboard() {
     <main className="page-shell">
       <Header status={status} />
       <StatusCards status={status} fetchError={statusError} />
-      <Delta3StatusCard status={delta3Status} sourceStatus={status} fetchError={delta3StatusError} />
+      <Delta3StatusCard status={delta3Status} deviceStatuses={deviceStatuses} sourceStatus={status} fetchError={delta3StatusError} />
       <section className="sortable-dashboard" aria-label="dashboard blocks">
         {visibleSectionOrder.map((section, index) => {
           const sortControls = (

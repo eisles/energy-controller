@@ -3,6 +3,7 @@ import type {
   DaytimeConsumptionEstimate,
   Delta3AuxControlCommandLogsPage,
   Delta3Status,
+  DeviceStatus,
   EcoFlowLoadEstimate,
   EnergyMeterLogsPage,
   EnergyStatus,
@@ -33,6 +34,18 @@ export async function fetchDelta3Status(): Promise<Delta3Status> {
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
     throw new Error("DELTA 3 status endpoint returned non-JSON response; backend may need rebuild/restart");
+  }
+  return response.json();
+}
+
+export async function fetchDeviceStatuses(): Promise<DeviceStatus[]> {
+  const response = await fetch("/api/devices/statuses", { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`device statuses request failed: ${response.status}`);
+  }
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    throw new Error("device statuses endpoint returned non-JSON response; backend may need rebuild/restart");
   }
   return response.json();
 }

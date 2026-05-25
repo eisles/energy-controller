@@ -44,6 +44,21 @@ export type Delta3Status = {
   lastError?: string | null;
 };
 
+export type DeviceStatus = {
+  id: number;
+  name: string;
+  kind: string;
+  provider: string;
+  role: string;
+  credentialRef: string;
+  deviceSn: string;
+  deviceType: string;
+  statusSource: string;
+  priority: number;
+  controlEnabled: boolean;
+  status: Delta3Status;
+};
+
 export type SurplusPlan = {
   mode: string;
   strategyState: string;
@@ -368,6 +383,7 @@ export type ChargingDevice = {
   credentialRef: string;
   deviceSn: string;
   deviceType: string;
+  statusSource: string;
   enabled: boolean;
   controlEnabled: boolean;
   priority: number;

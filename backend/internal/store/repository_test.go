@@ -120,7 +120,7 @@ func TestChargingDeviceRepositorySeedsAndUpsertsDevices(t *testing.T) {
 	if len(devices) != 3 {
 		t.Fatalf("seeded devices = %d, want 3", len(devices))
 	}
-	if devices[0].Kind != "ecoflow_delta_pro3" || devices[0].CredentialRef != "ecoflow_pro3_primary" || devices[0].ControlEnabled {
+	if devices[0].Kind != "ecoflow_delta_pro3" || devices[0].CredentialRef != "ecoflow_pro3_primary" || devices[0].StatusSource != "ecoflow_cloud" || devices[0].ControlEnabled {
 		t.Fatalf("unexpected first seed device: %+v", devices[0])
 	}
 
@@ -130,6 +130,8 @@ func TestChargingDeviceRepositorySeedsAndUpsertsDevices(t *testing.T) {
 		Provider:              "ecoflow",
 		Role:                  "auxiliary",
 		CredentialRef:         "ecoflow_delta3_secondary",
+		DeviceType:            "DELTA_3",
+		StatusSource:          "ecoflow_private_mqtt",
 		Enabled:               true,
 		ControlEnabled:        false,
 		Priority:              30,

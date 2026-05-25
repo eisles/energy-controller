@@ -44,6 +44,9 @@ func NewRouter(deps Dependencies) http.Handler {
 		delta3TargetProvider = chargingDeviceRepository
 	}
 	mux.HandleFunc("GET /api/delta3/status", delta3StatusHandler(deps.Config, deps.Logger, delta3TargetProvider))
+	if chargingDeviceRepository != nil {
+		mux.HandleFunc("GET /api/devices/statuses", deviceStatusesHandler(deps.Config, deps.Logger, chargingDeviceRepository))
+	}
 	if deps.DB != nil {
 		weatherSettings := store.NewWeatherSettingsRepository(deps.DB)
 		weatherClient := weather.NewOpenMeteoClient(weather.OpenMeteoConfig{

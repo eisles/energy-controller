@@ -28,6 +28,7 @@ type chargingDevicePayload struct {
 	CredentialRef         string `json:"credentialRef"`
 	DeviceSN              string `json:"deviceSn"`
 	DeviceType            string `json:"deviceType"`
+	StatusSource          string `json:"statusSource"`
 	Enabled               bool   `json:"enabled"`
 	ControlEnabled        bool   `json:"controlEnabled"`
 	Priority              int    `json:"priority"`
@@ -111,6 +112,7 @@ func chargingDeviceFromPayload(payload chargingDevicePayload) domain.ChargingDev
 		CredentialRef:         strings.TrimSpace(payload.CredentialRef),
 		DeviceSN:              strings.TrimSpace(payload.DeviceSN),
 		DeviceType:            defaultChargingDeviceType(strings.TrimSpace(payload.Kind), strings.TrimSpace(payload.DeviceType)),
+		StatusSource:          defaultChargingDeviceStatusSource(strings.TrimSpace(payload.Kind), strings.TrimSpace(payload.StatusSource)),
 		Enabled:               payload.Enabled,
 		ControlEnabled:        payload.ControlEnabled,
 		Priority:              payload.Priority,
@@ -143,7 +145,8 @@ func validChargingDevice(device domain.ChargingDevice) bool {
 		device.ReserveSoc >= 0 &&
 		device.ReserveSoc <= 100 &&
 		validChargingDeviceSN(device.DeviceSN) &&
-		validChargingDeviceType(device)
+		validChargingDeviceType(device) &&
+		validChargingDeviceStatusSource(device)
 }
 
 func allowedChargingDeviceKind(value string) bool {
@@ -166,6 +169,22 @@ func defaultChargingDeviceType(kind string, value string) string {
 		return "DELTA_3"
 	default:
 		return ""
+	}
+}
+
+func defaultChargingDeviceStatusSource(kind string, value string) string {
+	if value != "" {
+		return value
+	}
+	switch kind {
+	case "ecoflow_delta_pro3":
+		return "ecoflow_cloud"
+	case "ecoflow_delta3_plus":
+		return "ecoflow_private_mqtt"
+	case "switchbot_plug":
+		return "switchbot_cloud"
+	default:
+		return "manual"
 	}
 }
 
@@ -192,6 +211,21 @@ func validChargingDeviceType(device domain.ChargingDevice) bool {
 		default:
 			return false
 		}
+	default:
+		return false
+	}
+}
+
+func validChargingDeviceStatusSource(device domain.ChargingDevice) bool {
+	switch device.Kind {
+	case "ecoflow_delta_pro3":
+		return device.StatusSource == "ecoflow_cloud"
+	case "ecoflow_delta3_plus":
+		return device.StatusSource == "ecoflow_private_mqtt"
+	case "switchbot_plug":
+		return device.StatusSource == "switchbot_cloud"
+	case "manual":
+		return device.StatusSource == "manual"
 	default:
 		return false
 	}

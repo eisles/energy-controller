@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/eisles/energy-controller/backend/internal/config"
+	"github.com/eisles/energy-controller/backend/internal/domain"
 	"github.com/eisles/energy-controller/backend/internal/ecoflowdelta3"
 )
 
@@ -96,6 +97,12 @@ func TestDelta3StatusReaderCacheIsScopedByDeviceIdentity(t *testing.T) {
 		status: delta3StatusFixture(82),
 		calls:  &calls,
 	})
+	reader.clientFactory = func(config.Config) delta3ProbeClient {
+		return fakeDelta3Client{
+			status: delta3StatusFixture(82),
+			calls:  &calls,
+		}
+	}
 	reader.now = func() time.Time { return now }
 	firstConfig := validDelta3Config()
 	secondConfig := validDelta3Config()
@@ -179,6 +186,63 @@ func TestDelta3StatusReaderCachesContextDeadlineExceeded(t *testing.T) {
 	}
 	if !second.Cached {
 		t.Fatalf("second Cached = false, want true for probe deadline error")
+	}
+}
+
+func TestDelta3StatusReaderReturnsDeviceStatuses(t *testing.T) {
+	var probed []string
+	reader := newDelta3StatusReader(validDelta3Config(), nil, nil)
+	reader.clientFactory = func(cfg config.Config) delta3ProbeClient {
+		probed = append(probed, cfg.Delta3DeviceSN+"/"+cfg.Delta3DeviceType)
+		return fakeDelta3Client{status: delta3StatusFixture(82)}
+	}
+	devices := []domain.ChargingDevice{
+		{
+			ID:              1,
+			Name:            "DELTA 3 Plus",
+			Kind:            "ecoflow_delta3_plus",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			CredentialRef:   "primary",
+			DeviceSN:        "SN123",
+			DeviceType:      "DELTA_3_PLUS",
+			StatusSource:    "ecoflow_private_mqtt",
+			Priority:        20,
+			ControlEnabled:  false,
+		},
+		{
+			ID:              2,
+			Name:            "DELTA 3 Plus 2",
+			Kind:            "ecoflow_delta3_plus",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			CredentialRef:   "secondary",
+			DeviceSN:        "SN456",
+			DeviceType:      "DELTA_3_PLUS",
+			StatusSource:    "ecoflow_private_mqtt",
+			Priority:        30,
+			ControlEnabled:  false,
+		},
+	}
+
+	statuses := reader.CurrentDeviceStatuses(context.Background(), devices)
+
+	if len(statuses) != 2 {
+		t.Fatalf("CurrentDeviceStatuses len = %d, want 2", len(statuses))
+	}
+	if statuses[0].DeviceSN != "SN123" || statuses[1].DeviceSN != "SN456" {
+		t.Fatalf("device SNs = %q/%q, want SN123/SN456", statuses[0].DeviceSN, statuses[1].DeviceSN)
+	}
+	if statuses[0].Status.DeviceType != "DELTA_3" {
+		t.Fatalf("status device type = %q, want mapped probe fixture type", statuses[0].Status.DeviceType)
+	}
+	if !statuses[0].Status.Available || !statuses[1].Status.Available {
+		t.Fatalf("statuses should be available: %+v", statuses)
+	}
+	if strings.Join(probed, ",") != "SN123/DELTA_3_PLUS,SN456/DELTA_3_PLUS" {
+		t.Fatalf("probed configs = %v, want each device SN/type", probed)
 	}
 }
 

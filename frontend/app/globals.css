@@ -358,6 +358,11 @@ input {
   background: rgba(20, 24, 31, 0.36);
 }
 
+.drawer-backdrop-nested {
+  z-index: 60;
+  background: rgba(20, 24, 31, 0.28);
+}
+
 .settings-drawer {
   width: min(560px, 100%);
   height: 100%;
@@ -374,6 +379,14 @@ input {
 
 .charging-device-drawer {
   width: min(1180px, calc(100% - 16px));
+}
+
+.charging-device-list-drawer {
+  width: min(1180px, calc(100% - 16px));
+}
+
+.charging-device-edit-drawer {
+  width: min(760px, calc(100% - 16px));
 }
 
 .drawer-header,
@@ -730,12 +743,33 @@ input {
   margin: 12px 0;
 }
 
+.charging-device-list-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 16px 0 12px;
+}
+
 .charging-device-table-wrap .ui-table {
   min-width: 1040px;
 }
 
 .charging-device-badge {
   margin-left: 6px;
+}
+
+.delta3-device-status-list {
+  display: grid;
+  gap: 12px;
+}
+
+.delta3-device-status-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.delta3-device-status-item .readonly-note {
+  margin-top: 4px;
 }
 
 .tariff-plan-actions {

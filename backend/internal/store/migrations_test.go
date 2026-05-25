@@ -26,7 +26,7 @@ func TestMigrateCreatesPhaseOneTables(t *testing.T) {
 		}
 	}
 
-	for _, column := range []string{"device_sn", "device_type"} {
+	for _, column := range []string{"device_sn", "device_type", "status_source"} {
 		if !tableHasColumn(t, db, "charging_devices", column) {
 			t.Fatalf("charging_devices.%s was not created", column)
 		}

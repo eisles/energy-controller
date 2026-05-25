@@ -21,6 +21,7 @@ func TestChargingDeviceRepositoryPersistsDeviceIdentity(t *testing.T) {
 		CredentialRef:         "ecoflow_delta3_secondary",
 		DeviceSN:              "TESTSN123",
 		DeviceType:            "DELTA_3",
+		StatusSource:          "ecoflow_private_mqtt",
 		Enabled:               true,
 		ControlEnabled:        true,
 		Priority:              5,
@@ -50,8 +51,8 @@ func TestChargingDeviceRepositoryPersistsDeviceIdentity(t *testing.T) {
 			break
 		}
 	}
-	if found.DeviceSN != "TESTSN123" || found.DeviceType != "DELTA_3" {
-		t.Fatalf("device identity = %q/%q, want TESTSN123/DELTA_3", found.DeviceSN, found.DeviceType)
+	if found.DeviceSN != "TESTSN123" || found.DeviceType != "DELTA_3" || found.StatusSource != "ecoflow_private_mqtt" {
+		t.Fatalf("device identity = %q/%q/%q, want TESTSN123/DELTA_3/ecoflow_private_mqtt", found.DeviceSN, found.DeviceType, found.StatusSource)
 	}
 }
 
@@ -68,6 +69,7 @@ func TestChargingDeviceRepositorySelectsDelta3Targets(t *testing.T) {
 		CredentialRef:         "read_only_delta3",
 		DeviceSN:              "READONLYSN",
 		DeviceType:            "DELTA_3",
+		StatusSource:          "ecoflow_private_mqtt",
 		Enabled:               true,
 		ControlEnabled:        false,
 		Priority:              1,
@@ -92,6 +94,7 @@ func TestChargingDeviceRepositorySelectsDelta3Targets(t *testing.T) {
 		CredentialRef:         "write_delta3",
 		DeviceSN:              "WRITESN",
 		DeviceType:            "DELTA_3",
+		StatusSource:          "ecoflow_private_mqtt",
 		Enabled:               true,
 		ControlEnabled:        true,
 		Priority:              2,
@@ -123,6 +126,17 @@ func TestChargingDeviceRepositorySelectsDelta3Targets(t *testing.T) {
 	if writeTarget.DeviceSN != "WRITESN" {
 		t.Fatalf("write target SN = %q, want WRITESN", writeTarget.DeviceSN)
 	}
+
+	readTargets, err := repo.Delta3ReadTargets(ctx)
+	if err != nil {
+		t.Fatalf("Delta3ReadTargets failed: %v", err)
+	}
+	if len(readTargets) != 2 {
+		t.Fatalf("Delta3ReadTargets len = %d, want 2", len(readTargets))
+	}
+	if readTargets[0].DeviceSN != "READONLYSN" || readTargets[1].DeviceSN != "WRITESN" {
+		t.Fatalf("Delta3ReadTargets order = %q/%q, want READONLYSN/WRITESN", readTargets[0].DeviceSN, readTargets[1].DeviceSN)
+	}
 }
 
 func TestChargingDeviceDeviceSNUniqueWhenNonEmpty(t *testing.T) {
@@ -136,6 +150,7 @@ func TestChargingDeviceDeviceSNUniqueWhenNonEmpty(t *testing.T) {
 		CredentialRef:         "delta3_one",
 		DeviceSN:              "DUPSN",
 		DeviceType:            "DELTA_3",
+		StatusSource:          "ecoflow_private_mqtt",
 		Enabled:               true,
 		ControlEnabled:        true,
 		Priority:              10,

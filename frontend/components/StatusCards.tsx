@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { decisionReasonLabel, decisionSummaryLabel, guardReasonLabel, strategyStateLabel, writeCandidateLabel } from "@/lib/display-labels";
-import type { Delta3Status, EnergyStatus, NightChargePlan, SurplusPlan } from "@/lib/types";
+import type { Delta3Status, DeviceStatus, EnergyStatus, NightChargePlan, SurplusPlan } from "@/lib/types";
 import type { ReactNode } from "react";
 
 type Metric = {
@@ -80,15 +80,19 @@ export function StatusCards({ status, fetchError }: StatusCardsProps) {
 
 export function Delta3StatusCard({
   status,
+  deviceStatuses,
   sourceStatus,
   fetchError
 }: {
   status: Delta3Status | null;
+  deviceStatuses: DeviceStatus[];
   sourceStatus: EnergyStatus;
   fetchError: string | null;
 }) {
   const unavailableReason = fetchError || status?.lastError || "read-only status is not loaded";
-  const available = !fetchError && Boolean(status?.available);
+  const delta3Statuses = deviceStatuses.filter((device) => device.kind === "ecoflow_delta3_plus");
+  const availableCount = delta3Statuses.filter((device) => device.status.available).length;
+  const available = !fetchError && (availableCount > 0 || Boolean(status?.available));
   const auxiliaryPlan = sourceStatus.delta3AuxPlan;
   return (
     <Card className="delta3-status-card section">
@@ -98,11 +102,64 @@ export function Delta3StatusCard({
             <CardDescription>Read-only auxiliary battery</CardDescription>
             <CardTitle>DELTA 3 Plus</CardTitle>
           </div>
-          <Badge variant={available ? "success" : "secondary"}>{available ? "connected" : "unavailable"}</Badge>
+          <Badge variant={available ? "success" : "secondary"}>{availableCount > 0 ? `${availableCount}/${delta3Statuses.length} 接続中` : available ? "connected" : "unavailable"}</Badge>
         </div>
       </CardHeader>
       <CardContent>
-        {available && status ? (
+        {delta3Statuses.length > 0 ? (
+          <>
+            <div className="delta3-device-status-list">
+              {delta3Statuses.map((device) => (
+                <div className="delta3-device-status-item" key={device.id || device.credentialRef}>
+                  <div className="panel-title-row">
+                    <div>
+                      <strong>{device.name}</strong>
+                      <p className="readonly-note">
+                        優先 {device.priority} / {device.credentialRef} / {statusSourceLabel(device.statusSource)} / {maskDeviceSn(device.deviceSn)}
+                      </p>
+                    </div>
+                    <Badge variant={device.status.available ? "success" : "secondary"}>{device.status.available ? "接続中" : "取得不可"}</Badge>
+                  </div>
+                  {device.status.available ? (
+                    <>
+                      <div className="detail-strip" aria-label={`${device.name} read-only status`}>
+                        <Detail label="SOC" value={nullablePercent(device.status.soc)} />
+                        <Detail label="AC入力" value={nullableWatt(device.status.acInW)} />
+                        <Detail label="AC出力" value={nullableWatt(device.status.acOutW)} />
+                        <Detail label="AC充電上限" value={nullableWatt(device.status.acChargeLimitW)} />
+                        <Detail label="Grid bypass disabled" value={nullableOnOff(device.status.gridBypassDisabled)} />
+                        <Detail label="AC output" value={nullableOnOff(device.status.acOutputEnabled)} />
+                      </div>
+                      <div className="detail-strip planner-secondary" aria-label={`${device.name} configuration status`}>
+                        <Detail label="最大充電SOC" value={nullablePercent(device.status.maxChargeSoc)} />
+                        <Detail label="最低放電SOC" value={nullablePercent(device.status.minDischargeSoc)} />
+                        <Detail label="Backup reserve" value={nullablePercent(device.status.backupReserveSoc)} />
+                        <Detail label="Device type" value={device.status.deviceType || device.deviceType || "-"} />
+                        <Detail label="Updated" value={formatDateTime(device.status.updatedAt || "")} />
+                        <Detail label="制御候補" value={device.controlEnabled ? "有効" : "無効"} />
+                      </div>
+                    </>
+                  ) : (
+                    <Alert className="delta3-alert">
+                      <AlertTitle>{device.name} read-only status</AlertTitle>
+                      <AlertDescription>{device.status.lastError || "read-only status is not loaded"}</AlertDescription>
+                    </Alert>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="detail-strip planner-secondary" aria-label="DELTA 3 Plus auxiliary battery plan">
+              <Detail label="補助計画" value={strategyStateLabel(auxiliaryPlan?.strategyState || "UNAVAILABLE")} />
+              <Detail label="推奨AC上限" value={nullableWatt(auxiliaryPlan?.recommendedAcChargeLimitW)} />
+              <Detail label="現在AC上限" value={nullableWatt(auxiliaryPlan?.currentAcChargeLimitW)} />
+              <Detail label="残余売電" value={nullableWatt(auxiliaryPlan?.residualExportW ?? sourceStatus.exportW)} />
+              <Detail label="安全余力" value={nullableWatt(auxiliaryPlan?.safetyMarginW)} />
+              <Detail label="実行" value={writeCandidateLabel(auxiliaryPlan?.wouldWrite)} />
+              <Detail label="抑制" value={guardReasonLabel(auxiliaryPlan?.suppressedReason)} />
+              <Detail label="理由" value={decisionReasonLabel(auxiliaryPlan?.reason)} />
+            </div>
+          </>
+        ) : available && status ? (
           <>
             <div className="detail-strip" aria-label="DELTA 3 Plus read-only status">
               <Detail label="SOC" value={nullablePercent(status.soc)} />
@@ -140,6 +197,26 @@ export function Delta3StatusCard({
       </CardContent>
     </Card>
   );
+}
+
+function maskDeviceSn(value: string) {
+  if (!value) {
+    return "SN未設定";
+  }
+  if (value.length <= 8) {
+    return value;
+  }
+  return `${value.slice(0, 4)}...${value.slice(-4)}`;
+}
+
+function statusSourceLabel(value: string) {
+  const labels: Record<string, string> = {
+    ecoflow_cloud: "EcoFlow Cloud API",
+    ecoflow_private_mqtt: "EcoFlow private MQTT",
+    switchbot_cloud: "SwitchBot Cloud API",
+    manual: "手動"
+  };
+  return labels[value] || value || "未設定";
 }
 
 export function StatusDecisionSection({

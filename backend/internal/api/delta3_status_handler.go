@@ -28,6 +28,10 @@ type Delta3StatusTargetProvider interface {
 	Delta3ReadTarget(ctx context.Context) (domain.ChargingDevice, bool, error)
 }
 
+type DeviceStatusStore interface {
+	ListChargingDevices(ctx context.Context) ([]domain.ChargingDevice, error)
+}
+
 type Delta3StatusResponse struct {
 	Available            bool   `json:"available"`
 	DeviceType           string `json:"deviceType,omitempty"`
@@ -46,10 +50,39 @@ type Delta3StatusResponse struct {
 	Cached               bool   `json:"cached,omitempty"`
 }
 
+type DeviceStatusResponse struct {
+	ID             int64                `json:"id"`
+	Name           string               `json:"name"`
+	Kind           string               `json:"kind"`
+	Provider       string               `json:"provider"`
+	Role           string               `json:"role"`
+	CredentialRef  string               `json:"credentialRef"`
+	DeviceSN       string               `json:"deviceSn"`
+	DeviceType     string               `json:"deviceType"`
+	StatusSource   string               `json:"statusSource"`
+	Priority       int                  `json:"priority"`
+	ControlEnabled bool                 `json:"controlEnabled"`
+	Status         Delta3StatusResponse `json:"status"`
+}
+
 func delta3StatusHandler(cfg config.Config, logger *slog.Logger, targetProvider Delta3StatusTargetProvider) http.HandlerFunc {
 	reader := NewDelta3StatusReaderWithTargetProvider(cfg, logger, targetProvider)
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := reader.CurrentStatus(r.Context())
+		writeJSON(w, http.StatusOK, response)
+	}
+}
+
+func deviceStatusesHandler(cfg config.Config, logger *slog.Logger, deviceStore DeviceStatusStore) http.HandlerFunc {
+	reader := NewDelta3StatusReader(cfg, logger)
+	return func(w http.ResponseWriter, r *http.Request) {
+		devices, err := deviceStore.ListChargingDevices(r.Context())
+		if err != nil {
+			logger.Error("failed to list device statuses", "error", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list device statuses"})
+			return
+		}
+		response := reader.CurrentDeviceStatuses(r.Context(), devices)
 		writeJSON(w, http.StatusOK, response)
 	}
 }
@@ -64,6 +97,7 @@ type Delta3StatusReader struct {
 	cfg            config.Config
 	logger         *slog.Logger
 	client         delta3ProbeClient
+	clientFactory  func(config.Config) delta3ProbeClient
 	targetProvider Delta3StatusTargetProvider
 	now            func() time.Time
 	mu             sync.Mutex
@@ -88,8 +122,11 @@ func newDelta3StatusReader(cfg config.Config, logger *slog.Logger, client delta3
 		cfg:    cfg,
 		logger: logger,
 		client: client,
-		now:    time.Now,
-		cache:  make(map[string]delta3StatusCacheEntry),
+		clientFactory: func(cfg config.Config) delta3ProbeClient {
+			return ecoflowdelta3.NewClient(delta3ProbeConfig(cfg))
+		},
+		now:   time.Now,
+		cache: make(map[string]delta3StatusCacheEntry),
 	}
 }
 
@@ -101,7 +138,37 @@ func (r *Delta3StatusReader) CurrentStatus(ctx context.Context) Delta3StatusResp
 	return r.CurrentStatusForConfig(ctx, cfg)
 }
 
+func (r *Delta3StatusReader) CurrentDeviceStatuses(ctx context.Context, devices []domain.ChargingDevice) []DeviceStatusResponse {
+	responses := make([]DeviceStatusResponse, 0, len(devices))
+	for _, device := range devices {
+		status := deviceStatusNotAvailable(device)
+		if canReadDelta3Status(device) {
+			cfg := Delta3ConfigForDevice(r.cfg, device)
+			status = r.currentStatusForConfig(ctx, cfg, false)
+		}
+		responses = append(responses, DeviceStatusResponse{
+			ID:             device.ID,
+			Name:           device.Name,
+			Kind:           device.Kind,
+			Provider:       device.Provider,
+			Role:           device.Role,
+			CredentialRef:  device.CredentialRef,
+			DeviceSN:       device.DeviceSN,
+			DeviceType:     device.DeviceType,
+			StatusSource:   device.StatusSource,
+			Priority:       device.Priority,
+			ControlEnabled: device.ControlEnabled,
+			Status:         status,
+		})
+	}
+	return responses
+}
+
 func (r *Delta3StatusReader) CurrentStatusForConfig(ctx context.Context, cfg config.Config) Delta3StatusResponse {
+	return r.currentStatusForConfig(ctx, cfg, true)
+}
+
+func (r *Delta3StatusReader) currentStatusForConfig(ctx context.Context, cfg config.Config, allowSharedClient bool) Delta3StatusResponse {
 	if !cfg.Delta3ReadEnabled {
 		return readDelta3Status(ctx, cfg, nil, r.logger)
 	}
@@ -119,8 +186,10 @@ func (r *Delta3StatusReader) CurrentStatusForConfig(ctx context.Context, cfg con
 
 	client := entry.client
 	if client == nil {
-		if r.targetProvider == nil && r.client != nil {
+		if allowSharedClient && r.targetProvider == nil && r.client != nil && delta3StatusCacheKey(cfg) == delta3StatusCacheKey(r.cfg) {
 			client = r.client
+		} else if r.clientFactory != nil {
+			client = r.clientFactory(cfg)
 		} else {
 			client = ecoflowdelta3.NewClient(delta3ProbeConfig(cfg))
 		}
@@ -157,6 +226,27 @@ func Delta3ConfigForDevice(cfg config.Config, device domain.ChargingDevice) conf
 		cfg.Delta3DeviceType = strings.TrimSpace(device.DeviceType)
 	}
 	return cfg
+}
+
+func canReadDelta3Status(device domain.ChargingDevice) bool {
+	return device.Enabled &&
+		device.Provider == "ecoflow" &&
+		device.Kind == "ecoflow_delta3_plus" &&
+		device.StatusSource == "ecoflow_private_mqtt" &&
+		strings.TrimSpace(device.DeviceSN) != "" &&
+		device.SupportsSocRead
+}
+
+func deviceStatusNotAvailable(device domain.ChargingDevice) Delta3StatusResponse {
+	reason := "read-only status is not implemented for this device"
+	if device.Provider == "ecoflow" && device.Kind == "ecoflow_delta3_plus" && strings.TrimSpace(device.DeviceSN) == "" {
+		reason = "device SN is not configured"
+	}
+	return Delta3StatusResponse{
+		Available:  false,
+		DeviceType: device.DeviceType,
+		LastError:  reason,
+	}
 }
 
 func delta3StatusCacheKey(cfg config.Config) string {

@@ -31,6 +31,7 @@ func (s *stubChargingDeviceStore) ListChargingDevices(context.Context) ([]domain
 			CredentialRef: "ecoflow_pro3_primary",
 			DeviceSN:      "TESTSN123",
 			DeviceType:    "DELTA_PRO3",
+			StatusSource:  "ecoflow_cloud",
 			Enabled:       true,
 			Priority:      10,
 			MinChargeW:    400,
@@ -92,8 +93,8 @@ func TestPostChargingDeviceHandlerSavesDevice(t *testing.T) {
 	if store.saved.Name != "DELTA 3 Plus 2" || store.saved.CredentialRef != "ecoflow_delta3_secondary" || store.saved.ControlEnabled {
 		t.Fatalf("saved device = %#v", store.saved)
 	}
-	if store.saved.DeviceSN != "TESTSN456" || store.saved.DeviceType != "DELTA_3" {
-		t.Fatalf("saved identity = %q/%q, want TESTSN456/DELTA_3", store.saved.DeviceSN, store.saved.DeviceType)
+	if store.saved.DeviceSN != "TESTSN456" || store.saved.DeviceType != "DELTA_3" || store.saved.StatusSource != "ecoflow_private_mqtt" {
+		t.Fatalf("saved identity = %q/%q/%q, want TESTSN456/DELTA_3/ecoflow_private_mqtt", store.saved.DeviceSN, store.saved.DeviceType, store.saved.StatusSource)
 	}
 }
 
@@ -123,6 +124,18 @@ func TestPostChargingDeviceHandlerRejectsDeviceSNWithWhitespace(t *testing.T) {
 
 func TestPostChargingDeviceHandlerRejectsMismatchedDeviceType(t *testing.T) {
 	body := []byte(`{"name":"bad","kind":"ecoflow_delta3_plus","provider":"ecoflow","role":"auxiliary","credentialRef":"ecoflow_delta3_bad","deviceSn":"BADSN","deviceType":"DELTA_PRO3","enabled":true,"priority":1,"minChargeW":100,"maxChargeW":1500,"chargeStepW":100,"targetSoc":90,"reserveSoc":20}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/charging-devices", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	postChargingDeviceHandler(&stubChargingDeviceStore{}, slog.Default())(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestPostChargingDeviceHandlerRejectsMismatchedStatusSource(t *testing.T) {
+	body := []byte(`{"name":"bad","kind":"ecoflow_delta3_plus","provider":"ecoflow","role":"auxiliary","credentialRef":"ecoflow_delta3_bad","deviceSn":"BADSN","statusSource":"ecoflow_cloud","enabled":true,"priority":1,"minChargeW":100,"maxChargeW":1500,"chargeStepW":100,"targetSoc":90,"reserveSoc":20}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/settings/charging-devices", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 

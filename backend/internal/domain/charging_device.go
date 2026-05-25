@@ -11,6 +11,7 @@ type ChargingDevice struct {
 	CredentialRef         string    `json:"credentialRef"`
 	DeviceSN              string    `json:"deviceSn"`
 	DeviceType            string    `json:"deviceType"`
+	StatusSource          string    `json:"statusSource"`
 	Enabled               bool      `json:"enabled"`
 	ControlEnabled        bool      `json:"controlEnabled"`
 	Priority              int       `json:"priority"`

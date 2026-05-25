@@ -17,6 +17,7 @@ const emptyDevice: ChargingDevice = {
   credentialRef: "",
   deviceSn: "",
   deviceType: "DELTA_3",
+  statusSource: "ecoflow_private_mqtt",
   enabled: true,
   controlEnabled: false,
   priority: 50,
@@ -33,9 +34,10 @@ const emptyDevice: ChargingDevice = {
 };
 
 export function ChargingDevicePanel() {
-  const [open, setOpen] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [devices, setDevices] = useState<ChargingDevice[]>([]);
-  const [editing, setEditing] = useState<ChargingDevice>(emptyDevice);
+  const [editing, setEditing] = useState<ChargingDevice>({ ...emptyDevice });
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -71,6 +73,7 @@ export function ChargingDevicePanel() {
       const saved = await saveChargingDevice(payload);
       await loadDevices();
       setEditing(saved);
+      setEditOpen(false);
       setMessage("充電機器マスタを保存しました。既存の実機制御条件は変更していません。");
     } catch (err) {
       setError(err instanceof Error ? err.message : "charging device save failed");
@@ -95,7 +98,8 @@ export function ChargingDevicePanel() {
       await deleteChargingDevice(device.id);
       await loadDevices();
       if (editing.id === device.id) {
-        setEditing(emptyDevice);
+        setEditing({ ...emptyDevice });
+        setEditOpen(false);
       }
       setMessage("充電機器マスタを削除しました。");
     } catch (err) {
@@ -107,9 +111,21 @@ export function ChargingDevicePanel() {
 
   function editDevice(device: ChargingDevice) {
     setEditing({ ...device });
-    setMessage("選択した機器をフォームへ読み込みました。");
+    setMessage(null);
     setError(null);
-    setOpen(true);
+    setEditOpen(true);
+  }
+
+  function startNewDevice() {
+    setEditing({ ...emptyDevice });
+    setMessage(null);
+    setError(null);
+    setEditOpen(true);
+  }
+
+  function closeListDrawer() {
+    setListOpen(false);
+    setEditOpen(false);
   }
 
   return (
@@ -125,21 +141,21 @@ export function ChargingDevicePanel() {
           </p>
           <p className="readonly-note">SN はローカルDBのマスタ、認証情報は .env で管理します。token や password は保存しません。</p>
           {error ? <p className="inline-error">{error}</p> : null}
-          <Button type="button" variant="outline" onClick={() => setOpen(true)}>
-            充電機器を編集
+          <Button type="button" variant="outline" onClick={() => setListOpen(true)}>
+            充電機器一覧を開く
           </Button>
         </CardContent>
       </Card>
 
-      {open ? (
+      {listOpen ? (
         <div className="drawer-backdrop" role="presentation">
-          <aside className="settings-drawer charging-device-drawer" aria-label="charging device settings">
+          <aside className="settings-drawer charging-device-list-drawer" aria-label="charging device list">
             <div className="drawer-header">
               <div>
                 <p className="eyebrow">Charging devices</p>
                 <h2>充電機器マスタ</h2>
               </div>
-              <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              <Button type="button" variant="outline" onClick={closeListDrawer}>
                 閉じる
               </Button>
             </div>
@@ -147,72 +163,13 @@ export function ChargingDevicePanel() {
             {error ? <p className="inline-error">{error}</p> : null}
             {message ? <p className="inline-success">{message}</p> : null}
             <p className="readonly-note">
-              `control_enabled` は将来の余剰配分候補です。保存しても、この画面から EcoFlow / SwitchBot へ送信しません。
+              一覧では登録内容の確認だけを行います。追加・編集は行ごとの「編集」または「新規追加」から別ドロワーで開きます。
             </p>
-
-            <Form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void submitDevice();
-              }}
-            >
-              <div className="drawer-section-title">機器設定</div>
-              <div className="charging-device-form-grid">
-                <TextField id="charging-device-name" label="表示名" value={editing.name} onChange={(value) => setEditing({ ...editing, name: value })} />
-                <TextField id="charging-device-kind" label="種別" value={editing.kind} onChange={(value) => setEditing({ ...editing, kind: value })} />
-                <TextField id="charging-device-provider" label="Provider" value={editing.provider} onChange={(value) => setEditing({ ...editing, provider: value })} />
-                <TextField id="charging-device-role" label="Role" value={editing.role} onChange={(value) => setEditing({ ...editing, role: value })} />
-                <TextField
-                  id="charging-device-credential-ref"
-                  label="認証参照名"
-                  value={editing.credentialRef}
-                  onChange={(value) => setEditing({ ...editing, credentialRef: value })}
-                  description="認証情報の参照名です。token、password は入力しません。"
-                />
-                <TextField
-                  id="charging-device-sn"
-                  label="シリアル番号"
-                  value={editing.deviceSn}
-                  onChange={(value) => setEditing({ ...editing, deviceSn: value })}
-                  description="EcoFlow実機のSNです。一覧では末尾だけ表示します。"
-                />
-                <TextField
-                  id="charging-device-type"
-                  label="Device Type"
-                  value={editing.deviceType}
-                  onChange={(value) => setEditing({ ...editing, deviceType: value })}
-                  description="例: DELTA_3 / DELTA_3_PLUS / DELTA_3_MAX_PLUS"
-                />
-                <NumberField id="charging-device-priority" label="優先順位" value={editing.priority} onChange={(value) => setEditing({ ...editing, priority: value })} />
-                <NumberField id="charging-device-min-w" label="最小充電W" value={editing.minChargeW} onChange={(value) => setEditing({ ...editing, minChargeW: value })} />
-                <NumberField id="charging-device-max-w" label="最大充電W" value={editing.maxChargeW} onChange={(value) => setEditing({ ...editing, maxChargeW: value })} />
-                <NumberField id="charging-device-step-w" label="刻みW" value={editing.chargeStepW} onChange={(value) => setEditing({ ...editing, chargeStepW: value })} />
-                <NumberField id="charging-device-capacity" label="容量Wh" value={editing.capacityWh} onChange={(value) => setEditing({ ...editing, capacityWh: value })} />
-                <NumberField id="charging-device-target-soc" label="目標SOC%" value={editing.targetSoc} onChange={(value) => setEditing({ ...editing, targetSoc: value })} />
-                <NumberField id="charging-device-reserve-soc" label="最低SOC%" value={editing.reserveSoc} onChange={(value) => setEditing({ ...editing, reserveSoc: value })} />
-              </div>
-              <div className="charging-device-switch-grid">
-                <CheckboxField label="有効" checked={editing.enabled} onChange={(checked) => setEditing({ ...editing, enabled: checked })} />
-                <CheckboxField label="自動制御候補" checked={editing.controlEnabled} onChange={(checked) => setEditing({ ...editing, controlEnabled: checked })} />
-                <CheckboxField label="SOC読み取り" checked={editing.supportsSocRead} onChange={(checked) => setEditing({ ...editing, supportsSocRead: checked })} />
-                <CheckboxField label="AC上限設定" checked={editing.supportsAcChargeLimit} onChange={(checked) => setEditing({ ...editing, supportsAcChargeLimit: checked })} />
-                <CheckboxField label="ON/OFF制御" checked={editing.supportsOnOff} onChange={(checked) => setEditing({ ...editing, supportsOnOff: checked })} />
-              </div>
-              <FormItem>
-                <FormLabel htmlFor="charging-device-notes">メモ</FormLabel>
-                <FormControl>
-                  <textarea id="charging-device-notes" className="text-input" rows={3} value={editing.notes} onChange={(event) => setEditing({ ...editing, notes: event.target.value })} />
-                </FormControl>
-              </FormItem>
-              <div className="drawer-actions">
-                <Button type="submit" disabled={saving}>
-                  {saving ? "保存中" : "保存"}
-                </Button>
-                <Button type="button" variant="outline" onClick={() => setEditing(emptyDevice)}>
-                  新規入力
-                </Button>
-              </div>
-            </Form>
+            <div className="charging-device-list-actions">
+              <Button type="button" onClick={startNewDevice}>
+                新規追加
+              </Button>
+            </div>
 
             <div className="table-wrap charging-device-table-wrap">
               <Table>
@@ -223,6 +180,7 @@ export function ChargingDevicePanel() {
                     <TableHead>充電範囲</TableHead>
                     <TableHead>状態</TableHead>
                     <TableHead>識別</TableHead>
+                    <TableHead>取得方式</TableHead>
                     <TableHead>認証参照</TableHead>
                     <TableHead>操作</TableHead>
                   </TableRow>
@@ -230,7 +188,7 @@ export function ChargingDevicePanel() {
                 <TableBody>
                   {devices.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="empty-cell">
+                      <TableCell colSpan={8} className="empty-cell">
                         充電機器マスタがありません。
                       </TableCell>
                     </TableRow>
@@ -259,6 +217,7 @@ export function ChargingDevicePanel() {
                           <br />
                           <span className="readonly-note">{device.deviceType || "type未設定"}</span>
                         </TableCell>
+                        <TableCell>{statusSourceLabel(device.statusSource)}</TableCell>
                         <TableCell>{device.credentialRef}</TableCell>
                         <TableCell>
                           <div className="tariff-plan-row-actions">
@@ -277,6 +236,98 @@ export function ChargingDevicePanel() {
               </Table>
             </div>
           </aside>
+
+          {editOpen ? (
+            <div className="drawer-backdrop drawer-backdrop-nested" role="presentation">
+              <aside className="settings-drawer charging-device-edit-drawer" aria-label="charging device editor">
+                <div className="drawer-header">
+                  <div>
+                    <p className="eyebrow">{editing.id ? `ID ${editing.id}` : "New device"}</p>
+                    <h2>{editing.id ? `${editing.name || "充電機器"}を編集` : "充電機器を追加"}</h2>
+                  </div>
+                  <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
+                    一覧へ戻る
+                  </Button>
+                </div>
+
+                {error ? <p className="inline-error">{error}</p> : null}
+                <p className="readonly-note">
+                  保存しても、この画面から EcoFlow / SwitchBot へ直接送信しません。SN はローカルDBのマスタに保存します。
+                </p>
+
+                <Form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void submitDevice();
+                  }}
+                >
+                  <div className="drawer-section-title">機器設定</div>
+                  <div className="charging-device-form-grid">
+                    <TextField id="charging-device-name" label="表示名" value={editing.name} onChange={(value) => setEditing({ ...editing, name: value })} />
+                    <TextField id="charging-device-kind" label="種別" value={editing.kind} onChange={(value) => setEditing({ ...editing, kind: value })} />
+                    <TextField id="charging-device-provider" label="Provider" value={editing.provider} onChange={(value) => setEditing({ ...editing, provider: value })} />
+                    <TextField id="charging-device-role" label="Role" value={editing.role} onChange={(value) => setEditing({ ...editing, role: value })} />
+                    <TextField
+                      id="charging-device-credential-ref"
+                      label="認証参照名"
+                      value={editing.credentialRef}
+                      onChange={(value) => setEditing({ ...editing, credentialRef: value })}
+                      description="認証情報の参照名です。token、password は入力しません。"
+                    />
+                    <TextField
+                      id="charging-device-sn"
+                      label="シリアル番号"
+                      value={editing.deviceSn}
+                      onChange={(value) => setEditing({ ...editing, deviceSn: value })}
+                      description="EcoFlow実機のSNです。一覧では末尾だけ表示します。"
+                    />
+                    <TextField
+                      id="charging-device-type"
+                      label="Device Type"
+                      value={editing.deviceType}
+                      onChange={(value) => setEditing({ ...editing, deviceType: value })}
+                      description="例: DELTA_3 / DELTA_3_PLUS / DELTA_3_MAX_PLUS"
+                    />
+                    <TextField
+                      id="charging-device-status-source"
+                      label="取得方式"
+                      value={editing.statusSource}
+                      onChange={(value) => setEditing({ ...editing, statusSource: value })}
+                      description="例: ecoflow_cloud / ecoflow_private_mqtt / switchbot_cloud / manual"
+                    />
+                    <NumberField id="charging-device-priority" label="優先順位" value={editing.priority} onChange={(value) => setEditing({ ...editing, priority: value })} />
+                    <NumberField id="charging-device-min-w" label="最小充電W" value={editing.minChargeW} onChange={(value) => setEditing({ ...editing, minChargeW: value })} />
+                    <NumberField id="charging-device-max-w" label="最大充電W" value={editing.maxChargeW} onChange={(value) => setEditing({ ...editing, maxChargeW: value })} />
+                    <NumberField id="charging-device-step-w" label="刻みW" value={editing.chargeStepW} onChange={(value) => setEditing({ ...editing, chargeStepW: value })} />
+                    <NumberField id="charging-device-capacity" label="容量Wh" value={editing.capacityWh} onChange={(value) => setEditing({ ...editing, capacityWh: value })} />
+                    <NumberField id="charging-device-target-soc" label="目標SOC%" value={editing.targetSoc} onChange={(value) => setEditing({ ...editing, targetSoc: value })} />
+                    <NumberField id="charging-device-reserve-soc" label="最低SOC%" value={editing.reserveSoc} onChange={(value) => setEditing({ ...editing, reserveSoc: value })} />
+                  </div>
+                  <div className="charging-device-switch-grid">
+                    <CheckboxField label="有効" checked={editing.enabled} onChange={(checked) => setEditing({ ...editing, enabled: checked })} />
+                    <CheckboxField label="自動制御候補" checked={editing.controlEnabled} onChange={(checked) => setEditing({ ...editing, controlEnabled: checked })} />
+                    <CheckboxField label="SOC読み取り" checked={editing.supportsSocRead} onChange={(checked) => setEditing({ ...editing, supportsSocRead: checked })} />
+                    <CheckboxField label="AC上限設定" checked={editing.supportsAcChargeLimit} onChange={(checked) => setEditing({ ...editing, supportsAcChargeLimit: checked })} />
+                    <CheckboxField label="ON/OFF制御" checked={editing.supportsOnOff} onChange={(checked) => setEditing({ ...editing, supportsOnOff: checked })} />
+                  </div>
+                  <FormItem>
+                    <FormLabel htmlFor="charging-device-notes">メモ</FormLabel>
+                    <FormControl>
+                      <textarea id="charging-device-notes" className="text-input" rows={3} value={editing.notes} onChange={(event) => setEditing({ ...editing, notes: event.target.value })} />
+                    </FormControl>
+                  </FormItem>
+                  <div className="drawer-actions">
+                    <Button type="submit" disabled={saving}>
+                      {saving ? "保存中" : "保存"}
+                    </Button>
+                    <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
+                      キャンセル
+                    </Button>
+                  </div>
+                </Form>
+              </aside>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </>
@@ -325,6 +376,7 @@ function normalizeDeviceForSave(device: ChargingDevice): ChargingDevice {
     credentialRef: device.credentialRef.trim(),
     deviceSn: device.deviceSn.trim(),
     deviceType: defaultDeviceType(device.kind.trim(), device.deviceType.trim()),
+    statusSource: defaultStatusSource(device.kind.trim(), device.statusSource.trim()),
     notes: device.notes.trim()
   };
 }
@@ -347,6 +399,9 @@ function validateDevice(device: ChargingDevice) {
   }
   if (!validDeviceTypeForKind(device.kind, device.deviceType)) {
     throw new Error("種別とDevice Typeの組み合わせが不正です。");
+  }
+  if (!validStatusSourceForKind(device.kind, device.statusSource)) {
+    throw new Error("種別と取得方式の組み合わせが不正です。");
   }
 }
 
@@ -373,6 +428,22 @@ function maskDeviceSn(value: string) {
   return `***${value.slice(-4)}`;
 }
 
+function defaultStatusSource(kind: string, value: string) {
+  if (value) {
+    return value;
+  }
+  if (kind === "ecoflow_delta_pro3") {
+    return "ecoflow_cloud";
+  }
+  if (kind === "ecoflow_delta3_plus") {
+    return "ecoflow_private_mqtt";
+  }
+  if (kind === "switchbot_plug") {
+    return "switchbot_cloud";
+  }
+  return "manual";
+}
+
 function validDeviceTypeForKind(kind: string, deviceType: string) {
   if (kind === "ecoflow_delta_pro3") {
     return deviceType === "DELTA_PRO3";
@@ -383,6 +454,19 @@ function validDeviceTypeForKind(kind: string, deviceType: string) {
   return deviceType === "";
 }
 
+function validStatusSourceForKind(kind: string, statusSource: string) {
+  if (kind === "ecoflow_delta_pro3") {
+    return statusSource === "ecoflow_cloud";
+  }
+  if (kind === "ecoflow_delta3_plus") {
+    return statusSource === "ecoflow_private_mqtt";
+  }
+  if (kind === "switchbot_plug") {
+    return statusSource === "switchbot_cloud";
+  }
+  return statusSource === "manual";
+}
+
 function deviceKindLabel(value: string) {
   const labels: Record<string, string> = {
     ecoflow_delta_pro3: "DELTA Pro 3",
@@ -391,6 +475,16 @@ function deviceKindLabel(value: string) {
     manual: "手動"
   };
   return labels[value] || value;
+}
+
+function statusSourceLabel(value: string) {
+  const labels: Record<string, string> = {
+    ecoflow_cloud: "EcoFlow Cloud API",
+    ecoflow_private_mqtt: "EcoFlow private MQTT",
+    switchbot_cloud: "SwitchBot Cloud API",
+    manual: "手動"
+  };
+  return labels[value] || value || "未設定";
 }
 
 function deviceRoleLabel(value: string) {
