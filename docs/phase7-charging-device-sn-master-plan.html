@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phase 7 充電機器マスタ SN 管理 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; margin: 0; color: #172026; background: #f7f8fa; }
+    main { max-width: 1040px; margin: 0 auto; padding: 40px 24px 72px; background: #fff; }
+    h1, h2, h3 { line-height: 1.25; }
+    h1 { font-size: 30px; margin-bottom: 24px; }
+    h2 { border-top: 1px solid #d9dee3; padding-top: 24px; margin-top: 32px; }
+    code, pre { background: #eef2f5; border-radius: 6px; }
+    code { padding: 2px 5px; }
+    pre { padding: 14px; overflow: auto; }
+    table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+    th, td { border: 1px solid #d9dee3; padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: #f0f3f6; }
+    li { margin: 4px 0; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Phase 7 充電機器マスタ SN 管理 実装計画</h1>
+
+  <h2>目的</h2>
+  <p>DELTA Pro 3 と複数台の DELTA 3 Plus を、<code>.env</code> の単一シリアル番号ではなく <code>charging_devices</code> マスタで識別できるようにする。</p>
+  <p>現状の <code>credentialRef</code> は認証情報の参照名として残し、実機を特定する <code>deviceSn</code> と <code>deviceType</code> をマスタに追加する。これにより、2台目以降の DELTA 3 Plus を追加して、将来の余剰電力配分や優先順位制御に使える土台を作る。</p>
+
+  <h2>非目的</h2>
+  <ul>
+    <li>EcoFlow / SwitchBot の新しい write API は追加しない。</li>
+    <li>認証情報、パスワード、API token、secret key は DB に保存しない。</li>
+    <li>複数台 DELTA 3 Plus への同時配分制御は今回実装しない。</li>
+    <li>SwitchBot スマートプラグ制御は今回実装しない。</li>
+    <li>DELTA Pro 3 の既存制御経路は変更しない。</li>
+  </ul>
+
+  <h2>現状</h2>
+  <ul>
+    <li><code>charging_devices</code> は表示名、種別、provider、role、credentialRef、enabled/controlEnabled、優先順位、充電W範囲、容量/SOC設定を管理している。</li>
+    <li>DELTA 3 Plus の接続先はまだ <code>.env</code> の <code>ECOFLOW_DELTA3_DEVICE_SN</code> / <code>ECOFLOW_DELTA3_DEVICE_TYPE</code> に依存している。</li>
+    <li>UI には SN を入力する場所がない。</li>
+  </ul>
+
+  <h2>追加するデータ契約</h2>
+  <h3><code>charging_devices</code></h3>
+  <table>
+    <thead><tr><th>column</th><th>type</th><th>用途</th></tr></thead>
+    <tbody>
+      <tr><td><code>device_sn</code></td><td><code>TEXT NOT NULL DEFAULT ''</code></td><td>実機シリアル番号。token や password ではないが、ログには出さない。</td></tr>
+      <tr><td><code>device_type</code></td><td><code>TEXT NOT NULL DEFAULT ''</code></td><td>EcoFlow private API の device type。例: <code>DELTA_3</code>, <code>DELTA_3_PLUS</code>。</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li><code>device_sn</code> は空文字を許可する。</li>
+    <li>空でない <code>device_sn</code> は同一DB内で重複しないように unique index を追加する。</li>
+    <li><code>device_sn</code> は UI の編集フォームでは入力できるが、一覧表示では末尾だけ見せる。</li>
+    <li>ログやエラー文に <code>device_sn</code> を出さない。</li>
+  </ul>
+
+  <h3>API JSON</h3>
+  <pre><code>{
+  "deviceSn": "...",
+  "deviceType": "DELTA_3"
+}</code></pre>
+  <p>EcoFlow 機器は <code>deviceType</code> を推奨し、未入力時は kind から既定値を補う。<code>ecoflow_delta3_plus</code> の既定値は既存設定に合わせて <code>DELTA_3</code> とする。SN は trim し、空白や制御文字を含む値は拒否する。</p>
+
+  <h2>DELTA 3 Plus 接続方針</h2>
+  <h3>読み取り対象</h3>
+  <ol>
+    <li><code>enabled = true</code></li>
+    <li><code>provider = ecoflow</code></li>
+    <li><code>kind = ecoflow_delta3_plus</code></li>
+    <li><code>device_sn != ''</code></li>
+    <li><code>supports_soc_read = true</code></li>
+  </ol>
+  <p>対象が見つからない場合は、後方互換として <code>.env</code> の <code>ECOFLOW_DELTA3_DEVICE_SN</code> を使う。</p>
+
+  <h3>補助充電 write 対象</h3>
+  <p>DELTA 3 Plus 補助充電の既存 write 経路は、以下をすべて満たす場合だけ実行候補にする。</p>
+  <ol>
+    <li>上記の読み取り対象のうち、マスタから選択された対象がある。</li>
+    <li>対象機器の <code>controlEnabled = true</code></li>
+    <li>対象機器の <code>supports_ac_charge_limit = true</code></li>
+    <li><code>DELTA3_AUX_ENABLED=true</code></li>
+    <li>既存の write gate をすべて満たす。
+      <ul>
+        <li><code>MOCK_MODE=false</code></li>
+        <li><code>SIMULATION_MODE=false</code></li>
+        <li><code>ENABLE_REAL_CONTROL=true</code></li>
+        <li><code>AUTO_CONTROL_ENABLED=true</code></li>
+        <li><code>ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=true</code></li>
+        <li>real-control trial window が有効</li>
+        <li><code>ECOFLOW_DELTA3_READ_ENABLED=true</code></li>
+        <li><code>ECOFLOW_DELTA3_EXECUTE=true</code></li>
+        <li><code>ECOFLOW_DELTA3_ALLOW_PRIVATE_API_WRITE=true</code></li>
+        <li><code>CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND</code></li>
+        <li>最小コマンド間隔 / 差分</li>
+      </ul>
+    </li>
+  </ol>
+  <p><code>.env</code> fallback は read-only status の後方互換に限定する。write はマスタに <code>device_sn</code> が登録され、かつ <code>controlEnabled=true</code> の機器だけを対象にする。これにより、マスタ上で無効化した機器を <code>.env</code> の残存SNで誤って制御しない。</p>
+  <p><code>controlEnabled=false</code> またはマスタ write 対象なしの場合は、read-only 表示は行うが write は抑制して、補助制御ログに理由を残す。</p>
+
+  <h2>実装ステップ</h2>
+  <ol>
+    <li>DB migration: <code>device_sn</code> / <code>device_type</code> と、空でない <code>device_sn</code> だけを対象にする partial unique index（例: <code>WHERE device_sn &lt;&gt; ''</code>）を追加する。</li>
+    <li>Domain / Repository / API: 型、payload、validation、scan を更新する。</li>
+    <li>DELTA 3 Plus target resolver: 優先度順で対象を選び、read-only は対象なしなら <code>.env</code> fallback する。write は fallback せず、マスタ対象必須にする。startup 時の reader / writer を使い回さず、各リクエスト・各制御tickで選択済み config から reader / writer を作る。status reader の cache は device SN / device type 単位で分け、マスタ編集後に別SNの古い値を返さない。</li>
+    <li>Runtime 接続: <code>/api/delta3/status</code> と control loop が同じ選択結果を使う。</li>
+    <li>Frontend: 編集フォームに <code>deviceSn</code> / <code>deviceType</code> を追加し、一覧は masked 表示にする。</li>
+    <li>Tests: migration、repository、API、resolver を確認する。</li>
+  </ol>
+
+  <h2>安全境界</h2>
+  <ul>
+    <li>SN は secret ではないが識別子なので、ログには出さない。</li>
+    <li>認証情報は引き続き <code>.env</code> のみ。</li>
+    <li>新しい外部API呼び出しは追加しない。</li>
+    <li>既存 DELTA 3 Plus private API client の利用対象SNをマスタから選べるようにするだけ。</li>
+    <li>write は既存 gate に <code>controlEnabled</code> を追加して安全側に倒す。</li>
+  </ul>
+
+  <h2>確認コマンド</h2>
+  <pre><code>cd backend &amp;&amp; rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build
+rtk git diff --check
+rtk curl -sS http://localhost:18085/api/settings/charging-devices</code></pre>
+
+  <h2>運用メモ</h2>
+  <ul>
+    <li>既存DBには migration で <code>device_sn</code> / <code>device_type</code> が追加される。</li>
+    <li>実機のSNは UI の機器マスタ画面で入力する。</li>
+    <li>入力後、DELTA 3 Plus status は優先度の最も高い有効な DELTA 3 Plus を使う。</li>
+    <li>2台目以降の配分制御は、今回のマスタ対応を前提に次タスクで実装する。</li>
+  </ul>
+</main>
+</body>
+</html>

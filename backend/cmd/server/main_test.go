@@ -87,6 +87,7 @@ func TestRecordStatusPersistsWouldSendLogWithoutCommandSent(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 		slog.Default(),
 	)
 
@@ -173,6 +174,7 @@ func TestRecordStatusPersistsDelta3AuxSuppressionOnStatus(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 		slog.Default(),
 	)
 
@@ -235,6 +237,7 @@ func TestRecordStatusPersistsNightOwnedSurplusSkipLogWithoutWriteCandidate(t *te
 		store.NewLogRepository(db),
 		store.NewNightChargePlanRepository(db),
 		surplusRepository,
+		nil,
 		nil,
 		nil,
 		nil,

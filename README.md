@@ -244,6 +244,10 @@ ECOFLOW_DELTA3_TIMEOUT_SEC=20
 ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=false
 ```
 
+`ECOFLOW_DELTA3_DEVICE_SN` は、充電機器マスタに DELTA 3 Plus の SN が未登録の場合の read-only 表示 fallback です。dashboard の「設定」→「充電機器マスタ」で DELTA 3 Plus の `deviceSn` と `deviceType` を登録すると、read-only status は優先度が最も高い有効な DELTA 3 Plus を使います。
+
+DELTA 3 Plus 補助充電の自動 write は `.env` fallback では実行しません。対象機器をマスタに登録し、`enabled=true`、`controlEnabled=true`、`supportsAcChargeLimit=true` にしたうえで、既存の real-control gate と `ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=true` をすべて満たす場合だけ実行候補になります。
+
 read-only probe:
 
 ```bash

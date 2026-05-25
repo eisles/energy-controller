@@ -26,6 +26,8 @@ type chargingDevicePayload struct {
 	Provider              string `json:"provider"`
 	Role                  string `json:"role"`
 	CredentialRef         string `json:"credentialRef"`
+	DeviceSN              string `json:"deviceSn"`
+	DeviceType            string `json:"deviceType"`
 	Enabled               bool   `json:"enabled"`
 	ControlEnabled        bool   `json:"controlEnabled"`
 	Priority              int    `json:"priority"`
@@ -107,6 +109,8 @@ func chargingDeviceFromPayload(payload chargingDevicePayload) domain.ChargingDev
 		Provider:              strings.TrimSpace(payload.Provider),
 		Role:                  strings.TrimSpace(payload.Role),
 		CredentialRef:         strings.TrimSpace(payload.CredentialRef),
+		DeviceSN:              strings.TrimSpace(payload.DeviceSN),
+		DeviceType:            defaultChargingDeviceType(strings.TrimSpace(payload.Kind), strings.TrimSpace(payload.DeviceType)),
 		Enabled:               payload.Enabled,
 		ControlEnabled:        payload.ControlEnabled,
 		Priority:              payload.Priority,
@@ -137,13 +141,57 @@ func validChargingDevice(device domain.ChargingDevice) bool {
 		device.TargetSoc >= 0 &&
 		device.TargetSoc <= 100 &&
 		device.ReserveSoc >= 0 &&
-		device.ReserveSoc <= 100
+		device.ReserveSoc <= 100 &&
+		validChargingDeviceSN(device.DeviceSN) &&
+		validChargingDeviceType(device)
 }
 
 func allowedChargingDeviceKind(value string) bool {
 	switch value {
 	case "ecoflow_delta_pro3", "ecoflow_delta3_plus", "switchbot_plug", "manual":
 		return true
+	default:
+		return false
+	}
+}
+
+func defaultChargingDeviceType(kind string, value string) string {
+	if value != "" {
+		return value
+	}
+	switch kind {
+	case "ecoflow_delta_pro3":
+		return "DELTA_PRO3"
+	case "ecoflow_delta3_plus":
+		return "DELTA_3"
+	default:
+		return ""
+	}
+}
+
+func validChargingDeviceSN(value string) bool {
+	for _, r := range value {
+		if r <= ' ' || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func validChargingDeviceType(device domain.ChargingDevice) bool {
+	if device.Provider != "ecoflow" {
+		return device.DeviceType == ""
+	}
+	switch device.Kind {
+	case "ecoflow_delta_pro3":
+		return device.DeviceType == "DELTA_PRO3"
+	case "ecoflow_delta3_plus":
+		switch device.DeviceType {
+		case "DELTA_3", "DELTA_3_PLUS", "DELTA_3_1500", "DELTA_3_MAX_PLUS":
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}

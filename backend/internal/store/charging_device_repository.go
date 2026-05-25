@@ -18,7 +18,7 @@ func NewChargingDeviceRepository(db *sql.DB) *ChargingDeviceRepository {
 
 func (r *ChargingDeviceRepository) ListChargingDevices(ctx context.Context) ([]domain.ChargingDevice, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT
-		id, name, kind, provider, role, credential_ref, enabled, control_enabled, priority,
+		id, name, kind, provider, role, credential_ref, device_sn, device_type, enabled, control_enabled, priority,
 		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc,
 		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
 		FROM charging_devices
@@ -35,7 +35,7 @@ func (r *ChargingDeviceRepository) UpsertChargingDevice(ctx context.Context, dev
 	if device.ID > 0 {
 		result, err := r.db.ExecContext(ctx, `UPDATE charging_devices SET
 			name = ?, kind = ?, provider = ?, role = ?, credential_ref = ?, enabled = ?,
-			control_enabled = ?, priority = ?, min_charge_w = ?, max_charge_w = ?, charge_step_w = ?,
+			device_sn = ?, device_type = ?, control_enabled = ?, priority = ?, min_charge_w = ?, max_charge_w = ?, charge_step_w = ?,
 			capacity_wh = ?, target_soc = ?, reserve_soc = ?, supports_soc_read = ?,
 			supports_ac_charge_limit = ?, supports_on_off = ?, notes = ?, updated_at = ?
 			WHERE id = ?`,
@@ -45,6 +45,8 @@ func (r *ChargingDeviceRepository) UpsertChargingDevice(ctx context.Context, dev
 			device.Role,
 			device.CredentialRef,
 			boolToInt(device.Enabled),
+			device.DeviceSN,
+			device.DeviceType,
 			boolToInt(device.ControlEnabled),
 			device.Priority,
 			device.MinChargeW,
@@ -74,15 +76,17 @@ func (r *ChargingDeviceRepository) UpsertChargingDevice(ctx context.Context, dev
 	}
 
 	result, err := r.db.ExecContext(ctx, `INSERT INTO charging_devices (
-		name, kind, provider, role, credential_ref, enabled, control_enabled, priority,
+		name, kind, provider, role, credential_ref, device_sn, device_type, enabled, control_enabled, priority,
 		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc,
 		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		device.Name,
 		device.Kind,
 		device.Provider,
 		device.Role,
 		device.CredentialRef,
+		device.DeviceSN,
+		device.DeviceType,
 		boolToInt(device.Enabled),
 		boolToInt(device.ControlEnabled),
 		device.Priority,
@@ -126,7 +130,7 @@ func (r *ChargingDeviceRepository) DeleteChargingDevice(ctx context.Context, id 
 
 func (r *ChargingDeviceRepository) chargingDeviceByID(ctx context.Context, id int64) (domain.ChargingDevice, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT
-		id, name, kind, provider, role, credential_ref, enabled, control_enabled, priority,
+		id, name, kind, provider, role, credential_ref, device_sn, device_type, enabled, control_enabled, priority,
 		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc,
 		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
 		FROM charging_devices
@@ -145,6 +149,44 @@ func (r *ChargingDeviceRepository) chargingDeviceByID(ctx context.Context, id in
 	return devices[0], nil
 }
 
+func (r *ChargingDeviceRepository) Delta3ReadTarget(ctx context.Context) (domain.ChargingDevice, bool, error) {
+	return r.delta3Target(ctx, false)
+}
+
+func (r *ChargingDeviceRepository) Delta3WriteTarget(ctx context.Context) (domain.ChargingDevice, bool, error) {
+	return r.delta3Target(ctx, true)
+}
+
+func (r *ChargingDeviceRepository) delta3Target(ctx context.Context, requireWriteSupport bool) (domain.ChargingDevice, bool, error) {
+	query := `SELECT
+		id, name, kind, provider, role, credential_ref, device_sn, device_type, enabled, control_enabled, priority,
+		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc,
+		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
+		FROM charging_devices
+		WHERE enabled = 1
+		  AND provider = 'ecoflow'
+		  AND kind = 'ecoflow_delta3_plus'
+		  AND device_sn <> ''
+		  AND supports_soc_read = 1`
+	if requireWriteSupport {
+		query += ` AND control_enabled = 1 AND supports_ac_charge_limit = 1`
+	}
+	query += ` ORDER BY priority ASC, id ASC LIMIT 1`
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return domain.ChargingDevice{}, false, err
+	}
+	defer rows.Close()
+	devices, err := scanChargingDevices(rows)
+	if err != nil {
+		return domain.ChargingDevice{}, false, err
+	}
+	if len(devices) == 0 {
+		return domain.ChargingDevice{}, false, nil
+	}
+	return devices[0], true, nil
+}
+
 func scanChargingDevices(rows *sql.Rows) ([]domain.ChargingDevice, error) {
 	devices := make([]domain.ChargingDevice, 0)
 	for rows.Next() {
@@ -158,6 +200,8 @@ func scanChargingDevices(rows *sql.Rows) ([]domain.ChargingDevice, error) {
 			&device.Provider,
 			&device.Role,
 			&device.CredentialRef,
+			&device.DeviceSN,
+			&device.DeviceType,
 			&enabled,
 			&controlEnabled,
 			&device.Priority,

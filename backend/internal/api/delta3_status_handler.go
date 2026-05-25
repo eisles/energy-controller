@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eisles/energy-controller/backend/internal/config"
+	"github.com/eisles/energy-controller/backend/internal/domain"
 	"github.com/eisles/energy-controller/backend/internal/ecoflowdelta3"
 )
 
@@ -21,6 +22,10 @@ const (
 
 type delta3ProbeClient interface {
 	Probe(ctx context.Context) (ecoflowdelta3.Status, error)
+}
+
+type Delta3StatusTargetProvider interface {
+	Delta3ReadTarget(ctx context.Context) (domain.ChargingDevice, bool, error)
 }
 
 type Delta3StatusResponse struct {
@@ -41,26 +46,38 @@ type Delta3StatusResponse struct {
 	Cached               bool   `json:"cached,omitempty"`
 }
 
-func delta3StatusHandler(cfg config.Config, logger *slog.Logger) http.HandlerFunc {
-	reader := NewDelta3StatusReader(cfg, logger)
+func delta3StatusHandler(cfg config.Config, logger *slog.Logger, targetProvider Delta3StatusTargetProvider) http.HandlerFunc {
+	reader := NewDelta3StatusReaderWithTargetProvider(cfg, logger, targetProvider)
 	return func(w http.ResponseWriter, r *http.Request) {
 		response := reader.CurrentStatus(r.Context())
 		writeJSON(w, http.StatusOK, response)
 	}
 }
 
-type Delta3StatusReader struct {
-	cfg        config.Config
-	logger     *slog.Logger
+type delta3StatusCacheEntry struct {
 	client     delta3ProbeClient
-	now        func() time.Time
-	mu         sync.Mutex
-	cached     Delta3StatusResponse
+	response   Delta3StatusResponse
 	cacheUntil time.Time
+}
+
+type Delta3StatusReader struct {
+	cfg            config.Config
+	logger         *slog.Logger
+	client         delta3ProbeClient
+	targetProvider Delta3StatusTargetProvider
+	now            func() time.Time
+	mu             sync.Mutex
+	cache          map[string]delta3StatusCacheEntry
 }
 
 func NewDelta3StatusReader(cfg config.Config, logger *slog.Logger) *Delta3StatusReader {
 	return newDelta3StatusReader(cfg, logger, nil)
+}
+
+func NewDelta3StatusReaderWithTargetProvider(cfg config.Config, logger *slog.Logger, targetProvider Delta3StatusTargetProvider) *Delta3StatusReader {
+	reader := newDelta3StatusReader(cfg, logger, nil)
+	reader.targetProvider = targetProvider
+	return reader
 }
 
 func newDelta3StatusReader(cfg config.Config, logger *slog.Logger, client delta3ProbeClient) *Delta3StatusReader {
@@ -72,29 +89,78 @@ func newDelta3StatusReader(cfg config.Config, logger *slog.Logger, client delta3
 		logger: logger,
 		client: client,
 		now:    time.Now,
+		cache:  make(map[string]delta3StatusCacheEntry),
 	}
 }
 
 func (r *Delta3StatusReader) CurrentStatus(ctx context.Context) Delta3StatusResponse {
-	if !r.cfg.Delta3ReadEnabled {
-		return readDelta3Status(ctx, r.cfg, r.client, r.logger)
+	cfg, err := r.readConfig(ctx)
+	if err != nil {
+		return Delta3StatusResponse{Available: false, LastError: err.Error()}
+	}
+	return r.CurrentStatusForConfig(ctx, cfg)
+}
+
+func (r *Delta3StatusReader) CurrentStatusForConfig(ctx context.Context, cfg config.Config) Delta3StatusResponse {
+	if !cfg.Delta3ReadEnabled {
+		return readDelta3Status(ctx, cfg, nil, r.logger)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	now := r.now()
-	if !r.cacheUntil.IsZero() && now.Before(r.cacheUntil) {
-		response := r.cached
+	key := delta3StatusCacheKey(cfg)
+	entry := r.cache[key]
+	if !entry.cacheUntil.IsZero() && now.Before(entry.cacheUntil) {
+		response := entry.response
 		response.Cached = true
 		return response
 	}
 
-	response := readDelta3Status(ctx, r.cfg, r.client, r.logger)
+	client := entry.client
+	if client == nil {
+		if r.targetProvider == nil && r.client != nil {
+			client = r.client
+		} else {
+			client = ecoflowdelta3.NewClient(delta3ProbeConfig(cfg))
+		}
+	}
+	response := readDelta3Status(ctx, cfg, client, r.logger)
+	entry.client = client
 	if shouldCacheDelta3StatusResponse(response) {
-		r.cached = response
-		r.cacheUntil = now.Add(delta3StatusCacheTTL(response))
+		entry.response = response
+		entry.cacheUntil = now.Add(delta3StatusCacheTTL(response))
+		r.cache[key] = entry
 	}
 	return response
+}
+
+func (r *Delta3StatusReader) readConfig(ctx context.Context) (config.Config, error) {
+	if r.targetProvider == nil {
+		return r.cfg, nil
+	}
+	device, ok, err := r.targetProvider.Delta3ReadTarget(ctx)
+	if err != nil {
+		return config.Config{}, fmt.Errorf("failed to resolve DELTA 3 Plus target")
+	}
+	if !ok {
+		return r.cfg, nil
+	}
+	return Delta3ConfigForDevice(r.cfg, device), nil
+}
+
+func Delta3ConfigForDevice(cfg config.Config, device domain.ChargingDevice) config.Config {
+	if strings.TrimSpace(device.DeviceSN) != "" {
+		cfg.Delta3DeviceSN = strings.TrimSpace(device.DeviceSN)
+	}
+	if strings.TrimSpace(device.DeviceType) != "" {
+		cfg.Delta3DeviceType = strings.TrimSpace(device.DeviceType)
+	}
+	return cfg
+}
+
+func delta3StatusCacheKey(cfg config.Config) string {
+	return cfg.Delta3DeviceType + "\x00" + cfg.Delta3DeviceSN
 }
 
 func shouldCacheDelta3StatusResponse(response Delta3StatusResponse) bool {

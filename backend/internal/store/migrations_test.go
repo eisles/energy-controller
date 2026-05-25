@@ -25,4 +25,42 @@ func TestMigrateCreatesPhaseOneTables(t *testing.T) {
 			t.Fatalf("table %s was not created: %v", table, err)
 		}
 	}
+
+	for _, column := range []string{"device_sn", "device_type"} {
+		if !tableHasColumn(t, db, "charging_devices", column) {
+			t.Fatalf("charging_devices.%s was not created", column)
+		}
+	}
+
+	var indexName string
+	err = db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_charging_devices_device_sn_nonempty'`).Scan(&indexName)
+	if err != nil {
+		t.Fatalf("device_sn partial unique index was not created: %v", err)
+	}
+}
+
+func tableHasColumn(t *testing.T, db *sql.DB, table string, column string) bool {
+	t.Helper()
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull int
+		var defaultValue any
+		var primaryKey int
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatal(err)
+		}
+		if name == column {
+			return true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return false
 }

@@ -9,6 +9,8 @@ type ChargingDevice struct {
 	Provider              string    `json:"provider"`
 	Role                  string    `json:"role"`
 	CredentialRef         string    `json:"credentialRef"`
+	DeviceSN              string    `json:"deviceSn"`
+	DeviceType            string    `json:"deviceType"`
 	Enabled               bool      `json:"enabled"`
 	ControlEnabled        bool      `json:"controlEnabled"`
 	Priority              int       `json:"priority"`

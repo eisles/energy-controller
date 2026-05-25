@@ -63,6 +63,24 @@ func TestStatusHandlerReturnsJSON(t *testing.T) {
 	}
 }
 
+func TestRouterDelta3StatusWorksWithoutDB(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/delta3/status", nil)
+	rec := httptest.NewRecorder()
+
+	NewRouter(Dependencies{StatusProvider: stubStatusProvider{}, Logger: slog.Default(), Config: config.Config{}}).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("invalid json response: %v", err)
+	}
+	if payload["available"] != false {
+		t.Fatalf("available = %#v, want false", payload["available"])
+	}
+}
+
 func TestStatusHandlerAddsRealControlTrialStatus(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	rec := httptest.NewRecorder()

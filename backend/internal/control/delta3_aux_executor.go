@@ -16,6 +16,7 @@ type Delta3AuxCommandGuardInput struct {
 	ConfirmEcoFlowWrite    string
 	RealControlTrialActive bool
 	Delta3ReadEnabled      bool
+	Delta3ControlEnabled   bool
 	AllowAutoControlWrite  bool
 	Execute                bool
 	AllowPrivateAPIWrite   bool
@@ -86,6 +87,9 @@ func delta3AuxCommandSuppressedReason(input Delta3AuxCommandGuardInput, settings
 	}
 	if !input.Delta3ReadEnabled {
 		return "ECOFLOW_DELTA3_READ_ENABLED=false"
+	}
+	if !input.Delta3ControlEnabled {
+		return "DELTA 3 Plus master write target disabled or unavailable"
 	}
 	if !input.AllowAutoControlWrite {
 		return "ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=false"

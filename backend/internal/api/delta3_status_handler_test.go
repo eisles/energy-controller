@@ -89,6 +89,27 @@ func TestDelta3StatusReaderCachesSuccessfulProbe(t *testing.T) {
 	}
 }
 
+func TestDelta3StatusReaderCacheIsScopedByDeviceIdentity(t *testing.T) {
+	calls := 0
+	now := time.Date(2026, 5, 24, 13, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	reader := newDelta3StatusReader(validDelta3Config(), nil, fakeDelta3Client{
+		status: delta3StatusFixture(82),
+		calls:  &calls,
+	})
+	reader.now = func() time.Time { return now }
+	firstConfig := validDelta3Config()
+	secondConfig := validDelta3Config()
+	secondConfig.Delta3DeviceSN = "SN456"
+
+	_ = reader.CurrentStatusForConfig(context.Background(), firstConfig)
+	_ = reader.CurrentStatusForConfig(context.Background(), secondConfig)
+	_ = reader.CurrentStatusForConfig(context.Background(), firstConfig)
+
+	if calls != 2 {
+		t.Fatalf("Probe calls = %d, want 2 for two device identities", calls)
+	}
+}
+
 func TestDelta3StatusReaderBacksOffBusyError(t *testing.T) {
 	calls := 0
 	now := time.Date(2026, 5, 24, 13, 0, 0, 0, time.FixedZone("JST", 9*60*60))

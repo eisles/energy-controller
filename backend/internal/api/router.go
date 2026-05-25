@@ -34,10 +34,16 @@ func NewRouter(deps Dependencies) http.Handler {
 		logProvider = store.NewLogRepository(deps.DB)
 	}
 	mux.HandleFunc("GET /api/status", statusHandler(statusProvider, deps.Logger, deps.Config))
-	mux.HandleFunc("GET /api/delta3/status", delta3StatusHandler(deps.Config, deps.Logger))
 	if logProvider != nil {
 		mux.HandleFunc("GET /api/logs", logsHandler(logProvider, deps.Logger))
 	}
+	var chargingDeviceRepository *store.ChargingDeviceRepository
+	var delta3TargetProvider Delta3StatusTargetProvider
+	if deps.DB != nil {
+		chargingDeviceRepository = store.NewChargingDeviceRepository(deps.DB)
+		delta3TargetProvider = chargingDeviceRepository
+	}
+	mux.HandleFunc("GET /api/delta3/status", delta3StatusHandler(deps.Config, deps.Logger, delta3TargetProvider))
 	if deps.DB != nil {
 		weatherSettings := store.NewWeatherSettingsRepository(deps.DB)
 		weatherClient := weather.NewOpenMeteoClient(weather.OpenMeteoConfig{
@@ -59,7 +65,6 @@ func NewRouter(deps Dependencies) http.Handler {
 		mux.HandleFunc("GET /api/settings/tariff-plans", getTariffPlansHandler(tariffRepository, deps.Logger))
 		mux.HandleFunc("POST /api/settings/tariff-plans", postTariffPlanHandler(tariffRepository, deps.Logger))
 		mux.HandleFunc("DELETE /api/settings/tariff-plans/{id}", deleteTariffPlanHandler(tariffRepository, deps.Logger))
-		chargingDeviceRepository := store.NewChargingDeviceRepository(deps.DB)
 		mux.HandleFunc("GET /api/settings/charging-devices", getChargingDevicesHandler(chargingDeviceRepository, deps.Logger))
 		mux.HandleFunc("POST /api/settings/charging-devices", postChargingDeviceHandler(chargingDeviceRepository, deps.Logger))
 		mux.HandleFunc("DELETE /api/settings/charging-devices/{id}", deleteChargingDeviceHandler(chargingDeviceRepository, deps.Logger))

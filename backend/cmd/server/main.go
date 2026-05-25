@@ -52,14 +52,15 @@ func main() {
 	surplusControlCommandRepository := store.NewSurplusControlCommandRepository(db)
 	delta3AuxControlCommandRepository := store.NewDelta3AuxControlCommandRepository(db)
 	notificationRepository := store.NewNotificationRepository(db)
+	chargingDeviceRepository := store.NewChargingDeviceRepository(db)
 	surplusWriteClient := newSurplusWriteClient(cfg)
-	delta3StatusReader := api.NewDelta3StatusReader(cfg, logger)
-	delta3AuxWriteClient := newDelta3AuxWriteClient(cfg)
+	delta3StatusReader := api.NewDelta3StatusReaderWithTargetProvider(cfg, logger, chargingDeviceRepository)
+	delta3AuxWriteClient := newDelta3AuxWriteClient(cfg, chargingDeviceRepository)
 	manualChargeAlertService := newManualChargeAlertService(cfg)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	recordStatus(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, delta3AuxControlCommandRepository, notificationRepository, manualChargeAlertService, surplusWriteClient, delta3StatusReader, delta3AuxWriteClient, energyMeterReader, energyMeterRepository, logger)
-	go runControlLoop(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, delta3AuxControlCommandRepository, notificationRepository, manualChargeAlertService, surplusWriteClient, delta3StatusReader, delta3AuxWriteClient, energyMeterReader, energyMeterRepository, logger)
+	recordStatus(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, delta3AuxControlCommandRepository, notificationRepository, manualChargeAlertService, surplusWriteClient, delta3StatusReader, delta3AuxWriteClient, chargingDeviceRepository, energyMeterReader, energyMeterRepository, logger)
+	go runControlLoop(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, delta3AuxControlCommandRepository, notificationRepository, manualChargeAlertService, surplusWriteClient, delta3StatusReader, delta3AuxWriteClient, chargingDeviceRepository, energyMeterReader, energyMeterRepository, logger)
 
 	router := api.NewRouter(api.Dependencies{
 		Config:         cfg,
@@ -138,8 +139,16 @@ type delta3StatusReader interface {
 	CurrentStatus(ctx context.Context) api.Delta3StatusResponse
 }
 
+type delta3ConfigStatusReader interface {
+	CurrentStatusForConfig(ctx context.Context, cfg config.Config) api.Delta3StatusResponse
+}
+
 type delta3AuxWriteClient interface {
 	SetACChargePower(ctx context.Context, watts int) error
+}
+
+type delta3WriteTargetProvider interface {
+	Delta3WriteTarget(ctx context.Context) (domain.ChargingDevice, bool, error)
 }
 
 type energyMeterWriter interface {
@@ -206,42 +215,64 @@ func newSurplusWriteClient(cfg config.Config) surplusWriteClient {
 }
 
 type ecoFlowDelta3AuxWriteClient struct {
-	cfg    config.Config
-	client *ecoflowdelta3.Client
+	cfg            config.Config
+	targetProvider delta3WriteTargetProvider
 }
 
-func newDelta3AuxWriteClient(cfg config.Config) delta3AuxWriteClient {
+func newDelta3AuxWriteClient(cfg config.Config, targetProvider delta3WriteTargetProvider) delta3AuxWriteClient {
 	if cfg.MockMode {
 		return nil
 	}
 	return ecoFlowDelta3AuxWriteClient{
-		cfg: cfg,
-		client: ecoflowdelta3.NewClient(ecoflowdelta3.Config{
-			PrivateAPIHost: cfg.Delta3PrivateAPIHost,
-			Email:          cfg.Delta3PrivateEmail,
-			Password:       cfg.Delta3PrivatePassword,
-			DeviceSN:       cfg.Delta3DeviceSN,
-			DeviceType:     cfg.Delta3DeviceType,
-			MQTTClientID:   cfg.Delta3MQTTClientID,
-			Timeout:        cfg.Delta3Timeout,
-		}),
+		cfg:            cfg,
+		targetProvider: targetProvider,
 	}
 }
 
 func (w ecoFlowDelta3AuxWriteClient) SetACChargePower(ctx context.Context, watts int) error {
-	_, err := w.client.ExecuteACChargePower(ctx, watts, ecoflowdelta3.WriteGuards{
-		MockMode:                w.cfg.MockMode,
-		SimulationMode:          w.cfg.SimulationMode,
-		EnableRealControl:       w.cfg.EnableRealControl,
-		AutoControlEnabled:      w.cfg.AutoControlEnabled,
-		AllowAutoControlOverlap: w.cfg.Delta3AllowAutoWrite,
-		ConfirmEcoFlowWrite:     w.cfg.ConfirmEcoFlowWrite,
-		Execute:                 w.cfg.Delta3ExecuteWrite,
-		AllowPrivateAPIWrite:    w.cfg.Delta3AllowPrivateWrite,
+	cfg, ok, err := delta3WriteConfig(ctx, w.cfg, w.targetProvider)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("DELTA 3 Plus master write target is unavailable")
+	}
+	client := ecoflowdelta3.NewClient(ecoflowdelta3.Config{
+		PrivateAPIHost: cfg.Delta3PrivateAPIHost,
+		Email:          cfg.Delta3PrivateEmail,
+		Password:       cfg.Delta3PrivatePassword,
+		DeviceSN:       cfg.Delta3DeviceSN,
+		DeviceType:     cfg.Delta3DeviceType,
+		MQTTClientID:   cfg.Delta3MQTTClientID,
+		Timeout:        cfg.Delta3Timeout,
+	})
+	_, err = client.ExecuteACChargePower(ctx, watts, ecoflowdelta3.WriteGuards{
+		MockMode:                cfg.MockMode,
+		SimulationMode:          cfg.SimulationMode,
+		EnableRealControl:       cfg.EnableRealControl,
+		AutoControlEnabled:      cfg.AutoControlEnabled,
+		AllowAutoControlOverlap: cfg.Delta3AllowAutoWrite,
+		ConfirmEcoFlowWrite:     cfg.ConfirmEcoFlowWrite,
+		Execute:                 cfg.Delta3ExecuteWrite,
+		AllowPrivateAPIWrite:    cfg.Delta3AllowPrivateWrite,
 		Command:                 "set_ac_charge_power",
-		DeviceType:              w.cfg.Delta3DeviceType,
+		DeviceType:              cfg.Delta3DeviceType,
 	})
 	return err
+}
+
+func delta3WriteConfig(ctx context.Context, cfg config.Config, targetProvider delta3WriteTargetProvider) (config.Config, bool, error) {
+	if targetProvider == nil {
+		return cfg, true, nil
+	}
+	device, ok, err := targetProvider.Delta3WriteTarget(ctx)
+	if err != nil {
+		return config.Config{}, false, errors.New("failed to resolve DELTA 3 Plus write target")
+	}
+	if !ok {
+		return cfg, false, nil
+	}
+	return api.Delta3ConfigForDevice(cfg, device), true, nil
 }
 
 func newManualChargeAlertService(cfg config.Config) *notify.ManualChargeAlertService {
@@ -275,7 +306,7 @@ func newWeatherReader(cfg config.Config, db *sql.DB) mock.WeatherReader {
 	return forecastClient
 }
 
-func runControlLoop(ctx context.Context, cfg config.Config, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, delta3AuxControlCommandRepository delta3AuxControlCommandLogWriter, notificationRepository notificationLogWriter, manualChargeAlertService manualChargeAlertEvaluator, writeClient surplusWriteClient, delta3Reader delta3StatusReader, delta3Writer delta3AuxWriteClient, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
+func runControlLoop(ctx context.Context, cfg config.Config, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, delta3AuxControlCommandRepository delta3AuxControlCommandLogWriter, notificationRepository notificationLogWriter, manualChargeAlertService manualChargeAlertEvaluator, writeClient surplusWriteClient, delta3Reader delta3StatusReader, delta3Writer delta3AuxWriteClient, delta3TargetProvider delta3WriteTargetProvider, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
 	interval := cfg.PollInterval
 	if interval <= 0 {
 		interval = 30 * time.Second
@@ -287,12 +318,12 @@ func runControlLoop(ctx context.Context, cfg config.Config, provider api.StatusP
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			recordStatus(ctx, cfg, provider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, delta3AuxControlCommandRepository, notificationRepository, manualChargeAlertService, writeClient, delta3Reader, delta3Writer, meterReader, meterRepository, logger)
+			recordStatus(ctx, cfg, provider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, delta3AuxControlCommandRepository, notificationRepository, manualChargeAlertService, writeClient, delta3Reader, delta3Writer, delta3TargetProvider, meterReader, meterRepository, logger)
 		}
 	}
 }
 
-func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, delta3AuxControlCommandRepository delta3AuxControlCommandLogWriter, notificationRepository notificationLogWriter, manualChargeAlertService manualChargeAlertEvaluator, writeClient surplusWriteClient, delta3Reader delta3StatusReader, delta3Writer delta3AuxWriteClient, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
+func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusProvider, statusRepository statusWriter, logRepository logWriter, nightChargePlanRepository nightChargePlanLogWriter, surplusControlCommandRepository surplusControlCommandLogWriter, delta3AuxControlCommandRepository delta3AuxControlCommandLogWriter, notificationRepository notificationLogWriter, manualChargeAlertService manualChargeAlertEvaluator, writeClient surplusWriteClient, delta3Reader delta3StatusReader, delta3Writer delta3AuxWriteClient, delta3TargetProvider delta3WriteTargetProvider, meterReader energyMeterReader, meterRepository energyMeterWriter, logger *slog.Logger) {
 	status, err := provider.CurrentStatus(ctx)
 	if err != nil {
 		logger.Error("failed to evaluate current status", "error", err)
@@ -344,7 +375,7 @@ func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusPro
 		}
 	}
 	if delta3AuxControlCommandRepository != nil {
-		applyDelta3AuxControl(ctx, cfg, &status, delta3Reader, delta3Writer, surplusControlCommandRepository, delta3AuxControlCommandRepository, logger)
+		applyDelta3AuxControl(ctx, cfg, &status, delta3Reader, delta3Writer, delta3TargetProvider, surplusControlCommandRepository, delta3AuxControlCommandRepository, logger)
 	}
 	if err := statusRepository.UpdateCurrentStatus(ctx, status); err != nil {
 		logger.Error("failed to update current status", "error", err)
@@ -355,13 +386,30 @@ func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusPro
 	logger.Info("control decision saved", "mode", status.Mode, "state", status.State, "gridW", status.GridW, "targetChargeW", status.TargetChargeW, "reason", status.LastDecisionReason)
 }
 
-func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domain.Status, delta3Reader delta3StatusReader, delta3Writer delta3AuxWriteClient, surplusControlCommandRepository surplusControlCommandLogWriter, delta3AuxControlCommandRepository delta3AuxControlCommandLogWriter, logger *slog.Logger) {
+func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domain.Status, delta3Reader delta3StatusReader, delta3Writer delta3AuxWriteClient, delta3TargetProvider delta3WriteTargetProvider, surplusControlCommandRepository surplusControlCommandLogWriter, delta3AuxControlCommandRepository delta3AuxControlCommandLogWriter, logger *slog.Logger) {
 	if status == nil {
 		return
 	}
+	delta3ControlEnabled := true
+	delta3ControlCfg := cfg
+	if delta3TargetProvider != nil {
+		device, ok, err := delta3TargetProvider.Delta3WriteTarget(ctx)
+		if err != nil {
+			logger.Warn("failed to resolve DELTA 3 Plus write target", "error", err)
+			delta3ControlEnabled = false
+		} else if !ok {
+			delta3ControlEnabled = false
+		} else {
+			delta3ControlCfg = api.Delta3ConfigForDevice(cfg, device)
+		}
+	}
 	delta3Status := api.Delta3StatusResponse{Available: false, LastError: "DELTA 3 Plus status reader is unavailable"}
 	if delta3Reader != nil {
-		delta3Status = delta3Reader.CurrentStatus(ctx)
+		if configReader, ok := delta3Reader.(delta3ConfigStatusReader); ok && delta3ControlEnabled {
+			delta3Status = configReader.CurrentStatusForConfig(ctx, delta3ControlCfg)
+		} else {
+			delta3Status = delta3Reader.CurrentStatus(ctx)
+		}
 	}
 	var previousPro3 *domain.SurplusControlCommandLog
 	if surplusControlCommandRepository != nil {
@@ -403,6 +451,7 @@ func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domai
 		AllowAutoControlWrite:  cfg.Delta3AllowAutoWrite,
 		Execute:                cfg.Delta3ExecuteWrite,
 		AllowPrivateAPIWrite:   cfg.Delta3AllowPrivateWrite,
+		Delta3ControlEnabled:   delta3ControlEnabled,
 		Previous:               previous,
 	}, delta3AuxSettingsFromConfig(cfg))
 	commandLog = control.ExecuteDelta3AuxCommand(ctx, commandLog, delta3Writer)

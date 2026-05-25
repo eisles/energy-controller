@@ -366,6 +366,8 @@ export type ChargingDevice = {
   provider: string;
   role: string;
   credentialRef: string;
+  deviceSn: string;
+  deviceType: string;
   enabled: boolean;
   controlEnabled: boolean;
   priority: number;

@@ -15,6 +15,8 @@ const emptyDevice: ChargingDevice = {
   provider: "ecoflow",
   role: "auxiliary",
   credentialRef: "",
+  deviceSn: "",
+  deviceType: "DELTA_3",
   enabled: true,
   controlEnabled: false,
   priority: 50,
@@ -121,7 +123,7 @@ export function ChargingDevicePanel() {
           <p className="readonly-note">
             登録 {devices.length} 台 / 有効 {summary.enabledCount} 台 / 自動制御候補 {summary.controlCount} 台
           </p>
-          <p className="readonly-note">SN や token は保存せず、認証参照名だけを管理します。</p>
+          <p className="readonly-note">SN はローカルDBのマスタ、認証情報は .env で管理します。token や password は保存しません。</p>
           {error ? <p className="inline-error">{error}</p> : null}
           <Button type="button" variant="outline" onClick={() => setOpen(true)}>
             充電機器を編集
@@ -165,7 +167,21 @@ export function ChargingDevicePanel() {
                   label="認証参照名"
                   value={editing.credentialRef}
                   onChange={(value) => setEditing({ ...editing, credentialRef: value })}
-                  description="SN、token、password は入力しません。"
+                  description="認証情報の参照名です。token、password は入力しません。"
+                />
+                <TextField
+                  id="charging-device-sn"
+                  label="シリアル番号"
+                  value={editing.deviceSn}
+                  onChange={(value) => setEditing({ ...editing, deviceSn: value })}
+                  description="EcoFlow実機のSNです。一覧では末尾だけ表示します。"
+                />
+                <TextField
+                  id="charging-device-type"
+                  label="Device Type"
+                  value={editing.deviceType}
+                  onChange={(value) => setEditing({ ...editing, deviceType: value })}
+                  description="例: DELTA_3 / DELTA_3_PLUS / DELTA_3_MAX_PLUS"
                 />
                 <NumberField id="charging-device-priority" label="優先順位" value={editing.priority} onChange={(value) => setEditing({ ...editing, priority: value })} />
                 <NumberField id="charging-device-min-w" label="最小充電W" value={editing.minChargeW} onChange={(value) => setEditing({ ...editing, minChargeW: value })} />
@@ -206,6 +222,7 @@ export function ChargingDevicePanel() {
                     <TableHead>機器</TableHead>
                     <TableHead>充電範囲</TableHead>
                     <TableHead>状態</TableHead>
+                    <TableHead>識別</TableHead>
                     <TableHead>認証参照</TableHead>
                     <TableHead>操作</TableHead>
                   </TableRow>
@@ -213,7 +230,7 @@ export function ChargingDevicePanel() {
                 <TableBody>
                   {devices.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="empty-cell">
+                      <TableCell colSpan={7} className="empty-cell">
                         充電機器マスタがありません。
                       </TableCell>
                     </TableRow>
@@ -236,6 +253,11 @@ export function ChargingDevicePanel() {
                           <Badge className="charging-device-badge" variant={device.controlEnabled ? "warning" : "secondary"}>
                             {device.controlEnabled ? "制御候補" : "制御対象外"}
                           </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {maskDeviceSn(device.deviceSn)}
+                          <br />
+                          <span className="readonly-note">{device.deviceType || "type未設定"}</span>
                         </TableCell>
                         <TableCell>{device.credentialRef}</TableCell>
                         <TableCell>
@@ -301,6 +323,8 @@ function normalizeDeviceForSave(device: ChargingDevice): ChargingDevice {
     provider: device.provider.trim(),
     role: device.role.trim(),
     credentialRef: device.credentialRef.trim(),
+    deviceSn: device.deviceSn.trim(),
+    deviceType: defaultDeviceType(device.kind.trim(), device.deviceType.trim()),
     notes: device.notes.trim()
   };
 }
@@ -315,6 +339,48 @@ function validateDevice(device: ChargingDevice) {
   if (device.targetSoc < 0 || device.targetSoc > 100 || device.reserveSoc < 0 || device.reserveSoc > 100) {
     throw new Error("SOCは0-100の範囲で入力してください。");
   }
+  if (/\s|[\x00-\x1f\x7f]/.test(device.deviceSn)) {
+    throw new Error("シリアル番号に空白や制御文字は使えません。");
+  }
+  if (device.provider === "ecoflow" && !device.deviceType) {
+    throw new Error("EcoFlow機器はDevice Typeが必要です。");
+  }
+  if (!validDeviceTypeForKind(device.kind, device.deviceType)) {
+    throw new Error("種別とDevice Typeの組み合わせが不正です。");
+  }
+}
+
+function defaultDeviceType(kind: string, value: string) {
+  if (value) {
+    return value;
+  }
+  if (kind === "ecoflow_delta_pro3") {
+    return "DELTA_PRO3";
+  }
+  if (kind === "ecoflow_delta3_plus") {
+    return "DELTA_3";
+  }
+  return "";
+}
+
+function maskDeviceSn(value: string) {
+  if (!value) {
+    return "SN未設定";
+  }
+  if (value.length <= 4) {
+    return `***${value}`;
+  }
+  return `***${value.slice(-4)}`;
+}
+
+function validDeviceTypeForKind(kind: string, deviceType: string) {
+  if (kind === "ecoflow_delta_pro3") {
+    return deviceType === "DELTA_PRO3";
+  }
+  if (kind === "ecoflow_delta3_plus") {
+    return ["DELTA_3", "DELTA_3_PLUS", "DELTA_3_1500", "DELTA_3_MAX_PLUS"].includes(deviceType);
+  }
+  return deviceType === "";
 }
 
 function deviceKindLabel(value: string) {
