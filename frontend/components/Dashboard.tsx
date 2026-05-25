@@ -25,6 +25,7 @@ import {
 import { SurplusControlCommandLogTable } from "@/components/SurplusControlCommandLogTable";
 import { TariffSummaryPanel } from "@/components/TariffSummaryPanel";
 import { Button } from "@/components/ui/button";
+import { VerificationPanel } from "@/components/VerificationPanel";
 import {
   fetchEnergyMeterLogsPage,
   fetchDelta3Status,
@@ -82,6 +83,7 @@ type DashboardSectionKey =
   | "settings"
   | "solarForecast"
   | "tariffSummary"
+  | "verification"
   | "nightDryRun"
   | "surplusCommand"
   | "delta3AuxCommand"
@@ -96,6 +98,7 @@ const defaultSectionOrder: DashboardSectionKey[] = [
   "decision",
   "surplusPlan",
   "nightPlan",
+  "verification",
   "settings",
   "solarForecast",
   "tariffSummary",
@@ -114,6 +117,7 @@ const initialDashboardSections: Record<DashboardSectionKey, boolean> = {
   decision: true,
   surplusPlan: true,
   nightPlan: true,
+  verification: true,
   settings: true,
   solarForecast: true,
   tariffSummary: true,
@@ -165,7 +169,9 @@ export function Dashboard() {
   const [delta3AuxCommandLogs, setDelta3AuxCommandLogs] = useState<Delta3AuxControlCommandLog[]>([]);
   const [delta3AuxCommandPage, setDelta3AuxCommandPage] = useState(1);
   const [delta3AuxCommandTotal, setDelta3AuxCommandTotal] = useState(0);
+  const [recentDelta3AuxCommandLogs, setRecentDelta3AuxCommandLogs] = useState<Delta3AuxControlCommandLog[]>([]);
   const [nightChargeSummaries, setNightChargeSummaries] = useState<NightChargeDailySummary[]>([]);
+  const [latestNightChargeSummary, setLatestNightChargeSummary] = useState<NightChargeDailySummary | null>(null);
   const [nightChargeSummaryPage, setNightChargeSummaryPage] = useState(1);
   const [nightChargeSummaryFromInput, setNightChargeSummaryFromInput] = useState("");
   const [nightChargeSummaryToInput, setNightChargeSummaryToInput] = useState("");
@@ -204,7 +210,9 @@ export function Dashboard() {
   const [nightChargePlanError, setNightChargePlanError] = useState<string | null>(null);
   const [surplusCommandError, setSurplusCommandError] = useState<string | null>(null);
   const [delta3AuxCommandError, setDelta3AuxCommandError] = useState<string | null>(null);
+  const [recentDelta3AuxCommandError, setRecentDelta3AuxCommandError] = useState<string | null>(null);
   const [nightChargeSummaryError, setNightChargeSummaryError] = useState<string | null>(null);
+  const [latestNightChargeSummaryError, setLatestNightChargeSummaryError] = useState<string | null>(null);
   const [energyMeterError, setEnergyMeterError] = useState<string | null>(null);
   const [tariffError, setTariffError] = useState<string | null>(null);
   const [solarForecastError, setSolarForecastError] = useState<string | null>(null);
@@ -516,6 +524,34 @@ export function Dashboard() {
   useEffect(() => {
     let cancelled = false;
 
+    async function loadRecentDelta3AuxCommandLogs() {
+      try {
+        const nextPage = await fetchDelta3AuxControlCommandLogsPage({
+          limit: delta3AuxControlCommandLogPageSize,
+          offset: 0
+        });
+        if (!cancelled) {
+          setRecentDelta3AuxCommandLogs(nextPage.items);
+          setRecentDelta3AuxCommandError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setRecentDelta3AuxCommandError(err instanceof Error ? err.message : "recent delta3 auxiliary command logs request failed");
+        }
+      }
+    }
+
+    loadRecentDelta3AuxCommandLogs();
+    const timer = window.setInterval(loadRecentDelta3AuxCommandLogs, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
     async function loadNightChargeSummaryPage() {
       try {
         const nextPage = await fetchNightChargeSummariesPage({
@@ -547,6 +583,35 @@ export function Dashboard() {
       window.clearInterval(timer);
     };
   }, [nightChargeSummaryPage, appliedNightChargeSummaryFrom, appliedNightChargeSummaryTo]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadLatestNightChargeSummary() {
+      try {
+        const nextPage = await fetchNightChargeSummariesPage({
+          limit: 1,
+          offset: 0
+        });
+        if (!cancelled) {
+          setLatestNightChargeSummary(nextPage.items[0] ?? null);
+          setLatestNightChargeSummaryError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setLatestNightChargeSummary(null);
+          setLatestNightChargeSummaryError(err instanceof Error ? err.message : "latest night charge summary request failed");
+        }
+      }
+    }
+
+    loadLatestNightChargeSummary();
+    const timer = window.setInterval(loadLatestNightChargeSummary, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -736,6 +801,26 @@ export function Dashboard() {
         return status.nightChargePlan ? (
           <NightChargePlanSection plan={status.nightChargePlan} open={openSections.nightPlan} onToggle={() => toggleSection("nightPlan")} headerControls={headerControls} />
         ) : null;
+      case "verification":
+        return (
+          <CollapsibleSection
+            title="実証検証"
+            summary={verificationSectionSummary(latestNightChargeSummary, latestNightChargeSummaryError, recentDelta3AuxCommandLogs, recentDelta3AuxCommandError)}
+            open={openSections.verification}
+            onToggle={() => toggleSection("verification")}
+            headerControls={headerControls}
+          >
+            <VerificationPanel
+              latestNightSummary={latestNightChargeSummary}
+              latestNightSummaryError={latestNightChargeSummaryError}
+              status={status}
+              delta3Status={delta3Status}
+              delta3StatusError={delta3StatusError}
+              recentDelta3AuxLogs={recentDelta3AuxCommandLogs}
+              recentDelta3AuxError={recentDelta3AuxCommandError}
+            />
+          </CollapsibleSection>
+        );
       case "settings":
         return (
           <CollapsibleSection
@@ -1152,6 +1237,7 @@ function dashboardSectionLabel(section: DashboardSectionKey) {
     decision: "制御判断",
     surplusPlan: "余剰追従プラン",
     nightPlan: "深夜充電プラン",
+    verification: "実証検証",
     settings: "設定",
     solarForecast: "発電予測",
     tariffSummary: "料金概算",
@@ -1165,6 +1251,19 @@ function dashboardSectionLabel(section: DashboardSectionKey) {
     controlLog: "制御ログ"
   };
   return labels[section];
+}
+
+function verificationSectionSummary(
+  latestNightSummary: NightChargeDailySummary | null,
+  latestNightSummaryError: string | null,
+  recentDelta3AuxLogs: Delta3AuxControlCommandLog[],
+  recentDelta3AuxError: string | null
+) {
+  if (latestNightSummaryError || recentDelta3AuxError) {
+    return `取得エラー: ${latestNightSummaryError || recentDelta3AuxError}`;
+  }
+  const summaryDate = latestNightSummary?.summaryDate ?? "夜間サマリー待ち";
+  return `${summaryDate} / DELTA 3 Plus直近${recentDelta3AuxLogs.length}件`;
 }
 
 function solarForecastSummary(summary: SolarForecastSummary | null, rangeLabel: string, error: string | null) {

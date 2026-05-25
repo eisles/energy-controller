@@ -1,0 +1,344 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Form, FormControl, FormDescription, FormItem, FormLabel } from "@/components/ui/form";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { deleteChargingDevice, fetchChargingDevices, saveChargingDevice } from "@/lib/api";
+import type { ChargingDevice } from "@/lib/types";
+
+const emptyDevice: ChargingDevice = {
+  name: "",
+  kind: "ecoflow_delta3_plus",
+  provider: "ecoflow",
+  role: "auxiliary",
+  credentialRef: "",
+  enabled: true,
+  controlEnabled: false,
+  priority: 50,
+  minChargeW: 100,
+  maxChargeW: 1500,
+  chargeStepW: 100,
+  capacityWh: 2048,
+  targetSoc: 90,
+  reserveSoc: 20,
+  supportsSocRead: true,
+  supportsAcChargeLimit: true,
+  supportsOnOff: true,
+  notes: ""
+};
+
+export function ChargingDevicePanel() {
+  const [open, setOpen] = useState(false);
+  const [devices, setDevices] = useState<ChargingDevice[]>([]);
+  const [editing, setEditing] = useState<ChargingDevice>(emptyDevice);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [deletingDeviceId, setDeletingDeviceId] = useState<number | null>(null);
+
+  const summary = useMemo(() => {
+    const enabledCount = devices.filter((device) => device.enabled).length;
+    const controlCount = devices.filter((device) => device.enabled && device.controlEnabled).length;
+    return { enabledCount, controlCount };
+  }, [devices]);
+
+  useEffect(() => {
+    void loadDevices();
+  }, []);
+
+  async function loadDevices() {
+    try {
+      const nextDevices = await fetchChargingDevices();
+      setDevices(nextDevices);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "charging devices request failed");
+    }
+  }
+
+  async function submitDevice() {
+    setSaving(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const payload = normalizeDeviceForSave(editing);
+      validateDevice(payload);
+      const saved = await saveChargingDevice(payload);
+      await loadDevices();
+      setEditing(saved);
+      setMessage("充電機器マスタを保存しました。既存の実機制御条件は変更していません。");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "charging device save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeDevice(device: ChargingDevice) {
+    if (!device.id) {
+      setError("削除対象のIDがありません。");
+      return;
+    }
+    const confirmed = window.confirm(`${device.name} を削除します。過去ログや制御ログは削除されません。`);
+    if (!confirmed) {
+      return;
+    }
+    setDeletingDeviceId(device.id);
+    setMessage(null);
+    setError(null);
+    try {
+      await deleteChargingDevice(device.id);
+      await loadDevices();
+      if (editing.id === device.id) {
+        setEditing(emptyDevice);
+      }
+      setMessage("充電機器マスタを削除しました。");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "charging device delete failed");
+    } finally {
+      setDeletingDeviceId(null);
+    }
+  }
+
+  function editDevice(device: ChargingDevice) {
+    setEditing({ ...device });
+    setMessage("選択した機器をフォームへ読み込みました。");
+    setError(null);
+    setOpen(true);
+  }
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>充電機器マスタ</CardTitle>
+          <CardDescription>DELTA Pro 3 / DELTA 3 Plus / 手動補助機器</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="readonly-note">
+            登録 {devices.length} 台 / 有効 {summary.enabledCount} 台 / 自動制御候補 {summary.controlCount} 台
+          </p>
+          <p className="readonly-note">SN や token は保存せず、認証参照名だけを管理します。</p>
+          {error ? <p className="inline-error">{error}</p> : null}
+          <Button type="button" variant="outline" onClick={() => setOpen(true)}>
+            充電機器を編集
+          </Button>
+        </CardContent>
+      </Card>
+
+      {open ? (
+        <div className="drawer-backdrop" role="presentation">
+          <aside className="settings-drawer charging-device-drawer" aria-label="charging device settings">
+            <div className="drawer-header">
+              <div>
+                <p className="eyebrow">Charging devices</p>
+                <h2>充電機器マスタ</h2>
+              </div>
+              <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+                閉じる
+              </Button>
+            </div>
+
+            {error ? <p className="inline-error">{error}</p> : null}
+            {message ? <p className="inline-success">{message}</p> : null}
+            <p className="readonly-note">
+              `control_enabled` は将来の余剰配分候補です。保存しても、この画面から EcoFlow / SwitchBot へ送信しません。
+            </p>
+
+            <Form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submitDevice();
+              }}
+            >
+              <div className="drawer-section-title">機器設定</div>
+              <div className="charging-device-form-grid">
+                <TextField id="charging-device-name" label="表示名" value={editing.name} onChange={(value) => setEditing({ ...editing, name: value })} />
+                <TextField id="charging-device-kind" label="種別" value={editing.kind} onChange={(value) => setEditing({ ...editing, kind: value })} />
+                <TextField id="charging-device-provider" label="Provider" value={editing.provider} onChange={(value) => setEditing({ ...editing, provider: value })} />
+                <TextField id="charging-device-role" label="Role" value={editing.role} onChange={(value) => setEditing({ ...editing, role: value })} />
+                <TextField
+                  id="charging-device-credential-ref"
+                  label="認証参照名"
+                  value={editing.credentialRef}
+                  onChange={(value) => setEditing({ ...editing, credentialRef: value })}
+                  description="SN、token、password は入力しません。"
+                />
+                <NumberField id="charging-device-priority" label="優先順位" value={editing.priority} onChange={(value) => setEditing({ ...editing, priority: value })} />
+                <NumberField id="charging-device-min-w" label="最小充電W" value={editing.minChargeW} onChange={(value) => setEditing({ ...editing, minChargeW: value })} />
+                <NumberField id="charging-device-max-w" label="最大充電W" value={editing.maxChargeW} onChange={(value) => setEditing({ ...editing, maxChargeW: value })} />
+                <NumberField id="charging-device-step-w" label="刻みW" value={editing.chargeStepW} onChange={(value) => setEditing({ ...editing, chargeStepW: value })} />
+                <NumberField id="charging-device-capacity" label="容量Wh" value={editing.capacityWh} onChange={(value) => setEditing({ ...editing, capacityWh: value })} />
+                <NumberField id="charging-device-target-soc" label="目標SOC%" value={editing.targetSoc} onChange={(value) => setEditing({ ...editing, targetSoc: value })} />
+                <NumberField id="charging-device-reserve-soc" label="最低SOC%" value={editing.reserveSoc} onChange={(value) => setEditing({ ...editing, reserveSoc: value })} />
+              </div>
+              <div className="charging-device-switch-grid">
+                <CheckboxField label="有効" checked={editing.enabled} onChange={(checked) => setEditing({ ...editing, enabled: checked })} />
+                <CheckboxField label="自動制御候補" checked={editing.controlEnabled} onChange={(checked) => setEditing({ ...editing, controlEnabled: checked })} />
+                <CheckboxField label="SOC読み取り" checked={editing.supportsSocRead} onChange={(checked) => setEditing({ ...editing, supportsSocRead: checked })} />
+                <CheckboxField label="AC上限設定" checked={editing.supportsAcChargeLimit} onChange={(checked) => setEditing({ ...editing, supportsAcChargeLimit: checked })} />
+                <CheckboxField label="ON/OFF制御" checked={editing.supportsOnOff} onChange={(checked) => setEditing({ ...editing, supportsOnOff: checked })} />
+              </div>
+              <FormItem>
+                <FormLabel htmlFor="charging-device-notes">メモ</FormLabel>
+                <FormControl>
+                  <textarea id="charging-device-notes" className="text-input" rows={3} value={editing.notes} onChange={(event) => setEditing({ ...editing, notes: event.target.value })} />
+                </FormControl>
+              </FormItem>
+              <div className="drawer-actions">
+                <Button type="submit" disabled={saving}>
+                  {saving ? "保存中" : "保存"}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setEditing(emptyDevice)}>
+                  新規入力
+                </Button>
+              </div>
+            </Form>
+
+            <div className="table-wrap charging-device-table-wrap">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>優先</TableHead>
+                    <TableHead>機器</TableHead>
+                    <TableHead>充電範囲</TableHead>
+                    <TableHead>状態</TableHead>
+                    <TableHead>認証参照</TableHead>
+                    <TableHead>操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {devices.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="empty-cell">
+                        充電機器マスタがありません。
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    devices.map((device) => (
+                      <TableRow key={device.id ?? device.credentialRef}>
+                        <TableCell>{device.priority}</TableCell>
+                        <TableCell>
+                          <strong>{device.name}</strong>
+                          <br />
+                          <span className="readonly-note">{deviceKindLabel(device.kind)} / {deviceRoleLabel(device.role)}</span>
+                        </TableCell>
+                        <TableCell>
+                          {device.minChargeW}-{device.maxChargeW} W
+                          <br />
+                          <span className="readonly-note">{device.chargeStepW} W刻み / {formatCapacity(device.capacityWh)}</span>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={device.enabled ? "success" : "secondary"}>{device.enabled ? "有効" : "無効"}</Badge>
+                          <Badge className="charging-device-badge" variant={device.controlEnabled ? "warning" : "secondary"}>
+                            {device.controlEnabled ? "制御候補" : "制御対象外"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{device.credentialRef}</TableCell>
+                        <TableCell>
+                          <div className="tariff-plan-row-actions">
+                            <Button type="button" variant="outline" onClick={() => editDevice(device)}>
+                              編集
+                            </Button>
+                            <Button type="button" variant="outline" disabled={deletingDeviceId === device.id} onClick={() => void removeDevice(device)}>
+                              削除
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </aside>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function TextField({ id, label, value, description, onChange }: { id: string; label: string; value: string; description?: string; onChange: (value: string) => void }) {
+  return (
+    <FormItem>
+      <FormLabel htmlFor={id}>{label}</FormLabel>
+      <FormControl>
+        <input id={id} className="text-input" value={value} onChange={(event) => onChange(event.target.value)} />
+      </FormControl>
+      {description ? <FormDescription>{description}</FormDescription> : null}
+    </FormItem>
+  );
+}
+
+function NumberField({ id, label, value, onChange }: { id: string; label: string; value: number; onChange: (value: number) => void }) {
+  return (
+    <FormItem>
+      <FormLabel htmlFor={id}>{label}</FormLabel>
+      <FormControl>
+        <input id={id} className="text-input" type="number" value={value} onChange={(event) => onChange(Number(event.target.value))} />
+      </FormControl>
+    </FormItem>
+  );
+}
+
+function CheckboxField({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <label className="switch-row">
+      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+function normalizeDeviceForSave(device: ChargingDevice): ChargingDevice {
+  return {
+    ...device,
+    name: device.name.trim(),
+    kind: device.kind.trim(),
+    provider: device.provider.trim(),
+    role: device.role.trim(),
+    credentialRef: device.credentialRef.trim(),
+    notes: device.notes.trim()
+  };
+}
+
+function validateDevice(device: ChargingDevice) {
+  if (!device.name || !device.kind || !device.provider || !device.role || !device.credentialRef) {
+    throw new Error("表示名、種別、Provider、Role、認証参照名は必須です。");
+  }
+  if (device.priority < 1 || device.minChargeW < 0 || device.maxChargeW < device.minChargeW || device.chargeStepW < 1 || device.capacityWh < 0) {
+    throw new Error("優先順位または充電W範囲が不正です。");
+  }
+  if (device.targetSoc < 0 || device.targetSoc > 100 || device.reserveSoc < 0 || device.reserveSoc > 100) {
+    throw new Error("SOCは0-100の範囲で入力してください。");
+  }
+}
+
+function deviceKindLabel(value: string) {
+  const labels: Record<string, string> = {
+    ecoflow_delta_pro3: "DELTA Pro 3",
+    ecoflow_delta3_plus: "DELTA 3 Plus",
+    switchbot_plug: "SwitchBot Plug",
+    manual: "手動"
+  };
+  return labels[value] || value;
+}
+
+function deviceRoleLabel(value: string) {
+  const labels: Record<string, string> = {
+    primary: "主バッテリー",
+    auxiliary: "補助バッテリー",
+    manual_auxiliary: "手動補助"
+  };
+  return labels[value] || value;
+}
+
+function formatCapacity(value: number) {
+  if (value <= 0) {
+    return "容量未設定";
+  }
+  return `${new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 1 }).format(value / 1000)} kWh`;
+}

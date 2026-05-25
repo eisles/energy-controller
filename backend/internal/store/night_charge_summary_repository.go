@@ -303,8 +303,41 @@ func (r *NightChargeSummaryRepository) buildSummary(ctx context.Context, now tim
 		summary.DataSource = "energy-meter+power-log"
 	}
 
+	applyNightSummaryDerivedFields(&summary)
 	applyNightSummaryStatus(&summary, now, session)
 	return summary, nil
+}
+
+func applyNightSummaryDerivedFields(summary *domain.NightChargeDailySummary) {
+	if summary.PlannedTargetSoc != nil && summary.NightEndSoc != nil {
+		gap := *summary.NightEndSoc - *summary.PlannedTargetSoc
+		summary.MorningTargetSocGap = &gap
+	}
+	if summary.NightBatteryInputKWh != nil && summary.NightBatteryOutputKWh != nil {
+		net := *summary.NightBatteryInputKWh - *summary.NightBatteryOutputKWh
+		summary.NightNetBatteryKWh = &net
+		if summary.PlannedRequiredChargeKWh != nil {
+			requiredGap := net - *summary.PlannedRequiredChargeKWh
+			summary.NightRequiredChargeGapKWh = &requiredGap
+		}
+	}
+	summary.DaytimeChargeAndExportKWh = sumOptionalKWh(summary.DaytimeBatteryInputKWh, summary.DaytimeExportKWh)
+}
+
+func sumOptionalKWh(values ...*float64) *float64 {
+	var sum float64
+	hasValue := false
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		sum += *value
+		hasValue = true
+	}
+	if !hasValue {
+		return nil
+	}
+	return &sum
 }
 
 func applyNightSummaryStatus(summary *domain.NightChargeDailySummary, now time.Time, session nightSummaryWindow) {

@@ -301,6 +301,20 @@ input {
   line-height: 1.5;
 }
 
+.verification-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.verification-panel .ui-alert {
+  grid-column: 1 / -1;
+}
+
+.verification-card {
+  min-width: 0;
+}
+
 .control-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -356,6 +370,10 @@ input {
 
 .tariff-plan-drawer {
   width: min(1240px, calc(100% - 16px));
+}
+
+.charging-device-drawer {
+  width: min(1180px, calc(100% - 16px));
 }
 
 .drawer-header,
@@ -699,6 +717,27 @@ input {
   gap: 12px;
 }
 
+.charging-device-form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.charging-device-switch-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.charging-device-table-wrap .ui-table {
+  min-width: 1040px;
+}
+
+.charging-device-badge {
+  margin-left: 6px;
+}
+
 .tariff-plan-actions {
   display: flex;
   flex-wrap: wrap;
@@ -905,7 +944,9 @@ input {
 
   .chart-grid,
   .control-grid,
+  .verification-panel,
   .detail-strip,
+  .charging-device-form-grid,
   .tariff-plan-form-grid,
   .tariff-summary-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -975,7 +1016,9 @@ input {
   .metric-grid,
   .chart-grid,
   .control-grid,
+  .verification-panel,
   .detail-strip,
+  .charging-device-form-grid,
   .tariff-plan-form-grid,
   .tariff-summary-grid {
     grid-template-columns: 1fr;

@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Phase 7 夜間充電実績検証と DELTA 3 Plus 補助制御実証 計画</title>
+    <style>
+      body {
+        color: #111827;
+        background: #f8fafc;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.7;
+        margin: 0;
+      }
+      main {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 40px 24px;
+      }
+      h1,
+      h2,
+      h3 {
+        line-height: 1.3;
+      }
+      h1 {
+        font-size: 28px;
+        margin-bottom: 24px;
+      }
+      h2 {
+        border-top: 1px solid #d1d5db;
+        margin-top: 32px;
+        padding-top: 24px;
+      }
+      code,
+      pre {
+        background: #e5e7eb;
+        border-radius: 6px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      code {
+        padding: 2px 5px;
+      }
+      pre {
+        overflow-x: auto;
+        padding: 16px;
+      }
+      li {
+        margin: 4px 0;
+      }
+      .note {
+        background: #ecfeff;
+        border: 1px solid #a5f3fc;
+        border-radius: 8px;
+        padding: 12px 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Phase 7 夜間充電実績検証と DELTA 3 Plus 補助制御実証 計画</h1>
+      <section>
+        <h2>目的</h2>
+        <p>夜間充電計画が実際に期待通りだったかを、計画値と実績値の差分で確認できるようにする。あわせて、DELTA 3 Plus 補助充電制御を実運用へ進める前に、現在の状態・直近ログ・安全ゲートを read-only で確認できる画面を追加する。</p>
+        <ol>
+          <li>夜間充電計画の実績検証</li>
+          <li>DELTA 3 Plus 補助制御の安全な実証</li>
+        </ol>
+      </section>
+      <section>
+        <h2>非目的</h2>
+        <ul>
+          <li>EcoFlow の新しい実機書き込みコマンドは追加しない。</li>
+          <li><code>.env</code> の実制御フラグ、DELTA 3 Plus 書き込みフラグ、試験期限は変更しない。</li>
+          <li>認証情報、device SN、token はコード・計画・ログに保存しない。</li>
+          <li>夜間充電計画の算出ロジック自体はこのタスクでは変更しない。</li>
+          <li>通知機能や SwitchBot 制御はこのタスクでは実装しない。</li>
+        </ul>
+      </section>
+      <section>
+        <h2>現状</h2>
+        <ul>
+          <li><code>/api/night-charge/summaries</code> は日次の夜間サマリーを返している。</li>
+          <li>既存サマリーには計画SOC、7:00 SOC、夜間の買電/売電、Battery input/output、翌日日中のBattery input/売電が含まれる。</li>
+          <li>ただし「目標SOCとの差」「夜間の実質充電kWh」「必要充電との差」がAPIレスポンスとしては明示されていない。</li>
+          <li><code>/api/delta3/status</code> と <code>/api/delta3/aux-commands</code> はDELTA 3 Plusの状態と補助制御ログを返している。</li>
+        </ul>
+      </section>
+      <section>
+        <h2>安全境界</h2>
+        <p class="note">今回の実装はAPIレスポンスの追加計算と画面表示の追加が中心。既存の実機書き込み条件、<code>.env</code>、DBスキーマは変更しない。</p>
+        <ul>
+          <li><code>ENABLE_REAL_CONTROL=true</code></li>
+          <li><code>SIMULATION_MODE=false</code></li>
+          <li><code>MOCK_MODE=false</code></li>
+          <li><code>AUTO_CONTROL_ENABLED=true</code></li>
+          <li><code>CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND</code></li>
+          <li>試験期限内</li>
+          <li>DELTA 3 Plus 補助制御は追加で <code>DELTA3_AUX_ENABLED=true</code></li>
+          <li>DELTA 3 Plus は追加で <code>ECOFLOW_DELTA3_READ_ENABLED=true</code></li>
+          <li>DELTA 3 Plus は追加で <code>ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=true</code></li>
+          <li>DELTA 3 Plus は追加で <code>ECOFLOW_DELTA3_EXECUTE=true</code></li>
+          <li>DELTA 3 Plus は追加で <code>ECOFLOW_DELTA3_ALLOW_PRIVATE_API_WRITE=true</code></li>
+        </ul>
+      </section>
+      <section>
+        <h2>データ/API契約</h2>
+        <h3>/api/night-charge/summaries</h3>
+        <ul>
+          <li><code>morningTargetSocGap</code>: <code>nightEndSoc - plannedTargetSoc</code></li>
+          <li><code>nightNetBatteryKwh</code>: <code>nightBatteryInputKwh - nightBatteryOutputKwh</code></li>
+          <li><code>nightRequiredChargeGapKwh</code>: <code>nightNetBatteryKwh - plannedRequiredChargeKwh</code></li>
+          <li><code>daytimeChargeAndExportKwh</code>: <code>daytimeBatteryInputKwh + daytimeExportKwh</code>。買電由来の充電も混ざり得るためPV由来とは断定しない。</li>
+        </ul>
+        <h3>フロントエンド表示</h3>
+        <p>新しいダッシュボードブロック <strong>実証検証</strong> を追加し、夜間充電実績とDELTA 3 Plus補助制御の安全実証状態をまとめて表示する。</p>
+      </section>
+      <section>
+        <h2>変更予定ファイル</h2>
+        <ul>
+          <li><code>backend/internal/domain/status.go</code></li>
+          <li><code>backend/internal/store/night_charge_summary_repository.go</code></li>
+          <li><code>backend/internal/store/repository_test.go</code></li>
+          <li><code>frontend/lib/types.ts</code></li>
+          <li><code>frontend/components/VerificationPanel.tsx</code></li>
+          <li><code>frontend/components/Dashboard.tsx</code></li>
+        </ul>
+      </section>
+      <section>
+        <h2>実装手順</h2>
+        <ol>
+          <li><code>NightChargeDailySummary</code> に検証用フィールドを追加する。</li>
+          <li><code>buildSummary</code> で既存ログから追加フィールドを算出する。</li>
+          <li>repository testで追加フィールドを検証する。</li>
+          <li>frontend typeを更新する。</li>
+          <li><code>VerificationPanel</code> を追加する。</li>
+          <li><code>Dashboard</code> に <code>verification</code> セクションを追加する。</li>
+          <li>検証用の夜間充電サマリーは、夜間サマリーテーブルのページ状態とは独立して常に <code>limit=1&amp;offset=0</code> を取得する。</li>
+          <li>検証用のDELTA 3 Plus補助ログは、ログテーブルのページ状態とは独立して常に <code>limit=25&amp;offset=0</code> を取得する。</li>
+          <li>build/testとレビューを実行する。</li>
+        </ol>
+      </section>
+      <section>
+        <h2>確認コマンド</h2>
+        <pre><code>(cd backend &amp;&amp; rtk go test ./...)
+(cd frontend &amp;&amp; rtk npm run build)
+rtk git diff --check
+rtk codex review --uncommitted</code></pre>
+      </section>
+      <section>
+        <h2>ロールバック</h2>
+        <ul>
+          <li>DBスキーマ変更なし。問題があれば該当コミットをrevertする。</li>
+          <li>追加フィールドはレスポンスの付加情報なので、既存フィールドの意味は変えない。</li>
+          <li>新しい画面ブロックは制御には影響しない。</li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>

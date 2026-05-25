@@ -204,6 +204,30 @@ func migrate(db *sql.DB) error {
 			error_message TEXT,
 			created_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS charging_devices (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			name TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			role TEXT NOT NULL,
+			credential_ref TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			control_enabled INTEGER NOT NULL DEFAULT 0,
+			priority INTEGER NOT NULL DEFAULT 100,
+			min_charge_w INTEGER NOT NULL DEFAULT 0,
+			max_charge_w INTEGER NOT NULL DEFAULT 0,
+			charge_step_w INTEGER NOT NULL DEFAULT 1,
+			capacity_wh INTEGER NOT NULL DEFAULT 0,
+			target_soc INTEGER NOT NULL DEFAULT 90,
+			reserve_soc INTEGER NOT NULL DEFAULT 30,
+			supports_soc_read INTEGER NOT NULL DEFAULT 0,
+			supports_ac_charge_limit INTEGER NOT NULL DEFAULT 0,
+			supports_on_off INTEGER NOT NULL DEFAULT 0,
+			notes TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			UNIQUE(credential_ref)
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
@@ -410,6 +434,47 @@ func seedDefaults(db *sql.DB, now time.Time) error {
 		WHERE id = 1
 			AND NOT EXISTS (SELECT 1 FROM tariff_plans)`,
 		now.Format(time.RFC3339),
+	)
+	if err != nil {
+		return err
+	}
+
+	return seedChargingDevices(db, now)
+}
+
+func seedChargingDevices(db *sql.DB, now time.Time) error {
+	timestamp := now.Format(time.RFC3339)
+	_, err := db.Exec(
+		`INSERT INTO charging_devices (
+			name, kind, provider, role, credential_ref, enabled, control_enabled, priority,
+			min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc,
+			supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
+		)
+		SELECT name, kind, provider, role, credential_ref, enabled, control_enabled, priority,
+			min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc,
+			supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, ?, ?
+		FROM (
+			SELECT 'DELTA Pro 3' AS name, 'ecoflow_delta_pro3' AS kind, 'ecoflow' AS provider, 'primary' AS role,
+				'ecoflow_pro3_primary' AS credential_ref, 1 AS enabled, 0 AS control_enabled, 10 AS priority,
+				400 AS min_charge_w, 1500 AS max_charge_w, 100 AS charge_step_w, 12288 AS capacity_wh,
+				90 AS target_soc, 30 AS reserve_soc, 1 AS supports_soc_read, 1 AS supports_ac_charge_limit,
+				0 AS supports_on_off, '既存の DELTA Pro 3 制御用。SN や認証情報は環境変数側で管理します。' AS notes
+			UNION ALL
+			SELECT 'DELTA 3 Plus', 'ecoflow_delta3_plus', 'ecoflow', 'auxiliary',
+				'ecoflow_delta3_primary', 1, 0, 20,
+				100, 1500, 100, 2048,
+				90, 20, 1, 1,
+				1, 'DELTA 3 Plus 補助充電候補。追加台はこのマスタで増やします。'
+			UNION ALL
+			SELECT '手動補助バッテリー', 'manual', 'manual', 'manual_auxiliary',
+				'manual_auxiliary', 1, 0, 90,
+				0, 0, 1, 0,
+				90, 20, 0, 0,
+				0, 'API制御できない補助充電の運用メモ用です。'
+		)
+		WHERE NOT EXISTS (SELECT 1 FROM charging_devices)`,
+		timestamp,
+		timestamp,
 	)
 	return err
 }

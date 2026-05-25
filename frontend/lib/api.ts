@@ -1,4 +1,5 @@
 import type {
+  ChargingDevice,
   DaytimeConsumptionEstimate,
   Delta3AuxControlCommandLogsPage,
   Delta3Status,
@@ -248,6 +249,33 @@ export async function fetchTariffPlans(): Promise<TariffPlan[]> {
     throw new Error(`tariff plans request failed: ${response.status}`);
   }
   return response.json();
+}
+
+export async function fetchChargingDevices(): Promise<ChargingDevice[]> {
+  const response = await fetch("/api/settings/charging-devices", { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`charging devices request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function saveChargingDevice(device: ChargingDevice): Promise<ChargingDevice> {
+  const response = await fetch("/api/settings/charging-devices", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(device)
+  });
+  if (!response.ok) {
+    throw new Error(`charging device save failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function deleteChargingDevice(id: number): Promise<void> {
+  const response = await fetch(`/api/settings/charging-devices/${id}`, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(`charging device delete failed: ${response.status}`);
+  }
 }
 
 export async function saveTariffPlan(plan: TariffPlan): Promise<TariffPlan> {

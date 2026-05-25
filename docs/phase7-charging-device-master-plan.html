@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Phase 7 充電機器マスタ管理 実装計画</title>
+    <style>
+      body {
+        margin: 0;
+        color: #111827;
+        background: #f8fafc;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.7;
+      }
+      main {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 40px 24px;
+      }
+      h1 {
+        font-size: 28px;
+        line-height: 1.3;
+      }
+      h2 {
+        border-top: 1px solid #d1d5db;
+        margin-top: 32px;
+        padding-top: 24px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      th,
+      td {
+        border: 1px solid #d1d5db;
+        padding: 8px 10px;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        background: #e5e7eb;
+      }
+      code,
+      pre {
+        background: #e5e7eb;
+        border-radius: 6px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      code {
+        padding: 2px 5px;
+      }
+      pre {
+        overflow-x: auto;
+        padding: 14px;
+      }
+      .note {
+        background: #fff7ed;
+        border: 1px solid #fed7aa;
+        border-radius: 8px;
+        padding: 12px 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Phase 7 充電機器マスタ管理 実装計画</h1>
+
+      <h2>目的</h2>
+      <p>DELTA Pro 3、DELTA 3 Plus、将来の SwitchBot スマートプラグなどを、台数固定の <code>.env</code> ではなく充電機器マスタとして管理できるようにする。</p>
+      <p>この計画では、まず安全に運用できる土台として、DB に充電機器マスタを作成し、管理 API と read-only dashboard 上の編集画面を追加する。既存の DELTA Pro 3 / DELTA 3 Plus 制御ロジックは今回の実装ではマスタ参照へ切り替えない。</p>
+
+      <h2>非目標</h2>
+      <ul>
+        <li>EcoFlow / SwitchBot への新しい実機 write API は追加しない。</li>
+        <li>既存の DELTA Pro 3 余剰追従制御、夜間充電制御、DELTA 3 Plus 補助制御の実行条件は変更しない。</li>
+        <li>private API 認証情報、token、device SN、SwitchBot token は DB やコードに保存しない。</li>
+        <li>複数機器への余剰電力配分アルゴリズムは今回実装しない。</li>
+      </ul>
+
+      <h2>現状</h2>
+      <ul>
+        <li>DELTA Pro 3 は既存の <code>ECOFLOW_DEVICE_SN</code> などの環境変数を前提に制御される。</li>
+        <li>DELTA 3 Plus は <code>ECOFLOW_DELTA3_*</code> と <code>DELTA3_AUX_*</code> の環境変数を前提に、単体の補助バッテリーとして扱われる。</li>
+        <li>もう一台 DELTA 3 Plus を扱うには、台数固定の環境変数追加より、機器マスタで能力値と優先順位を持つ方が拡張しやすい。</li>
+      </ul>
+
+      <h2>データ設計</h2>
+      <p>新規テーブル <code>charging_devices</code> を追加する。</p>
+      <table>
+        <thead>
+          <tr><th>カラム</th><th>型</th><th>内容</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>id</code></td><td>INTEGER PK</td><td>内部ID</td></tr>
+          <tr><td><code>name</code></td><td>TEXT</td><td>表示名</td></tr>
+          <tr><td><code>kind</code></td><td>TEXT</td><td><code>ecoflow_delta_pro3</code> / <code>ecoflow_delta3_plus</code> / <code>switchbot_plug</code> / <code>manual</code></td></tr>
+          <tr><td><code>provider</code></td><td>TEXT</td><td><code>ecoflow</code> / <code>switchbot</code> / <code>manual</code></td></tr>
+          <tr><td><code>role</code></td><td>TEXT</td><td><code>primary</code> / <code>auxiliary</code> / <code>manual_auxiliary</code></td></tr>
+          <tr><td><code>credential_ref</code></td><td>TEXT</td><td>認証情報参照名。SN や token は保存しない</td></tr>
+          <tr><td><code>enabled</code></td><td>INTEGER</td><td>管理対象として有効</td></tr>
+          <tr><td><code>control_enabled</code></td><td>INTEGER</td><td>将来の自動制御候補。初期値 false</td></tr>
+          <tr><td><code>priority</code></td><td>INTEGER</td><td>余剰割当の優先順位</td></tr>
+          <tr><td><code>min_charge_w</code> / <code>max_charge_w</code> / <code>charge_step_w</code></td><td>INTEGER</td><td>充電W範囲と刻み</td></tr>
+          <tr><td><code>capacity_wh</code></td><td>INTEGER</td><td>容量Wh</td></tr>
+          <tr><td><code>target_soc</code> / <code>reserve_soc</code></td><td>INTEGER</td><td>目標SOCと最低確保SOC</td></tr>
+          <tr><td><code>supports_soc_read</code> / <code>supports_ac_charge_limit</code> / <code>supports_on_off</code></td><td>INTEGER</td><td>対応機能</td></tr>
+          <tr><td><code>notes</code></td><td>TEXT</td><td>運用メモ</td></tr>
+          <tr><td><code>created_at</code> / <code>updated_at</code></td><td>TEXT</td><td>監査用時刻</td></tr>
+        </tbody>
+      </table>
+
+      <h2>初期データ</h2>
+      <ul>
+        <li>DELTA Pro 3: <code>ecoflow_delta_pro3</code> / <code>ecoflow</code> / <code>primary</code> / <code>ecoflow_pro3_primary</code> / 400-1500W / 制御無効</li>
+        <li>DELTA 3 Plus: <code>ecoflow_delta3_plus</code> / <code>ecoflow</code> / <code>auxiliary</code> / <code>ecoflow_delta3_primary</code> / 100-1500W / 制御無効</li>
+        <li>手動補助バッテリー枠: <code>manual</code> / <code>manual</code> / <code>manual_auxiliary</code> / <code>manual_auxiliary</code> / 制御無効</li>
+      </ul>
+
+      <h2>API 設計</h2>
+      <ul>
+        <li><code>GET /api/settings/charging-devices</code>: 充電機器マスタ一覧を返す。</li>
+        <li><code>POST /api/settings/charging-devices</code>: 充電機器を作成または更新する。</li>
+        <li><code>DELETE /api/settings/charging-devices/{id}</code>: マスタ行を削除する。過去ログは削除しない。</li>
+      </ul>
+
+      <h2>Frontend 設計</h2>
+      <p>設定ブロックに <strong>充電機器マスタ</strong> カードを追加する。右ドロワーで作成・編集・削除できるようにし、<code>control_enabled</code> は実機 write に直結しないことを明示する。</p>
+
+      <h2>安全境界</h2>
+      <div class="note">
+        <ul>
+          <li>今回追加する API は DB マスタ更新のみで、EcoFlow / SwitchBot への外部 API 呼び出しを行わない。</li>
+          <li>初期値では <code>control_enabled=false</code> とし、マスタ追加だけで制御が増えないようにする。</li>
+          <li>device SN、token、password、access key は保存・表示しない。</li>
+          <li>将来の制御実装では、<code>credential_ref</code> から環境変数または安全な secret store を解決する。</li>
+        </ul>
+      </div>
+
+      <h2>実装手順</h2>
+      <ol>
+        <li><code>domain</code> に <code>ChargingDevice</code> 型を追加する。</li>
+        <li><code>store</code> に migration、seed、repository を追加する。</li>
+        <li><code>api</code> に handler と router 登録を追加する。</li>
+        <li>backend repository / handler / migration tests を追加する。</li>
+        <li>frontend に型、API helper、<code>ChargingDevicePanel</code> を追加する。</li>
+        <li><code>ControlPanel</code> の設定ブロックにカードを追加する。</li>
+        <li>build/test を実行する。</li>
+        <li>実装レビューで指摘がなくなるまで修正する。</li>
+      </ol>
+
+      <h2>確認コマンド</h2>
+      <pre><code>cd backend &amp;&amp; rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build
+rtk git diff --check
+rtk codex review --uncommitted</code></pre>
+
+      <h2>運用メモ</h2>
+      <ul>
+        <li>既存環境変数は当面そのまま残す。</li>
+        <li><code>charging_devices</code> は複数台制御のための source of truth 候補だが、今回の実装では制御ロジックからは参照しない。</li>
+        <li>次フェーズで余剰配分 planner を作る場合、<code>enabled=true</code> かつ <code>control_enabled=true</code> の機器だけを候補にする。</li>
+      </ul>
+    </main>
+  </body>
+</html>

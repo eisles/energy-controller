@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ChargingDevicePanel } from "@/components/ChargingDevicePanel";
 import { Form, FormControl, FormDescription, FormItem, FormLabel } from "@/components/ui/form";
 import { TariffPlanPanel } from "@/components/TariffPlanPanel";
 import { WeatherLocationPanel } from "@/components/WeatherLocationPanel";
@@ -71,6 +72,7 @@ export function ControlPanel({ onTariffPlanSaved }: ControlPanelProps) {
 
       <WeatherLocationPanel />
       <TariffPlanPanel onSaved={onTariffPlanSaved} />
+      <ChargingDevicePanel />
     </section>
   );
 }

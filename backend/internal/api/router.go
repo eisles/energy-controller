@@ -59,6 +59,10 @@ func NewRouter(deps Dependencies) http.Handler {
 		mux.HandleFunc("GET /api/settings/tariff-plans", getTariffPlansHandler(tariffRepository, deps.Logger))
 		mux.HandleFunc("POST /api/settings/tariff-plans", postTariffPlanHandler(tariffRepository, deps.Logger))
 		mux.HandleFunc("DELETE /api/settings/tariff-plans/{id}", deleteTariffPlanHandler(tariffRepository, deps.Logger))
+		chargingDeviceRepository := store.NewChargingDeviceRepository(deps.DB)
+		mux.HandleFunc("GET /api/settings/charging-devices", getChargingDevicesHandler(chargingDeviceRepository, deps.Logger))
+		mux.HandleFunc("POST /api/settings/charging-devices", postChargingDeviceHandler(chargingDeviceRepository, deps.Logger))
+		mux.HandleFunc("DELETE /api/settings/charging-devices/{id}", deleteChargingDeviceHandler(chargingDeviceRepository, deps.Logger))
 	}
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

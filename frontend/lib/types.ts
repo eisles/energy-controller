@@ -359,6 +359,30 @@ export type Delta3AuxControlCommandLogsPage = {
   offset: number;
 };
 
+export type ChargingDevice = {
+  id?: number;
+  name: string;
+  kind: string;
+  provider: string;
+  role: string;
+  credentialRef: string;
+  enabled: boolean;
+  controlEnabled: boolean;
+  priority: number;
+  minChargeW: number;
+  maxChargeW: number;
+  chargeStepW: number;
+  capacityWh: number;
+  targetSoc: number;
+  reserveSoc: number;
+  supportsSocRead: boolean;
+  supportsAcChargeLimit: boolean;
+  supportsOnOff: boolean;
+  notes: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type NightChargeDailySummary = {
   summaryDate: string;
   planCreatedAt?: string | null;
@@ -378,6 +402,10 @@ export type NightChargeDailySummary = {
   nightBatteryOutputKwh?: number | null;
   daytimeBatteryInputKwh?: number | null;
   daytimeExportKwh?: number | null;
+  morningTargetSocGap?: number | null;
+  nightNetBatteryKwh?: number | null;
+  nightRequiredChargeGapKwh?: number | null;
+  daytimeChargeAndExportKwh?: number | null;
   morningStatus: string;
   morningReason: string;
   finalResultStatus: string;

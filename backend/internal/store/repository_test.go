@@ -109,6 +109,71 @@ func TestDelta3AuxControlCommandRepositoryInsertsAndPages(t *testing.T) {
 	}
 }
 
+func TestChargingDeviceRepositorySeedsAndUpsertsDevices(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewChargingDeviceRepository(db)
+
+	devices, err := repo.ListChargingDevices(context.Background())
+	if err != nil {
+		t.Fatalf("ListChargingDevices failed: %v", err)
+	}
+	if len(devices) != 3 {
+		t.Fatalf("seeded devices = %d, want 3", len(devices))
+	}
+	if devices[0].Kind != "ecoflow_delta_pro3" || devices[0].CredentialRef != "ecoflow_pro3_primary" || devices[0].ControlEnabled {
+		t.Fatalf("unexpected first seed device: %+v", devices[0])
+	}
+
+	saved, err := repo.UpsertChargingDevice(context.Background(), domain.ChargingDevice{
+		Name:                  "DELTA 3 Plus 2",
+		Kind:                  "ecoflow_delta3_plus",
+		Provider:              "ecoflow",
+		Role:                  "auxiliary",
+		CredentialRef:         "ecoflow_delta3_secondary",
+		Enabled:               true,
+		ControlEnabled:        false,
+		Priority:              30,
+		MinChargeW:            100,
+		MaxChargeW:            1500,
+		ChargeStepW:           100,
+		CapacityWh:            2048,
+		TargetSoc:             90,
+		ReserveSoc:            20,
+		SupportsSocRead:       true,
+		SupportsACChargeLimit: true,
+		SupportsOnOff:         true,
+		Notes:                 "secondary unit",
+	})
+	if err != nil {
+		t.Fatalf("UpsertChargingDevice insert failed: %v", err)
+	}
+	if saved.ID == 0 || saved.CredentialRef != "ecoflow_delta3_secondary" {
+		t.Fatalf("saved device = %+v", saved)
+	}
+
+	saved.Name = "DELTA 3 Plus 書斎"
+	saved.Priority = 25
+	saved.ControlEnabled = true
+	updated, err := repo.UpsertChargingDevice(context.Background(), saved)
+	if err != nil {
+		t.Fatalf("UpsertChargingDevice update failed: %v", err)
+	}
+	if updated.Name != "DELTA 3 Plus 書斎" || updated.Priority != 25 || !updated.ControlEnabled {
+		t.Fatalf("updated device = %+v", updated)
+	}
+
+	if err := repo.DeleteChargingDevice(context.Background(), updated.ID); err != nil {
+		t.Fatalf("DeleteChargingDevice failed: %v", err)
+	}
+	devices, err = repo.ListChargingDevices(context.Background())
+	if err != nil {
+		t.Fatalf("ListChargingDevices after delete failed: %v", err)
+	}
+	if len(devices) != 3 {
+		t.Fatalf("devices after delete = %d, want 3", len(devices))
+	}
+}
+
 func TestLogRepositoryInsertsAndListsNewestFirst(t *testing.T) {
 	db := openTestDB(t)
 	repo := NewLogRepository(db)
@@ -706,6 +771,18 @@ func TestNightChargeSummaryRepositoryBuildsDailySummary(t *testing.T) {
 	}
 	if got.DaytimeBatteryInputKWh == nil || got.DaytimeExportKWh == nil {
 		t.Fatalf("daytime follow-up = %v/%v, want non-nil", got.DaytimeBatteryInputKWh, got.DaytimeExportKWh)
+	}
+	if got.MorningTargetSocGap == nil || *got.MorningTargetSocGap != 1 {
+		t.Fatalf("MorningTargetSocGap = %v, want 1", got.MorningTargetSocGap)
+	}
+	if got.NightNetBatteryKWh == nil || !floatAlmostEqual(*got.NightNetBatteryKWh, -1.6) {
+		t.Fatalf("NightNetBatteryKWh = %v, want -1.6", got.NightNetBatteryKWh)
+	}
+	if got.NightRequiredChargeGapKWh == nil || !floatAlmostEqual(*got.NightRequiredChargeGapKWh, -2.7) {
+		t.Fatalf("NightRequiredChargeGapKWh = %v, want -2.7", got.NightRequiredChargeGapKWh)
+	}
+	if got.DaytimeChargeAndExportKWh == nil || !floatAlmostEqual(*got.DaytimeChargeAndExportKWh, 6.3) {
+		t.Fatalf("DaytimeChargeAndExportKWh = %v, want 6.3", got.DaytimeChargeAndExportKWh)
 	}
 	if got.MorningStatus != "ok" || got.FinalResultStatus != "ok" {
 		t.Fatalf("statuses = %s/%s, want ok/ok", got.MorningStatus, got.FinalResultStatus)
