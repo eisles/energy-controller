@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -44,7 +45,8 @@ func main() {
 	}
 	defer db.Close()
 
-	statusProvider, energyMeterReader := newStatusProvider(cfg, db)
+	chargingDeviceRepository := store.NewChargingDeviceRepository(db)
+	statusProvider, energyMeterReader := newStatusProvider(cfg, db, chargingDeviceRepository)
 	statusRepository := store.NewStatusRepository(db)
 	logRepository := store.NewLogRepository(db)
 	energyMeterRepository := store.NewEnergyMeterRepository(db)
@@ -52,8 +54,7 @@ func main() {
 	surplusControlCommandRepository := store.NewSurplusControlCommandRepository(db)
 	delta3AuxControlCommandRepository := store.NewDelta3AuxControlCommandRepository(db)
 	notificationRepository := store.NewNotificationRepository(db)
-	chargingDeviceRepository := store.NewChargingDeviceRepository(db)
-	surplusWriteClient := newSurplusWriteClient(cfg)
+	surplusWriteClient := newSurplusWriteClient(cfg, chargingDeviceRepository)
 	delta3StatusReader := api.NewDelta3StatusReaderWithTargetProvider(cfg, logger, chargingDeviceRepository)
 	delta3AuxWriteClient := newDelta3AuxWriteClient(cfg, chargingDeviceRepository)
 	manualChargeAlertService := newManualChargeAlertService(cfg)
@@ -151,6 +152,14 @@ type delta3WriteTargetProvider interface {
 	Delta3WriteTarget(ctx context.Context) (domain.ChargingDevice, bool, error)
 }
 
+type ecoFlowCloudReadTargetProvider interface {
+	EcoFlowCloudReadTarget(ctx context.Context) (domain.ChargingDevice, bool, error)
+}
+
+type ecoFlowCloudWriteTargetProvider interface {
+	EcoFlowCloudWriteTarget(ctx context.Context) (domain.ChargingDevice, bool, error)
+}
+
 type energyMeterWriter interface {
 	InsertEnergyMeterReading(ctx context.Context, reading domain.EnergyMeterReading) error
 }
@@ -169,16 +178,11 @@ type commandStatusProvider interface {
 	LastCommandSent() bool
 }
 
-func newStatusProvider(cfg config.Config, db *sql.DB) (api.StatusProvider, energyMeterReader) {
+func newStatusProvider(cfg config.Config, db *sql.DB, targetProvider ecoFlowCloudReadTargetProvider) (api.StatusProvider, energyMeterReader) {
 	if cfg.MockMode {
 		return mock.NewStatusProvider(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled), nil
 	}
-	ecoflowClient := ecoflow.NewSignedClient(ecoflow.Config{
-		AccessKey: cfg.EcoFlowAccessKey,
-		SecretKey: cfg.EcoFlowSecretKey,
-		DeviceSN:  cfg.EcoFlowDeviceSN,
-		BaseURL:   cfg.EcoFlowBaseURL,
-	})
+	ecoflowClient := ecoFlowCloudBatteryReader{cfg: cfg, targetProvider: targetProvider}
 	ecoflowWriteClient := ecoflow.NewMockWriteClient()
 	weatherReader := newWeatherReader(cfg, db)
 	loadEstimator := store.NewEcoFlowLoadRepository(db)
@@ -196,22 +200,129 @@ func newStatusProvider(cfg config.Config, db *sql.DB) (api.StatusProvider, energ
 	return provider, nil
 }
 
-func newSurplusWriteClient(cfg config.Config) surplusWriteClient {
+func newSurplusWriteClient(cfg config.Config, targetProvider ecoFlowCloudWriteTargetProvider) surplusWriteClient {
 	if cfg.MockMode {
 		return nil
 	}
-	return ecoflow.NewSignedWriteClient(ecoflow.Config{
+	return ecoFlowCloudSurplusWriteClient{
+		cfg:            cfg,
+		targetProvider: targetProvider,
+		factory: func(cfg ecoflow.Config, guards ecoflow.WriteGuards) surplusWriteClient {
+			return ecoflow.NewSignedWriteClient(cfg, guards)
+		},
+	}
+}
+
+type ecoFlowCloudBatteryReader struct {
+	cfg            config.Config
+	targetProvider ecoFlowCloudReadTargetProvider
+}
+
+func (r ecoFlowCloudBatteryReader) GetBatteryStatus(ctx context.Context) (domain.BatteryStatus, error) {
+	cfg, ok, err := ecoFlowCloudReadConfig(ctx, r.cfg, r.targetProvider)
+	if err != nil {
+		return domain.BatteryStatus{}, err
+	}
+	if !ok {
+		return domain.BatteryStatus{}, errors.New("DELTA Pro 3 read target is unavailable")
+	}
+	client := ecoflow.NewSignedClient(ecoflow.Config{
 		AccessKey: cfg.EcoFlowAccessKey,
 		SecretKey: cfg.EcoFlowSecretKey,
 		DeviceSN:  cfg.EcoFlowDeviceSN,
 		BaseURL:   cfg.EcoFlowBaseURL,
-	}, ecoflow.WriteGuards{
+	})
+	return client.GetBatteryStatus(ctx)
+}
+
+func ecoFlowCloudReadConfig(ctx context.Context, cfg config.Config, targetProvider ecoFlowCloudReadTargetProvider) (config.Config, bool, error) {
+	if targetProvider == nil {
+		return cfg, true, nil
+	}
+	device, ok, err := targetProvider.EcoFlowCloudReadTarget(ctx)
+	if err != nil {
+		return config.Config{}, false, errors.New("failed to resolve DELTA Pro 3 read target")
+	}
+	if !ok {
+		return cfg, strings.TrimSpace(cfg.EcoFlowDeviceSN) != "", nil
+	}
+	return api.EcoFlowCloudConfigForDevice(cfg, device), true, nil
+}
+
+type ecoFlowCloudSurplusWriteClient struct {
+	cfg            config.Config
+	targetProvider ecoFlowCloudWriteTargetProvider
+	factory        func(ecoflow.Config, ecoflow.WriteGuards) surplusWriteClient
+}
+
+func (w ecoFlowCloudSurplusWriteClient) SetACChargePower(ctx context.Context, watts int) error {
+	return w.withClient(ctx, func(client surplusWriteClient) error {
+		return client.SetACChargePower(ctx, watts)
+	})
+}
+
+func (w ecoFlowCloudSurplusWriteClient) SetBackupReserveSoc(ctx context.Context, percent int) error {
+	return w.withClient(ctx, func(client surplusWriteClient) error {
+		return client.SetBackupReserveSoc(ctx, percent)
+	})
+}
+
+func (w ecoFlowCloudSurplusWriteClient) SetTOUMode(ctx context.Context, enabled bool) error {
+	return w.withClient(ctx, func(client surplusWriteClient) error {
+		return client.SetTOUMode(ctx, enabled)
+	})
+}
+
+func (w ecoFlowCloudSurplusWriteClient) SetSelfPoweredMode(ctx context.Context, enabled bool) error {
+	return w.withClient(ctx, func(client surplusWriteClient) error {
+		return client.SetSelfPoweredMode(ctx, enabled)
+	})
+}
+
+func (w ecoFlowCloudSurplusWriteClient) withClient(ctx context.Context, run func(surplusWriteClient) error) error {
+	cfg, ok, err := ecoFlowCloudWriteConfig(ctx, w.cfg, w.targetProvider)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("DELTA Pro 3 master write target is unavailable")
+	}
+	factory := w.factory
+	if factory == nil {
+		factory = func(cfg ecoflow.Config, guards ecoflow.WriteGuards) surplusWriteClient {
+			return ecoflow.NewSignedWriteClient(cfg, guards)
+		}
+	}
+	return run(factory(ecoflow.Config{
+		AccessKey: cfg.EcoFlowAccessKey,
+		SecretKey: cfg.EcoFlowSecretKey,
+		DeviceSN:  cfg.EcoFlowDeviceSN,
+		BaseURL:   cfg.EcoFlowBaseURL,
+	}, ecoFlowWriteGuards(cfg)))
+}
+
+func ecoFlowCloudWriteConfig(ctx context.Context, cfg config.Config, targetProvider ecoFlowCloudWriteTargetProvider) (config.Config, bool, error) {
+	if targetProvider == nil {
+		return config.Config{}, false, nil
+	}
+	device, ok, err := targetProvider.EcoFlowCloudWriteTarget(ctx)
+	if err != nil {
+		return config.Config{}, false, errors.New("failed to resolve DELTA Pro 3 write target")
+	}
+	if !ok {
+		return config.Config{}, false, nil
+	}
+	return api.EcoFlowCloudConfigForDevice(cfg, device), true, nil
+}
+
+func ecoFlowWriteGuards(cfg config.Config) ecoflow.WriteGuards {
+	return ecoflow.WriteGuards{
 		MockMode:           cfg.MockMode,
 		SimulationMode:     cfg.SimulationMode,
 		EnableRealControl:  cfg.EnableRealControl,
 		AutoControlEnabled: cfg.AutoControlEnabled,
 		ManualOneShot:      false,
-	})
+	}
 }
 
 type ecoFlowDelta3AuxWriteClient struct {

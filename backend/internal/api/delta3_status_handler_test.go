@@ -9,6 +9,7 @@ import (
 
 	"github.com/eisles/energy-controller/backend/internal/config"
 	"github.com/eisles/energy-controller/backend/internal/domain"
+	"github.com/eisles/energy-controller/backend/internal/ecoflow"
 	"github.com/eisles/energy-controller/backend/internal/ecoflowdelta3"
 )
 
@@ -39,7 +40,7 @@ func TestReadDelta3StatusRequiresCredentialsBeforeProbe(t *testing.T) {
 func TestReadDelta3StatusMapsReadOnlyFields(t *testing.T) {
 	soc := 82
 	acInW := 100
-	acOutW := 380
+	acOutW := -380
 	acLimitW := 100
 	gridBypassDisabled := false
 	acOutputEnabled := true
@@ -246,6 +247,76 @@ func TestDelta3StatusReaderReturnsDeviceStatuses(t *testing.T) {
 	}
 }
 
+func TestDelta3StatusReaderReturnsEcoFlowCloudDeviceStatus(t *testing.T) {
+	var requested ecoflow.Config
+	now := time.Date(2026, 5, 26, 5, 30, 0, 0, time.UTC)
+	reader := newDelta3StatusReader(config.Config{
+		EcoFlowAccessKey: "access",
+		EcoFlowSecretKey: "secret",
+		EcoFlowDeviceSN:  "ENV-SN",
+		EcoFlowBaseURL:   "https://api.test",
+	}, nil, nil)
+	reader.now = func() time.Time { return now }
+	reader.ecoFlowCloudReaderFactory = func(cfg ecoflow.Config) ecoFlowCloudBatteryReader {
+		requested = cfg
+		reserveSoc := 30
+		backupEnabled := true
+		return fakeEcoFlowCloudReader{status: domain.BatteryStatus{
+			Soc:                 88,
+			InputW:              410,
+			OutputW:             120,
+			ACChargeLimitW:      900,
+			BackupReserveSoc:    &reserveSoc,
+			EnergyBackupEnabled: &backupEnabled,
+			IsOnline:            true,
+		}}
+	}
+	devices := []domain.ChargingDevice{
+		{
+			ID:                    1,
+			Name:                  "DELTA Pro 3",
+			Kind:                  "ecoflow_delta_pro3",
+			Provider:              "ecoflow",
+			Enabled:               true,
+			SupportsSocRead:       true,
+			SupportsACChargeLimit: true,
+			CredentialRef:         "pro3",
+			DeviceSN:              "MASTER-SN",
+			DeviceType:            "DELTA_PRO3",
+			StatusSource:          "ecoflow_cloud",
+			Priority:              10,
+			CapacityWh:            12288,
+			ControlEnabled:        true,
+		},
+	}
+
+	statuses := reader.CurrentDeviceStatuses(context.Background(), devices)
+
+	if len(statuses) != 1 {
+		t.Fatalf("CurrentDeviceStatuses len = %d, want 1", len(statuses))
+	}
+	if requested.DeviceSN != "MASTER-SN" {
+		t.Fatalf("EcoFlow Cloud device SN = %q, want MASTER-SN", requested.DeviceSN)
+	}
+	if !statuses[0].Status.Available {
+		t.Fatalf("status should be available: %+v", statuses[0].Status)
+	}
+	assertIntPtrResponse(t, "SOC", statuses[0].Status.SOC, 88)
+	assertIntPtrResponse(t, "ACInW", statuses[0].Status.ACInW, 410)
+	assertIntPtrResponse(t, "ACOutW", statuses[0].Status.ACOutW, 120)
+	assertIntPtrResponse(t, "ACChargeLimitW", statuses[0].Status.ACChargeLimitW, 900)
+	if statuses[0].CapacityWh != 12288 {
+		t.Fatalf("CapacityWh = %d, want 12288", statuses[0].CapacityWh)
+	}
+}
+
+func TestEcoFlowCloudConfigForDeviceDoesNotFallbackToEnvSN(t *testing.T) {
+	cfg := EcoFlowCloudConfigForDevice(config.Config{EcoFlowDeviceSN: "ENV-SN"}, domain.ChargingDevice{DeviceSN: "   "})
+	if cfg.EcoFlowDeviceSN != "" {
+		t.Fatalf("EcoFlowDeviceSN = %q, want empty trimmed master SN without env fallback", cfg.EcoFlowDeviceSN)
+	}
+}
+
 func validDelta3Config() config.Config {
 	return config.Config{
 		Delta3ReadEnabled:     true,
@@ -279,6 +350,15 @@ type fakeDelta3Client struct {
 	status ecoflowdelta3.Status
 	err    error
 	calls  *int
+}
+
+type fakeEcoFlowCloudReader struct {
+	status domain.BatteryStatus
+	err    error
+}
+
+func (r fakeEcoFlowCloudReader) GetBatteryStatus(context.Context) (domain.BatteryStatus, error) {
+	return r.status, r.err
 }
 
 func (f fakeDelta3Client) Probe(context.Context) (ecoflowdelta3.Status, error) {

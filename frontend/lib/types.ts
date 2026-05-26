@@ -54,7 +54,14 @@ export type DeviceStatus = {
   deviceSn: string;
   deviceType: string;
   statusSource: string;
+  enabled: boolean;
   priority: number;
+  minChargeW: number;
+  maxChargeW: number;
+  chargeStepW: number;
+  capacityWh: number;
+  targetSoc: number;
+  reserveSoc: number;
   controlEnabled: boolean;
   status: Delta3Status;
 };

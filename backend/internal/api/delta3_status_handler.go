@@ -11,6 +11,7 @@ import (
 
 	"github.com/eisles/energy-controller/backend/internal/config"
 	"github.com/eisles/energy-controller/backend/internal/domain"
+	"github.com/eisles/energy-controller/backend/internal/ecoflow"
 	"github.com/eisles/energy-controller/backend/internal/ecoflowdelta3"
 )
 
@@ -22,6 +23,10 @@ const (
 
 type delta3ProbeClient interface {
 	Probe(ctx context.Context) (ecoflowdelta3.Status, error)
+}
+
+type ecoFlowCloudBatteryReader interface {
+	GetBatteryStatus(ctx context.Context) (domain.BatteryStatus, error)
 }
 
 type Delta3StatusTargetProvider interface {
@@ -60,7 +65,14 @@ type DeviceStatusResponse struct {
 	DeviceSN       string               `json:"deviceSn"`
 	DeviceType     string               `json:"deviceType"`
 	StatusSource   string               `json:"statusSource"`
+	Enabled        bool                 `json:"enabled"`
 	Priority       int                  `json:"priority"`
+	MinChargeW     int                  `json:"minChargeW"`
+	MaxChargeW     int                  `json:"maxChargeW"`
+	ChargeStepW    int                  `json:"chargeStepW"`
+	CapacityWh     int                  `json:"capacityWh"`
+	TargetSoc      int                  `json:"targetSoc"`
+	ReserveSoc     int                  `json:"reserveSoc"`
 	ControlEnabled bool                 `json:"controlEnabled"`
 	Status         Delta3StatusResponse `json:"status"`
 }
@@ -93,15 +105,22 @@ type delta3StatusCacheEntry struct {
 	cacheUntil time.Time
 }
 
+type ecoFlowCloudStatusCacheEntry struct {
+	response   Delta3StatusResponse
+	cacheUntil time.Time
+}
+
 type Delta3StatusReader struct {
-	cfg            config.Config
-	logger         *slog.Logger
-	client         delta3ProbeClient
-	clientFactory  func(config.Config) delta3ProbeClient
-	targetProvider Delta3StatusTargetProvider
-	now            func() time.Time
-	mu             sync.Mutex
-	cache          map[string]delta3StatusCacheEntry
+	cfg                       config.Config
+	logger                    *slog.Logger
+	client                    delta3ProbeClient
+	clientFactory             func(config.Config) delta3ProbeClient
+	ecoFlowCloudReaderFactory func(ecoflow.Config) ecoFlowCloudBatteryReader
+	targetProvider            Delta3StatusTargetProvider
+	now                       func() time.Time
+	mu                        sync.Mutex
+	cache                     map[string]delta3StatusCacheEntry
+	ecoFlowCloudCache         map[string]ecoFlowCloudStatusCacheEntry
 }
 
 func NewDelta3StatusReader(cfg config.Config, logger *slog.Logger) *Delta3StatusReader {
@@ -125,8 +144,12 @@ func newDelta3StatusReader(cfg config.Config, logger *slog.Logger, client delta3
 		clientFactory: func(cfg config.Config) delta3ProbeClient {
 			return ecoflowdelta3.NewClient(delta3ProbeConfig(cfg))
 		},
-		now:   time.Now,
-		cache: make(map[string]delta3StatusCacheEntry),
+		ecoFlowCloudReaderFactory: func(cfg ecoflow.Config) ecoFlowCloudBatteryReader {
+			return ecoflow.NewSignedClient(cfg)
+		},
+		now:               time.Now,
+		cache:             make(map[string]delta3StatusCacheEntry),
+		ecoFlowCloudCache: make(map[string]ecoFlowCloudStatusCacheEntry),
 	}
 }
 
@@ -145,6 +168,9 @@ func (r *Delta3StatusReader) CurrentDeviceStatuses(ctx context.Context, devices 
 		if canReadDelta3Status(device) {
 			cfg := Delta3ConfigForDevice(r.cfg, device)
 			status = r.currentStatusForConfig(ctx, cfg, false)
+		} else if canReadEcoFlowCloudStatus(device) {
+			cfg := EcoFlowCloudConfigForDevice(r.cfg, device)
+			status = r.currentEcoFlowCloudStatusForConfig(ctx, cfg, device.DeviceType)
 		}
 		responses = append(responses, DeviceStatusResponse{
 			ID:             device.ID,
@@ -156,7 +182,14 @@ func (r *Delta3StatusReader) CurrentDeviceStatuses(ctx context.Context, devices 
 			DeviceSN:       device.DeviceSN,
 			DeviceType:     device.DeviceType,
 			StatusSource:   device.StatusSource,
+			Enabled:        device.Enabled,
 			Priority:       device.Priority,
+			MinChargeW:     device.MinChargeW,
+			MaxChargeW:     device.MaxChargeW,
+			ChargeStepW:    device.ChargeStepW,
+			CapacityWh:     device.CapacityWh,
+			TargetSoc:      device.TargetSoc,
+			ReserveSoc:     device.ReserveSoc,
 			ControlEnabled: device.ControlEnabled,
 			Status:         status,
 		})
@@ -228,6 +261,11 @@ func Delta3ConfigForDevice(cfg config.Config, device domain.ChargingDevice) conf
 	return cfg
 }
 
+func EcoFlowCloudConfigForDevice(cfg config.Config, device domain.ChargingDevice) config.Config {
+	cfg.EcoFlowDeviceSN = strings.TrimSpace(device.DeviceSN)
+	return cfg
+}
+
 func canReadDelta3Status(device domain.ChargingDevice) bool {
 	return device.Enabled &&
 		device.Provider == "ecoflow" &&
@@ -237,9 +275,18 @@ func canReadDelta3Status(device domain.ChargingDevice) bool {
 		device.SupportsSocRead
 }
 
+func canReadEcoFlowCloudStatus(device domain.ChargingDevice) bool {
+	return device.Enabled &&
+		device.Provider == "ecoflow" &&
+		device.Kind == "ecoflow_delta_pro3" &&
+		device.StatusSource == "ecoflow_cloud" &&
+		strings.TrimSpace(device.DeviceSN) != "" &&
+		device.SupportsSocRead
+}
+
 func deviceStatusNotAvailable(device domain.ChargingDevice) Delta3StatusResponse {
 	reason := "read-only status is not implemented for this device"
-	if device.Provider == "ecoflow" && device.Kind == "ecoflow_delta3_plus" && strings.TrimSpace(device.DeviceSN) == "" {
+	if device.Provider == "ecoflow" && (device.Kind == "ecoflow_delta3_plus" || device.Kind == "ecoflow_delta_pro3") && strings.TrimSpace(device.DeviceSN) == "" {
 		reason = "device SN is not configured"
 	}
 	return Delta3StatusResponse{
@@ -251,6 +298,10 @@ func deviceStatusNotAvailable(device domain.ChargingDevice) Delta3StatusResponse
 
 func delta3StatusCacheKey(cfg config.Config) string {
 	return cfg.Delta3DeviceType + "\x00" + cfg.Delta3DeviceSN
+}
+
+func ecoFlowCloudStatusCacheKey(cfg config.Config) string {
+	return cfg.EcoFlowBaseURL + "\x00" + cfg.EcoFlowDeviceSN
 }
 
 func shouldCacheDelta3StatusResponse(response Delta3StatusResponse) bool {
@@ -309,6 +360,75 @@ func readDelta3Status(ctx context.Context, cfg config.Config, client delta3Probe
 	return mapDelta3Status(status, time.Now())
 }
 
+func (r *Delta3StatusReader) currentEcoFlowCloudStatusForConfig(ctx context.Context, cfg config.Config, deviceType string) Delta3StatusResponse {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	now := r.now()
+	key := ecoFlowCloudStatusCacheKey(cfg)
+	entry := r.ecoFlowCloudCache[key]
+	if !entry.cacheUntil.IsZero() && now.Before(entry.cacheUntil) {
+		response := entry.response
+		response.Cached = true
+		return response
+	}
+
+	response := readEcoFlowCloudStatus(ctx, cfg, r.ecoFlowCloudReaderFactory, r.logger, deviceType, now)
+	if shouldCacheDelta3StatusResponse(response) {
+		entry.response = response
+		entry.cacheUntil = now.Add(delta3StatusCacheTTL(response))
+		r.ecoFlowCloudCache[key] = entry
+	}
+	return response
+}
+
+func readEcoFlowCloudStatus(ctx context.Context, cfg config.Config, factory func(ecoflow.Config) ecoFlowCloudBatteryReader, logger *slog.Logger, deviceType string, now time.Time) Delta3StatusResponse {
+	if cfg.EcoFlowAccessKey == "" || cfg.EcoFlowSecretKey == "" || cfg.EcoFlowDeviceSN == "" {
+		return Delta3StatusResponse{
+			Available:  false,
+			DeviceType: deviceType,
+			LastError:  "EcoFlow access key, secret key, or device SN is empty",
+		}
+	}
+	if factory == nil {
+		factory = func(cfg ecoflow.Config) ecoFlowCloudBatteryReader {
+			return ecoflow.NewSignedClient(cfg)
+		}
+	}
+	reader := factory(ecoflow.Config{
+		AccessKey: cfg.EcoFlowAccessKey,
+		SecretKey: cfg.EcoFlowSecretKey,
+		DeviceSN:  cfg.EcoFlowDeviceSN,
+		BaseURL:   cfg.EcoFlowBaseURL,
+	})
+	status, err := reader.GetBatteryStatus(ctx)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("failed to read EcoFlow Cloud status", "error", err)
+		}
+		return Delta3StatusResponse{
+			Available:  false,
+			DeviceType: deviceType,
+			LastError:  err.Error(),
+		}
+	}
+	return mapEcoFlowCloudStatus(status, deviceType, now)
+}
+
+func mapEcoFlowCloudStatus(status domain.BatteryStatus, deviceType string, now time.Time) Delta3StatusResponse {
+	return Delta3StatusResponse{
+		Available:            status.IsOnline,
+		DeviceType:           deviceType,
+		SOC:                  intPtr(status.Soc),
+		ACInW:                intPtr(status.InputW),
+		ACOutW:               intPtr(status.OutputW),
+		ACChargeLimitW:       intPtr(status.ACChargeLimitW),
+		BackupReserveSoc:     status.BackupReserveSoc,
+		BackupReserveEnabled: status.EnergyBackupEnabled,
+		UpdatedAt:            now.Format(time.RFC3339),
+	}
+}
+
 func delta3ProbeConfig(cfg config.Config) ecoflowdelta3.Config {
 	return ecoflowdelta3.Config{
 		PrivateAPIHost: cfg.Delta3PrivateAPIHost,
@@ -321,13 +441,17 @@ func delta3ProbeConfig(cfg config.Config) ecoflowdelta3.Config {
 	}
 }
 
+func intPtr(value int) *int {
+	return &value
+}
+
 func mapDelta3Status(status ecoflowdelta3.Status, now time.Time) Delta3StatusResponse {
 	return Delta3StatusResponse{
 		Available:            true,
 		DeviceType:           status.DeviceType,
 		SOC:                  firstIntPtr(status.CMSBatterySoc, status.BMSBatterySoc),
 		ACInW:                status.ACInW,
-		ACOutW:               status.ACOutW,
+		ACOutW:               positiveIntPtr(status.ACOutW),
 		ACChargeLimitW:       status.ACChargeLimitW,
 		GridBypassDisabled:   status.GridBypassDisabled,
 		ACOutputEnabled:      status.ACOutputEnabled,
@@ -346,4 +470,15 @@ func firstIntPtr(values ...*int) *int {
 		}
 	}
 	return nil
+}
+
+func positiveIntPtr(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	positive := *value
+	if positive < 0 {
+		positive = -positive
+	}
+	return &positive
 }

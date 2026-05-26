@@ -11,6 +11,7 @@ import (
 	"github.com/eisles/energy-controller/backend/internal/api"
 	"github.com/eisles/energy-controller/backend/internal/config"
 	"github.com/eisles/energy-controller/backend/internal/domain"
+	"github.com/eisles/energy-controller/backend/internal/ecoflow"
 	"github.com/eisles/energy-controller/backend/internal/store"
 )
 
@@ -46,6 +47,37 @@ type stubDelta3StatusReader struct {
 
 func (r stubDelta3StatusReader) CurrentStatus(context.Context) api.Delta3StatusResponse {
 	return r.status
+}
+
+type fakeEcoFlowCloudWriteTargetProvider struct {
+	device domain.ChargingDevice
+	ok     bool
+	err    error
+}
+
+func (p fakeEcoFlowCloudWriteTargetProvider) EcoFlowCloudWriteTarget(context.Context) (domain.ChargingDevice, bool, error) {
+	return p.device, p.ok, p.err
+}
+
+type recordingSurplusWriteClient struct {
+	acChargePowerW *int
+}
+
+func (c *recordingSurplusWriteClient) SetACChargePower(_ context.Context, watts int) error {
+	c.acChargePowerW = intPtr(watts)
+	return nil
+}
+
+func (c *recordingSurplusWriteClient) SetBackupReserveSoc(context.Context, int) error {
+	return nil
+}
+
+func (c *recordingSurplusWriteClient) SetTOUMode(context.Context, bool) error {
+	return nil
+}
+
+func (c *recordingSurplusWriteClient) SetSelfPoweredMode(context.Context, bool) error {
+	return nil
 }
 
 func TestRecordStatusPersistsWouldSendLogWithoutCommandSent(t *testing.T) {
@@ -106,6 +138,76 @@ func TestRecordStatusPersistsWouldSendLogWithoutCommandSent(t *testing.T) {
 	}
 	if !strings.Contains(logs[0].DecisionReason, "would-send") {
 		t.Fatalf("DecisionReason = %q, want would-send marker", logs[0].DecisionReason)
+	}
+}
+
+func TestEcoFlowCloudSurplusWriteClientRequiresMasterWriteTarget(t *testing.T) {
+	factoryCalled := false
+	client := ecoFlowCloudSurplusWriteClient{
+		cfg: config.Config{
+			EcoFlowAccessKey: "access",
+			EcoFlowSecretKey: "secret",
+			EcoFlowDeviceSN:  "ENV-SN",
+		},
+		targetProvider: fakeEcoFlowCloudWriteTargetProvider{ok: false},
+		factory: func(ecoflow.Config, ecoflow.WriteGuards) surplusWriteClient {
+			factoryCalled = true
+			return &recordingSurplusWriteClient{}
+		},
+	}
+
+	err := client.SetACChargePower(context.Background(), 900)
+	if err == nil || !strings.Contains(err.Error(), "master write target is unavailable") {
+		t.Fatalf("SetACChargePower error = %v, want unavailable master target", err)
+	}
+	if factoryCalled {
+		t.Fatal("writer factory was called without a control-enabled master target")
+	}
+}
+
+func TestEcoFlowCloudSurplusWriteClientUsesMasterSNAndGuards(t *testing.T) {
+	recordingClient := &recordingSurplusWriteClient{}
+	var gotConfig ecoflow.Config
+	var gotGuards ecoflow.WriteGuards
+	client := ecoFlowCloudSurplusWriteClient{
+		cfg: config.Config{
+			EcoFlowAccessKey:    "access",
+			EcoFlowSecretKey:    "secret",
+			EcoFlowDeviceSN:     "ENV-SN",
+			EcoFlowBaseURL:      "https://api.test",
+			MockMode:            false,
+			SimulationMode:      false,
+			EnableRealControl:   true,
+			AutoControlEnabled:  true,
+			ConfirmEcoFlowWrite: "I_UNDERSTAND_REAL_ECOFLOW_WRITE",
+		},
+		targetProvider: fakeEcoFlowCloudWriteTargetProvider{
+			ok: true,
+			device: domain.ChargingDevice{
+				DeviceSN: "MASTER-SN",
+			},
+		},
+		factory: func(cfg ecoflow.Config, guards ecoflow.WriteGuards) surplusWriteClient {
+			gotConfig = cfg
+			gotGuards = guards
+			return recordingClient
+		},
+	}
+
+	if err := client.SetACChargePower(context.Background(), 900); err != nil {
+		t.Fatalf("SetACChargePower failed: %v", err)
+	}
+	if gotConfig.DeviceSN != "MASTER-SN" {
+		t.Fatalf("DeviceSN = %q, want MASTER-SN", gotConfig.DeviceSN)
+	}
+	if gotConfig.AccessKey != "access" || gotConfig.SecretKey != "secret" || gotConfig.BaseURL != "https://api.test" {
+		t.Fatalf("EcoFlow config = %+v, want env credentials with master SN", gotConfig)
+	}
+	if gotGuards.MockMode || gotGuards.SimulationMode || !gotGuards.EnableRealControl || !gotGuards.AutoControlEnabled || gotGuards.ManualOneShot {
+		t.Fatalf("WriteGuards = %+v, want real-control auto guards from config", gotGuards)
+	}
+	if recordingClient.acChargePowerW == nil || *recordingClient.acChargePowerW != 900 {
+		t.Fatalf("recorded AC charge W = %v, want 900", recordingClient.acChargePowerW)
 	}
 }
 

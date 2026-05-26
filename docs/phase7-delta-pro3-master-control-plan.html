@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phase 7 DELTA Pro 3 機器マスター制御 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; margin: 0; color: #172033; background: #f7f8fb; }
+    main { max-width: 960px; margin: 0 auto; padding: 40px 24px 72px; background: #fff; }
+    h1 { font-size: 28px; margin: 0 0 24px; }
+    h2 { font-size: 20px; margin: 32px 0 12px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+    ul, ol { padding-left: 1.6rem; }
+    code { background: #eef2f7; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    pre { background: #111827; color: #f9fafb; padding: 16px; border-radius: 8px; overflow-x: auto; }
+    .note { border-left: 4px solid #2563eb; background: #eff6ff; padding: 12px 16px; margin: 16px 0; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Phase 7 DELTA Pro 3 機器マスター制御 実装計画</h1>
+
+  <h2>目的</h2>
+  <p>DELTA Pro 3 の読み取り対象と実制御対象を、<code>.env</code> の固定 <code>ECOFLOW_DEVICE_SN</code> ではなく充電機器マスターから解決できるようにする。これにより、画面で管理している DELTA Pro 3 の <code>deviceSn</code>、有効/無効、制御可否が実際の EcoFlow Cloud 読み取り・書き込み経路にも反映される。</p>
+  <p>あわせて、画面上部のカードが DELTA Pro 3 1 台に固定された見え方になっている点を解消する。上部は「家全体・制御全体」のサマリーとして表示し、DELTA Pro 3 / DELTA 3 Plus など機器ごとの SOC、入出力、充電上限、接続状態は機器マスター由来の機器別ブロックに表示する。</p>
+
+  <h2>非目的</h2>
+  <ul>
+    <li>新しい EcoFlow 書き込みコマンドは追加しない。</li>
+    <li><code>ENABLE_REAL_CONTROL=true</code>、<code>SIMULATION_MODE=false</code>、<code>AUTO_CONTROL_ENABLED=true</code>、確認フラグ、最小実行間隔など既存の安全ゲートは緩めない。</li>
+    <li>DELTA 3 Plus の private MQTT 認証方式や補助バッテリー制御の判断ロジックは変更しない。</li>
+    <li>機器マスターの CRUD 仕様やデータ移行方針は変更しない。</li>
+    <li>API キー、シークレット、デバイス SN などの秘密値をコードやドキュメントに固定しない。</li>
+  </ul>
+
+  <h2>現状</h2>
+  <ul>
+    <li>DELTA 3 Plus は充電機器マスターから <code>Delta3ReadTarget</code> / <code>Delta3WriteTarget</code> を解決している。</li>
+    <li>DELTA Pro 3 は <code>backend/cmd/server/main.go</code> で <code>cfg.EcoFlowDeviceSN</code> を直接使って <code>ecoflow.SignedClient</code> / <code>ecoflow.SignedWriteClient</code> を作成している。</li>
+    <li>充電機器マスターには <code>kind=ecoflow_delta_pro3</code>、<code>statusSource=ecoflow_cloud</code>、<code>deviceSn</code>、<code>controlEnabled</code>、<code>supportsAcChargeLimit</code> を保存できる。</li>
+    <li><code>/api/devices/statuses</code> は機器一覧を返すが、実ステータス取得は DELTA 3 Plus private MQTT に偏っており、DELTA Pro 3 は機器別ステータスとして十分に表示できていない。</li>
+    <li>フロントエンドの上部メトリクスにはバッテリー残量や実質充電が出ており、機器が増えた場合に DELTA Pro 3 固定の情報と全体情報が混在して見える。</li>
+  </ul>
+
+  <h2>データ/API 契約</h2>
+  <p>DELTA Pro 3 のマスター行は次の条件で EcoFlow Cloud 対象として扱う。</p>
+  <ul>
+    <li><code>provider = "ecoflow"</code></li>
+    <li><code>kind = "ecoflow_delta_pro3"</code></li>
+    <li><code>statusSource = "ecoflow_cloud"</code></li>
+    <li><code>enabled = true</code></li>
+    <li><code>deviceSn</code> は trim 後に空でない</li>
+    <li>読み取り対象: <code>supportsSocRead = true</code></li>
+    <li>書き込み対象: 上記に加えて <code>controlEnabled = true</code> かつ <code>supportsAcChargeLimit = true</code></li>
+    <li>制御ループの読み取り対象は、書き込み対象が存在する場合は必ず同じマスター行に合わせる。書き込み対象がない場合のみ read-only の最優先行を使う。</li>
+  </ul>
+  <p><code>.env</code> の <code>ECOFLOW_ACCESS_KEY</code>、<code>ECOFLOW_SECRET_KEY</code>、<code>ECOFLOW_BASE_URL</code> は EcoFlow Cloud 認証情報として継続利用する。<code>ECOFLOW_DEVICE_SN</code> は既存環境との互換用フォールバックとして残すが、サーバーの通常経路は機器マスターを優先する。</p>
+  <p><code>/api/devices/statuses</code> は全充電機器を返し、取得方式ごとに次のように <code>status</code> を埋める。</p>
+  <ul>
+    <li>DELTA Pro 3: <code>statusSource=ecoflow_cloud</code> の場合、EcoFlow Cloud API から機器マスターの <code>deviceSn</code> で read-only 状態を取得する。</li>
+    <li>DELTA 3 Plus: <code>statusSource=ecoflow_private_mqtt</code> の場合、既存の private MQTT 経路で read-only 状態を取得する。</li>
+    <li>その他/未対応: 機器情報は返し、<code>status.available=false</code> と理由を返す。</li>
+  </ul>
+  <p>フロントエンドは <code>/api/status</code> を全体サマリー、<code>/api/devices/statuses</code> を機器別ステータスとして扱う。</p>
+
+  <h2>安全境界</h2>
+  <ul>
+    <li>実機書き込みは既存の <code>ecoflow.WriteGuards</code> を必ず通す。</li>
+    <li>機器マスターで <code>controlEnabled=false</code> の DELTA Pro 3 は書き込み対象にしない。</li>
+    <li><code>deviceSn</code> が空白だけのマスター行は対象にせず、<code>.env</code> の SN にフォールバックして書き込まない。</li>
+    <li>複数の DELTA Pro 3 行がある場合、制御判断に使う読み取り値とコマンド送信先を別々の機器にしない。</li>
+    <li>機器マスターの対象が見つからない場合、書き込みは安全側に倒して実行しない。</li>
+    <li>読み取りは運用互換のため、機器マスターに対象がない場合のみ <code>ECOFLOW_DEVICE_SN</code> へフォールバックする。</li>
+    <li>フォールバックや対象なしはログ/エラー文で理由が分かるようにするが、SN はログに出さない。</li>
+    <li>機器別ステータスは read-only 表示に限り、画面から新しい実機制御ボタンは追加しない。</li>
+  </ul>
+
+  <h2>実装手順</h2>
+  <ol>
+    <li><code>ChargingDeviceRepository</code> に DELTA Pro 3 用の読み取り/書き込みターゲット解決メソッドを追加する。
+      <ul>
+        <li><code>EcoFlowCloudReadTarget(ctx)</code></li>
+        <li><code>EcoFlowCloudWriteTarget(ctx)</code></li>
+        <li><code>EcoFlowCloudReadTarget(ctx)</code> は write target が存在する場合に同じ行を返し、read/write の対象ずれを防ぐ。</li>
+      </ul>
+    </li>
+    <li>リポジトリテストを追加し、読み取りは <code>controlEnabled=false</code> でも選ばれ、書き込みは <code>controlEnabled=true</code> の行だけ選ばれることを確認する。</li>
+    <li><code>backend/cmd/server/main.go</code> に DELTA Pro 3 用のマスター解決ラッパーを追加する。
+      <ul>
+        <li>読み取りは機器マスター優先、なければ <code>.env</code> SN へフォールバック。</li>
+        <li>書き込みは機器マスターの <code>controlEnabled=true</code> 対象のみ許可。</li>
+      </ul>
+    </li>
+    <li>サーバー側の DELTA Pro 3 書き込みラッパーの unit test を追加する。
+      <ul>
+        <li><code>controlEnabled=true</code> のマスター対象がない場合、<code>.env</code> の <code>ECOFLOW_DEVICE_SN</code> へフォールバックせずエラーにする。</li>
+        <li><code>controlEnabled=true</code> の対象がある場合だけ、その <code>deviceSn</code> で署名付き writer を組み立てる。</li>
+        <li>既存の <code>ecoflow.WriteGuards</code> が適用されることを確認する。</li>
+      </ul>
+    </li>
+    <li><code>newStatusProvider</code> と <code>newSurplusWriteClient</code> の DELTA Pro 3 クライアント生成をマスター解決経由へ差し替える。</li>
+    <li><code>/api/devices/statuses</code> で DELTA Pro 3 の read-only ステータスも返せるようにする。</li>
+    <li>フロントエンドの上部カードを全体サマリーに整理し、機器別ステータスカードを DELTA Pro 3 / DELTA 3 Plus を含む汎用表示へ変更する。
+      <ul>
+        <li>全体サマリー: Grid、買電、売電、制御推奨、状態、更新時刻など家全体/制御全体の情報。</li>
+        <li>機器別カード: 機器名、種別、接続状態、SOC、AC入力/出力、AC充電上限、容量、制御候補、取得方式。</li>
+      </ul>
+    </li>
+    <li>README / <code>.env.example</code> の説明を、DELTA Pro 3 の SN は機器マスター管理が主であることに更新する。</li>
+  </ol>
+
+  <h2>レビューポイント</h2>
+  <ul>
+    <li>書き込みの安全ゲートが削除・緩和されていないこと。</li>
+    <li><code>controlEnabled=false</code> の DELTA Pro 3 へ実機書き込みしないこと。</li>
+    <li>DELTA Pro 3 の write target が存在する場合、制御ループの read target が同じ行に揃うこと。</li>
+    <li>DELTA Pro 3 の server-side write wrapper に unit test があり、<code>.env</code> SN への write fallback がないこと。</li>
+    <li>DELTA 3 Plus の private MQTT 経路を壊していないこと。</li>
+    <li><code>/api/status</code> と <code>/api/devices/statuses</code> の役割が分離されていること。</li>
+    <li>上部カードが DELTA Pro 3 固定の情報に見えないこと。</li>
+    <li><code>.env</code> から秘密情報や SN をコードに固定していないこと。</li>
+    <li>既存の mock/simulation default が維持されていること。</li>
+  </ul>
+
+  <h2>確認コマンド</h2>
+  <pre><code>cd backend &amp;&amp; rtk go test ./...</code></pre>
+  <p>フロントエンド変更を含むため:</p>
+  <pre><code>cd frontend &amp;&amp; rtk npm run build</code></pre>
+  <p>必要に応じて API 確認:</p>
+  <pre><code>curl -s http://localhost:18085/api/settings/charging-devices | jq .
+curl -s http://localhost:18085/api/devices/statuses | jq .
+curl -s http://localhost:18085/api/status | jq .</code></pre>
+
+  <h2>運用メモ</h2>
+  <div class="note">
+    既存 DB では DELTA Pro 3 の <code>controlEnabled</code> が無効の可能性がある。実制御する場合は、画面の機器マスターで DELTA Pro 3 の SN と制御有効を確認してから起動する。
+  </div>
+  <p><code>ECOFLOW_DEVICE_SN</code> は移行期間の読み取りフォールバックとして残るが、今後の設定の正は機器マスターとする。</p>
+</main>
+</body>
+</html>

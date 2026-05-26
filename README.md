@@ -150,6 +150,7 @@ cd backend
 
 ```bash
 curl -sS http://localhost:18085/api/status | jq '{mode,state,lastDecisionReason,lastError,gridW,importW,exportW,batterySoc,batteryInputW,batteryOutputW,acChargeLimitW,backupReserveSoc,surplusPlan,nightChargePlan}'
+curl -sS http://localhost:18085/api/devices/statuses | jq '.[] | {name,kind,statusSource,controlEnabled,status}'
 tail -f data/real-control-continuous.log
 ```
 
@@ -176,6 +177,8 @@ tail -f data/real-control-continuous.log
 - 翌日の時間別日射量から PV 有効時間帯と推定 PV 発電量を作り、EcoFlow 特定回路の過去出力平均、朝 07:00 から PV 開始までの消費、制御対象外負荷を加味して推奨 SOC を決めます。
 - 翌日の PV で十分充電できる見込みなら深夜充電を抑え、不足見込みなら深夜に必要分だけ充電する方針です。
 - TOU / self-powered / backup reserve の切り替えは実機観測に基づくため、必ずログと EcoFlow app で確認してください。
+
+DELTA Pro 3 の SN は充電機器マスタで管理します。`ECOFLOW_ACCESS_KEY` / `ECOFLOW_SECRET_KEY` / `ECOFLOW_BASE_URL` は EcoFlow Cloud 認証情報として使い、通常の読み取り・余剰追従/夜間充電 write 対象は `kind=ecoflow_delta_pro3`、`statusSource=ecoflow_cloud`、`enabled=true`、`deviceSn` 設定済みのマスタ行から解決します。実機 write はさらに `controlEnabled=true` と既存の real-control gate が必要です。`ECOFLOW_DEVICE_SN` は移行期間の読み取りフォールバックと one-shot CLI 検証用に残していますが、自動 write のフォールバックには使いません。
 
 ## ロールバック
 

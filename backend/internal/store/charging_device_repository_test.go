@@ -139,6 +139,143 @@ func TestChargingDeviceRepositorySelectsDelta3Targets(t *testing.T) {
 	}
 }
 
+func TestChargingDeviceRepositorySelectsEcoFlowCloudTargets(t *testing.T) {
+	db := newChargingDeviceTestDB(t)
+	repo := NewChargingDeviceRepository(db)
+	ctx := context.Background()
+
+	_, err := repo.UpsertChargingDevice(ctx, domain.ChargingDevice{
+		Name:                  "blank sn write pro3",
+		Kind:                  "ecoflow_delta_pro3",
+		Provider:              "ecoflow",
+		Role:                  "primary",
+		CredentialRef:         "blank_write_pro3",
+		DeviceSN:              "   ",
+		DeviceType:            "DELTA_PRO3",
+		StatusSource:          "ecoflow_cloud",
+		Enabled:               true,
+		ControlEnabled:        true,
+		Priority:              1,
+		MinChargeW:            400,
+		MaxChargeW:            1500,
+		ChargeStepW:           100,
+		CapacityWh:            12288,
+		TargetSoc:             90,
+		ReserveSoc:            30,
+		SupportsSocRead:       true,
+		SupportsACChargeLimit: true,
+	})
+	if err != nil {
+		t.Fatalf("save blank write target failed: %v", err)
+	}
+	_, err = repo.UpsertChargingDevice(ctx, domain.ChargingDevice{
+		Name:                  "read only pro3",
+		Kind:                  "ecoflow_delta_pro3",
+		Provider:              "ecoflow",
+		Role:                  "primary",
+		CredentialRef:         "read_only_pro3",
+		DeviceSN:              "PRO3READ",
+		DeviceType:            "DELTA_PRO3",
+		StatusSource:          "ecoflow_cloud",
+		Enabled:               true,
+		ControlEnabled:        false,
+		Priority:              2,
+		MinChargeW:            400,
+		MaxChargeW:            1500,
+		ChargeStepW:           100,
+		CapacityWh:            12288,
+		TargetSoc:             90,
+		ReserveSoc:            30,
+		SupportsSocRead:       true,
+		SupportsACChargeLimit: true,
+	})
+	if err != nil {
+		t.Fatalf("save read target failed: %v", err)
+	}
+	_, err = repo.UpsertChargingDevice(ctx, domain.ChargingDevice{
+		Name:                  "write pro3",
+		Kind:                  "ecoflow_delta_pro3",
+		Provider:              "ecoflow",
+		Role:                  "primary",
+		CredentialRef:         "write_pro3",
+		DeviceSN:              "PRO3WRITE",
+		DeviceType:            "DELTA_PRO3",
+		StatusSource:          "ecoflow_cloud",
+		Enabled:               true,
+		ControlEnabled:        true,
+		Priority:              3,
+		MinChargeW:            400,
+		MaxChargeW:            1500,
+		ChargeStepW:           100,
+		CapacityWh:            12288,
+		TargetSoc:             90,
+		ReserveSoc:            30,
+		SupportsSocRead:       true,
+		SupportsACChargeLimit: true,
+	})
+	if err != nil {
+		t.Fatalf("save write target failed: %v", err)
+	}
+
+	writeTarget, ok, err := repo.EcoFlowCloudWriteTarget(ctx)
+	if err != nil || !ok {
+		t.Fatalf("EcoFlowCloudWriteTarget = ok %v err %v", ok, err)
+	}
+	if writeTarget.DeviceSN != "PRO3WRITE" {
+		t.Fatalf("write target SN = %q, want PRO3WRITE", writeTarget.DeviceSN)
+	}
+	readTarget, ok, err := repo.EcoFlowCloudReadTarget(ctx)
+	if err != nil || !ok {
+		t.Fatalf("EcoFlowCloudReadTarget = ok %v err %v", ok, err)
+	}
+	if readTarget.DeviceSN != "PRO3WRITE" {
+		t.Fatalf("read target SN = %q, want aligned write target PRO3WRITE", readTarget.DeviceSN)
+	}
+}
+
+func TestChargingDeviceRepositorySelectsEcoFlowCloudReadTargetWithoutWriteTarget(t *testing.T) {
+	db := newChargingDeviceTestDB(t)
+	repo := NewChargingDeviceRepository(db)
+	ctx := context.Background()
+
+	_, err := repo.UpsertChargingDevice(ctx, domain.ChargingDevice{
+		Name:                  "read only pro3",
+		Kind:                  "ecoflow_delta_pro3",
+		Provider:              "ecoflow",
+		Role:                  "primary",
+		CredentialRef:         "read_only_pro3",
+		DeviceSN:              "PRO3READ",
+		DeviceType:            "DELTA_PRO3",
+		StatusSource:          "ecoflow_cloud",
+		Enabled:               true,
+		ControlEnabled:        false,
+		Priority:              1,
+		MinChargeW:            400,
+		MaxChargeW:            1500,
+		ChargeStepW:           100,
+		CapacityWh:            12288,
+		TargetSoc:             90,
+		ReserveSoc:            30,
+		SupportsSocRead:       true,
+		SupportsACChargeLimit: true,
+	})
+	if err != nil {
+		t.Fatalf("save read target failed: %v", err)
+	}
+
+	readTarget, ok, err := repo.EcoFlowCloudReadTarget(ctx)
+	if err != nil || !ok {
+		t.Fatalf("EcoFlowCloudReadTarget = ok %v err %v", ok, err)
+	}
+	if readTarget.DeviceSN != "PRO3READ" {
+		t.Fatalf("read target SN = %q, want PRO3READ", readTarget.DeviceSN)
+	}
+	writeTarget, ok, err := repo.EcoFlowCloudWriteTarget(ctx)
+	if err != nil || ok {
+		t.Fatalf("EcoFlowCloudWriteTarget = target %+v ok %v err %v, want no write target", writeTarget, ok, err)
+	}
+}
+
 func TestChargingDeviceDeviceSNUniqueWhenNonEmpty(t *testing.T) {
 	db := newChargingDeviceTestDB(t)
 	repo := NewChargingDeviceRepository(db)

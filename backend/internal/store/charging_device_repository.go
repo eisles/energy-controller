@@ -163,6 +163,48 @@ func (r *ChargingDeviceRepository) Delta3WriteTarget(ctx context.Context) (domai
 	return r.delta3Target(ctx, true)
 }
 
+func (r *ChargingDeviceRepository) EcoFlowCloudReadTarget(ctx context.Context) (domain.ChargingDevice, bool, error) {
+	if writeTarget, ok, err := r.EcoFlowCloudWriteTarget(ctx); err != nil || ok {
+		return writeTarget, ok, err
+	}
+	return r.ecoFlowCloudTarget(ctx, false)
+}
+
+func (r *ChargingDeviceRepository) EcoFlowCloudWriteTarget(ctx context.Context) (domain.ChargingDevice, bool, error) {
+	return r.ecoFlowCloudTarget(ctx, true)
+}
+
+func (r *ChargingDeviceRepository) ecoFlowCloudTarget(ctx context.Context, requireWriteSupport bool) (domain.ChargingDevice, bool, error) {
+	query := `SELECT
+		id, name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
+		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc,
+		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
+		FROM charging_devices
+		WHERE enabled = 1
+		  AND provider = 'ecoflow'
+		  AND kind = 'ecoflow_delta_pro3'
+		  AND status_source = 'ecoflow_cloud'
+		  AND TRIM(device_sn) <> ''
+		  AND supports_soc_read = 1`
+	if requireWriteSupport {
+		query += ` AND control_enabled = 1 AND supports_ac_charge_limit = 1`
+	}
+	query += ` ORDER BY priority ASC, id ASC LIMIT 1`
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return domain.ChargingDevice{}, false, err
+	}
+	defer rows.Close()
+	devices, err := scanChargingDevices(rows)
+	if err != nil {
+		return domain.ChargingDevice{}, false, err
+	}
+	if len(devices) == 0 {
+		return domain.ChargingDevice{}, false, nil
+	}
+	return devices[0], true, nil
+}
+
 func (r *ChargingDeviceRepository) delta3Target(ctx context.Context, requireWriteSupport bool) (domain.ChargingDevice, bool, error) {
 	query := `SELECT
 		id, name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
