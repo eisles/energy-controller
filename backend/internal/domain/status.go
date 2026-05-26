@@ -9,18 +9,19 @@ type GridPower struct {
 }
 
 type BatteryStatus struct {
-	Soc                 int   `json:"batterySoc"`
-	InputW              int   `json:"batteryInputW"`
-	OutputW             int   `json:"batteryOutputW"`
-	ACChargeLimitW      int   `json:"acChargeLimitW"`
-	BackupReserveSoc    *int  `json:"backupReserveSoc,omitempty"`
-	EnergyBackupEnabled *bool `json:"energyBackupEnabled,omitempty"`
-	TOUModeEnabled      *bool `json:"touModeEnabled,omitempty"`
-	SelfPoweredEnabled  *bool `json:"selfPoweredEnabled,omitempty"`
-	ScheduledEnabled    *bool `json:"scheduledEnabled,omitempty"`
-	IntelligentEnabled  *bool `json:"intelligentEnabled,omitempty"`
-	FullEnergyWh        *int  `json:"fullEnergyWh,omitempty"`
-	IsOnline            bool  `json:"isOnline"`
+	Soc                 int            `json:"batterySoc"`
+	InputW              int            `json:"batteryInputW"`
+	OutputW             int            `json:"batteryOutputW"`
+	ACChargeLimitW      int            `json:"acChargeLimitW"`
+	BackupReserveSoc    *int           `json:"backupReserveSoc,omitempty"`
+	EnergyBackupEnabled *bool          `json:"energyBackupEnabled,omitempty"`
+	TOUModeEnabled      *bool          `json:"touModeEnabled,omitempty"`
+	SelfPoweredEnabled  *bool          `json:"selfPoweredEnabled,omitempty"`
+	ScheduledEnabled    *bool          `json:"scheduledEnabled,omitempty"`
+	IntelligentEnabled  *bool          `json:"intelligentEnabled,omitempty"`
+	FullEnergyWh        *int           `json:"fullEnergyWh,omitempty"`
+	EcoFlowDiagnostics  map[string]any `json:"ecoflowDiagnostics,omitempty"`
+	IsOnline            bool           `json:"isOnline"`
 }
 
 type ControlDecision struct {
@@ -44,6 +45,7 @@ type Status struct {
 	ScheduledEnabled                 *bool            `json:"scheduledEnabled,omitempty"`
 	IntelligentEnabled               *bool            `json:"intelligentEnabled,omitempty"`
 	BatteryFullEnergyWh              *int             `json:"batteryFullEnergyWh,omitempty"`
+	EcoFlowDiagnostics               map[string]any   `json:"ecoflowDiagnostics,omitempty"`
 	SurplusPlan                      *SurplusPlan     `json:"surplusPlan,omitempty"`
 	NightChargePlan                  *NightChargePlan `json:"nightChargePlan,omitempty"`
 	Delta3AuxPlan                    *Delta3AuxPlan   `json:"delta3AuxPlan,omitempty"`
@@ -317,22 +319,23 @@ type NightChargeDailySummary struct {
 }
 
 type PowerLog struct {
-	ID             int64     `json:"id"`
-	MeasuredAt     time.Time `json:"measuredAt"`
-	GridW          int       `json:"gridW"`
-	ImportW        int       `json:"importW"`
-	ExportW        int       `json:"exportW"`
-	BatterySoc     *int      `json:"batterySoc"`
-	BatteryInputW  *int      `json:"batteryInputW"`
-	BatteryOutputW *int      `json:"batteryOutputW"`
-	ACChargeLimitW *int      `json:"acChargeLimitW"`
-	TargetChargeW  int       `json:"targetChargeW"`
-	ActualCommandW *int      `json:"actualCommandW"`
-	DecisionReason string    `json:"decisionReason"`
-	Mode           string    `json:"mode"`
-	CommandSent    bool      `json:"commandSent"`
-	ErrorMessage   *string   `json:"errorMessage"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID                 int64          `json:"id"`
+	MeasuredAt         time.Time      `json:"measuredAt"`
+	GridW              int            `json:"gridW"`
+	ImportW            int            `json:"importW"`
+	ExportW            int            `json:"exportW"`
+	BatterySoc         *int           `json:"batterySoc"`
+	BatteryInputW      *int           `json:"batteryInputW"`
+	BatteryOutputW     *int           `json:"batteryOutputW"`
+	ACChargeLimitW     *int           `json:"acChargeLimitW"`
+	TargetChargeW      int            `json:"targetChargeW"`
+	ActualCommandW     *int           `json:"actualCommandW"`
+	DecisionReason     string         `json:"decisionReason"`
+	Mode               string         `json:"mode"`
+	CommandSent        bool           `json:"commandSent"`
+	ErrorMessage       *string        `json:"errorMessage"`
+	EcoFlowDiagnostics map[string]any `json:"ecoflowDiagnostics,omitempty"`
+	CreatedAt          time.Time      `json:"createdAt"`
 }
 
 type SurplusControlCommandLog struct {

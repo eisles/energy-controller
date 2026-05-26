@@ -152,6 +152,11 @@ type delta3WriteTargetProvider interface {
 	Delta3WriteTarget(ctx context.Context) (domain.ChargingDevice, bool, error)
 }
 
+type chargingPriorityTargetProvider interface {
+	ecoFlowCloudWriteTargetProvider
+	delta3WriteTargetProvider
+}
+
 type ecoFlowCloudReadTargetProvider interface {
 	EcoFlowCloudReadTarget(ctx context.Context) (domain.ChargingDevice, bool, error)
 }
@@ -171,6 +176,13 @@ type energyMeterReader interface {
 type commandStatus struct {
 	ActualCommandW *int
 	CommandSent    bool
+}
+
+type chargingPriorityContext struct {
+	pro3     domain.ChargingDevice
+	pro3OK   bool
+	delta3   domain.ChargingDevice
+	delta3OK bool
 }
 
 type commandStatusProvider interface {
@@ -453,6 +465,8 @@ func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusPro
 		}
 	}
 	nightPlanOwnsControl := applyNightChargePlanControl(ctx, cfg, &status, writeClient, previousNightPlan)
+	priorityContext := resolveChargingPriorityContext(ctx, delta3TargetProvider, logger)
+	higherPriorityDevice := higherPriorityDelta3ChargeCandidateDevice(ctx, cfg, status, priorityContext, delta3Reader, delta3Writer, delta3AuxControlCommandRepository, logger)
 	if nightChargePlanRepository != nil {
 		if err := nightChargePlanRepository.InsertNightChargePlanLog(ctx, status); err != nil {
 			logger.Warn("failed to save night charge plan log", "error", err)
@@ -476,6 +490,7 @@ func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusPro
 					AutoControl:            cfg.AutoControlEnabled,
 					ConfirmEcoFlowWrite:    cfg.ConfirmEcoFlowWrite,
 					RealControlTrialActive: realControlTrialActive(cfg),
+					HigherPriorityDevice:   higherPriorityDevice,
 					Previous:               previous,
 				}, cfg.ControlSettings)
 				commandLog = control.ExecuteSurplusCommand(ctx, commandLog, writeClient)
@@ -486,7 +501,7 @@ func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusPro
 		}
 	}
 	if delta3AuxControlCommandRepository != nil {
-		applyDelta3AuxControl(ctx, cfg, &status, delta3Reader, delta3Writer, delta3TargetProvider, surplusControlCommandRepository, delta3AuxControlCommandRepository, logger)
+		applyDelta3AuxControl(ctx, cfg, &status, delta3Reader, delta3Writer, delta3TargetProvider, surplusControlCommandRepository, delta3AuxControlCommandRepository, priorityContext.ignorePro3WaitForDelta3(cfg), logger)
 	}
 	if err := statusRepository.UpdateCurrentStatus(ctx, status); err != nil {
 		logger.Error("failed to update current status", "error", err)
@@ -497,7 +512,7 @@ func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusPro
 	logger.Info("control decision saved", "mode", status.Mode, "state", status.State, "gridW", status.GridW, "targetChargeW", status.TargetChargeW, "reason", status.LastDecisionReason)
 }
 
-func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domain.Status, delta3Reader delta3StatusReader, delta3Writer delta3AuxWriteClient, delta3TargetProvider delta3WriteTargetProvider, surplusControlCommandRepository surplusControlCommandLogWriter, delta3AuxControlCommandRepository delta3AuxControlCommandLogWriter, logger *slog.Logger) {
+func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domain.Status, delta3Reader delta3StatusReader, delta3Writer delta3AuxWriteClient, delta3TargetProvider delta3WriteTargetProvider, surplusControlCommandRepository surplusControlCommandLogWriter, delta3AuxControlCommandRepository delta3AuxControlCommandLogWriter, ignorePro3Wait bool, logger *slog.Logger) {
 	if status == nil {
 		return
 	}
@@ -542,6 +557,7 @@ func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domai
 			MaxChargeSoc:   delta3Status.MaxChargeSoc,
 			LastError:      delta3Status.LastError,
 		},
+		IgnorePro3Wait:      ignorePro3Wait,
 		Pro3PreviousCommand: previousPro3,
 	}, delta3AuxSettingsFromConfig(cfg), cfg.ControlSettings))
 
@@ -559,10 +575,10 @@ func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domai
 		ConfirmEcoFlowWrite:    cfg.ConfirmEcoFlowWrite,
 		RealControlTrialActive: realControlTrialActive(cfg),
 		Delta3ReadEnabled:      cfg.Delta3ReadEnabled,
+		Delta3ControlEnabled:   delta3ControlEnabled,
 		AllowAutoControlWrite:  cfg.Delta3AllowAutoWrite,
 		Execute:                cfg.Delta3ExecuteWrite,
 		AllowPrivateAPIWrite:   cfg.Delta3AllowPrivateWrite,
-		Delta3ControlEnabled:   delta3ControlEnabled,
 		Previous:               previous,
 	}, delta3AuxSettingsFromConfig(cfg))
 	commandLog = control.ExecuteDelta3AuxCommand(ctx, commandLog, delta3Writer)
@@ -726,23 +742,128 @@ func lastCommandStatus(provider api.StatusProvider) commandStatus {
 	}
 }
 
+func resolveChargingPriorityContext(ctx context.Context, provider delta3WriteTargetProvider, logger *slog.Logger) chargingPriorityContext {
+	priorityProvider, ok := provider.(chargingPriorityTargetProvider)
+	if !ok || priorityProvider == nil {
+		return chargingPriorityContext{}
+	}
+	var result chargingPriorityContext
+	pro3, pro3OK, err := priorityProvider.EcoFlowCloudWriteTarget(ctx)
+	if err != nil {
+		logger.Warn("failed to resolve DELTA Pro 3 priority target", "error", err)
+	} else {
+		result.pro3 = pro3
+		result.pro3OK = pro3OK
+	}
+	delta3, delta3OK, err := priorityProvider.Delta3WriteTarget(ctx)
+	if err != nil {
+		logger.Warn("failed to resolve DELTA 3 Plus priority target", "error", err)
+	} else {
+		result.delta3 = delta3
+		result.delta3OK = delta3OK
+	}
+	return result
+}
+
+func higherPriorityDelta3ChargeCandidateDevice(ctx context.Context, cfg config.Config, status domain.Status, priorityContext chargingPriorityContext, delta3Reader delta3StatusReader, delta3Writer delta3AuxWriteClient, delta3AuxControlCommandRepository delta3AuxControlCommandLogWriter, logger *slog.Logger) string {
+	if !priorityContext.delta3PriorityControlEnabled(cfg) || !priorityContext.delta3HasHigherPriorityThanPro3() {
+		return ""
+	}
+	if delta3Reader == nil || delta3Writer == nil || delta3AuxControlCommandRepository == nil {
+		return ""
+	}
+	delta3ControlCfg := api.Delta3ConfigForDevice(cfg, priorityContext.delta3)
+	delta3Status := api.Delta3StatusResponse{Available: false, LastError: "DELTA 3 Plus status reader is unavailable"}
+	if configReader, ok := delta3Reader.(delta3ConfigStatusReader); ok {
+		delta3Status = configReader.CurrentStatusForConfig(ctx, delta3ControlCfg)
+	} else {
+		delta3Status = delta3Reader.CurrentStatus(ctx)
+	}
+	plan := control.PlanDelta3AuxCharging(control.Delta3AuxPlanInput{
+		Status: status,
+		Delta3: control.Delta3AuxStatus{
+			Available:      delta3Status.Available,
+			DeviceType:     delta3Status.DeviceType,
+			SOC:            delta3Status.SOC,
+			ACInW:          delta3Status.ACInW,
+			ACOutW:         delta3Status.ACOutW,
+			ACChargeLimitW: delta3Status.ACChargeLimitW,
+			MaxChargeSoc:   delta3Status.MaxChargeSoc,
+			LastError:      delta3Status.LastError,
+		},
+		IgnorePro3Wait: true,
+	}, delta3AuxSettingsFromConfig(cfg), cfg.ControlSettings)
+	if !plan.ShouldAdjustACChargeLimit {
+		return ""
+	}
+	previous, err := delta3AuxControlCommandRepository.LatestDelta3AuxControlWriteCandidateLog(ctx)
+	if err != nil {
+		logger.Warn("failed to load latest DELTA 3 Plus aux command log for priority decision", "error", err)
+		return ""
+	}
+	previewStatus := status
+	previewStatus.Delta3AuxPlan = &plan
+	commandLog := control.EvaluateDelta3AuxCommandGuard(control.Delta3AuxCommandGuardInput{
+		Status:                 previewStatus,
+		MockMode:               cfg.MockMode,
+		SimulationMode:         cfg.SimulationMode,
+		EnableRealControl:      cfg.EnableRealControl,
+		AutoControl:            cfg.AutoControlEnabled,
+		ConfirmEcoFlowWrite:    cfg.ConfirmEcoFlowWrite,
+		RealControlTrialActive: realControlTrialActive(cfg),
+		Delta3ReadEnabled:      cfg.Delta3ReadEnabled,
+		Delta3ControlEnabled:   true,
+		AllowAutoControlWrite:  cfg.Delta3AllowAutoWrite,
+		Execute:                cfg.Delta3ExecuteWrite,
+		AllowPrivateAPIWrite:   cfg.Delta3AllowPrivateWrite,
+		Previous:               previous,
+	}, delta3AuxSettingsFromConfig(cfg))
+	if !commandLog.WouldWrite {
+		return ""
+	}
+	return chargingDeviceName(priorityContext.delta3)
+}
+
+func (c chargingPriorityContext) ignorePro3WaitForDelta3(cfg config.Config) bool {
+	return c.delta3PriorityControlEnabled(cfg) && (!c.pro3OK || c.delta3HasHigherPriorityThanPro3())
+}
+
+func (c chargingPriorityContext) delta3PriorityControlEnabled(cfg config.Config) bool {
+	return c.delta3OK && cfg.Delta3Aux.Enabled && cfg.Delta3ReadEnabled
+}
+
+func (c chargingPriorityContext) delta3HasHigherPriorityThanPro3() bool {
+	return c.pro3OK && c.delta3OK && c.delta3.Priority < c.pro3.Priority
+}
+
+func chargingDeviceName(device domain.ChargingDevice) string {
+	if strings.TrimSpace(device.Name) != "" {
+		return strings.TrimSpace(device.Name)
+	}
+	if strings.TrimSpace(device.Kind) != "" {
+		return strings.TrimSpace(device.Kind)
+	}
+	return "unknown"
+}
+
 func powerLogFromStatus(status domain.Status, command commandStatus) domain.PowerLog {
 	return domain.PowerLog{
-		MeasuredAt:     status.UpdatedAt,
-		GridW:          status.GridW,
-		ImportW:        status.ImportW,
-		ExportW:        status.ExportW,
-		BatterySoc:     intPtr(status.BatterySoc),
-		BatteryInputW:  intPtr(status.BatteryInputW),
-		BatteryOutputW: intPtr(status.BatteryOutputW),
-		ACChargeLimitW: intPtr(status.ACChargeLimitW),
-		TargetChargeW:  status.TargetChargeW,
-		ActualCommandW: command.ActualCommandW,
-		DecisionReason: status.LastDecisionReason,
-		Mode:           status.Mode,
-		CommandSent:    command.CommandSent,
-		ErrorMessage:   status.LastError,
-		CreatedAt:      status.UpdatedAt,
+		MeasuredAt:         status.UpdatedAt,
+		GridW:              status.GridW,
+		ImportW:            status.ImportW,
+		ExportW:            status.ExportW,
+		BatterySoc:         intPtr(status.BatterySoc),
+		BatteryInputW:      intPtr(status.BatteryInputW),
+		BatteryOutputW:     intPtr(status.BatteryOutputW),
+		ACChargeLimitW:     intPtr(status.ACChargeLimitW),
+		TargetChargeW:      status.TargetChargeW,
+		ActualCommandW:     command.ActualCommandW,
+		DecisionReason:     status.LastDecisionReason,
+		Mode:               status.Mode,
+		CommandSent:        command.CommandSent,
+		ErrorMessage:       status.LastError,
+		EcoFlowDiagnostics: status.EcoFlowDiagnostics,
+		CreatedAt:          status.UpdatedAt,
 	}
 }
 

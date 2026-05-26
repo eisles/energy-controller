@@ -110,7 +110,7 @@ func runWriteCandidate(ctx context.Context, opts options, getenv envGetter, clie
 		SimulationMode:          envBool(getenv, "SIMULATION_MODE", true),
 		EnableRealControl:       envBool(getenv, "ENABLE_REAL_CONTROL", false),
 		AutoControlEnabled:      envBool(getenv, "AUTO_CONTROL_ENABLED", false),
-		AllowAutoControlOverlap: opts.allowAutoControlOverlap || envBool(getenv, "ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL", false),
+		AllowAutoControlOverlap: opts.allowAutoControlOverlap,
 		ConfirmEcoFlowWrite:     getenv("CONFIRM_ECOFLOW_WRITE"),
 		Execute:                 opts.execute,
 		AllowPrivateAPIWrite:    opts.allowPrivateAPIWrite,

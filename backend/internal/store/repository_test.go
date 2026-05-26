@@ -28,11 +28,15 @@ func TestStatusRepositoryUpdatesAndReadsCurrentStatus(t *testing.T) {
 		BatteryOutputW:      0,
 		ACChargeLimitW:      1500,
 		BatteryFullEnergyWh: &fullEnergyWh,
-		TargetChargeW:       700,
-		State:               "simulation",
-		Mode:                "mock",
-		LastDecisionReason:  "export power is above start threshold",
-		LastError:           &lastError,
+		EcoFlowDiagnostics: map[string]any{
+			"bmsMasterTemp":        42.0,
+			"outputPowerOffMemory": true,
+		},
+		TargetChargeW:      700,
+		State:              "simulation",
+		Mode:               "mock",
+		LastDecisionReason: "export power is above start threshold",
+		LastError:          &lastError,
 		Delta3AuxPlan: &domain.Delta3AuxPlan{
 			Mode:                      "read-only",
 			StrategyState:             "READY",
@@ -60,6 +64,9 @@ func TestStatusRepositoryUpdatesAndReadsCurrentStatus(t *testing.T) {
 	}
 	if got.BatteryFullEnergyWh == nil || *got.BatteryFullEnergyWh != fullEnergyWh {
 		t.Fatalf("BatteryFullEnergyWh = %v, want %d", got.BatteryFullEnergyWh, fullEnergyWh)
+	}
+	if got.EcoFlowDiagnostics["bmsMasterTemp"] != 42.0 || got.EcoFlowDiagnostics["outputPowerOffMemory"] != true {
+		t.Fatalf("EcoFlowDiagnostics = %#v, want saved diagnostics", got.EcoFlowDiagnostics)
 	}
 	if got.Delta3AuxPlan == nil || got.Delta3AuxPlan.StrategyState != "READY" || got.Delta3AuxPlan.RecommendedACChargeLimitW != 300 {
 		t.Fatalf("Delta3AuxPlan = %+v, want READY 300W", got.Delta3AuxPlan)
@@ -208,7 +215,10 @@ func TestLogRepositoryInsertsAndListsNewestFirst(t *testing.T) {
 		DecisionReason: "export power is above start threshold",
 		Mode:           "mock",
 		CommandSent:    false,
-		CreatedAt:      secondAt,
+		EcoFlowDiagnostics: map[string]any{
+			"bmsMasterTemp": 44.0,
+		},
+		CreatedAt: secondAt,
 	}); err != nil {
 		t.Fatalf("InsertPowerLog second failed: %v", err)
 	}
@@ -222,6 +232,9 @@ func TestLogRepositoryInsertsAndListsNewestFirst(t *testing.T) {
 	}
 	if logs[0].GridW != -900 || logs[0].BatterySoc == nil || *logs[0].BatterySoc != soc || logs[0].ACChargeLimitW == nil || *logs[0].ACChargeLimitW != acLimit {
 		t.Fatalf("unexpected newest log: %+v", logs[0])
+	}
+	if logs[0].EcoFlowDiagnostics["bmsMasterTemp"] != 44.0 {
+		t.Fatalf("EcoFlowDiagnostics = %#v, want saved diagnostics", logs[0].EcoFlowDiagnostics)
 	}
 }
 

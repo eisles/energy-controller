@@ -182,6 +182,7 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 		ScheduledEnabled:    batteryStatus.ScheduledEnabled,
 		IntelligentEnabled:  batteryStatus.IntelligentEnabled,
 		BatteryFullEnergyWh: batteryStatus.FullEnergyWh,
+		EcoFlowDiagnostics:  batteryStatus.EcoFlowDiagnostics,
 		SurplusPlan:         &surplusPlan,
 		NightChargePlan:     &nightChargePlan,
 		TargetChargeW:       result.Decision.TargetChargeW,

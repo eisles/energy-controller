@@ -32,8 +32,10 @@ type Delta3AuxStatus struct {
 }
 
 type Delta3AuxPlanInput struct {
-	Status              domain.Status
-	Delta3              Delta3AuxStatus
+	Status         domain.Status
+	Delta3         Delta3AuxStatus
+	IgnorePro3Wait bool
+
 	Pro3PreviousCommand *domain.SurplusControlCommandLog
 }
 
@@ -105,15 +107,17 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 		return plan
 	}
 
-	if input.Pro3PreviousCommand != nil && pro3CommandSettling(input.Pro3PreviousCommand, status.UpdatedAt, pro3Settings.MinCommandInterval) {
-		plan.StrategyState = "WAIT_PRO3"
-		plan.Reason = "waiting for recent DELTA Pro 3 command to settle"
-		return plan
-	}
-	if shouldWaitForPro3(status, pro3Settings) {
-		plan.StrategyState = "WAIT_PRO3"
-		plan.Reason = "DELTA Pro 3 still has priority surplus absorption candidate"
-		return plan
+	if !input.IgnorePro3Wait {
+		if input.Pro3PreviousCommand != nil && pro3CommandSettling(input.Pro3PreviousCommand, status.UpdatedAt, pro3Settings.MinCommandInterval) {
+			plan.StrategyState = "WAIT_PRO3"
+			plan.Reason = "waiting for recent DELTA Pro 3 command to settle"
+			return plan
+		}
+		if shouldWaitForPro3(status, pro3Settings) {
+			plan.StrategyState = "WAIT_PRO3"
+			plan.Reason = "DELTA Pro 3 still has priority surplus absorption candidate"
+			return plan
+		}
 	}
 
 	residualHeadroomW := status.ExportW - settings.SafetyMarginW

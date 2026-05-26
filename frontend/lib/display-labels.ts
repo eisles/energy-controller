@@ -91,6 +91,7 @@ const partialReasonLabels: Array<[string, string]> = [
   ["night dry-run plan:", "夜間充電計画:"],
   ["night charge plan owns control:", "夜間充電計画が制御中です:"],
   ["mode status unavailable", "動作モード状態を取得できません"],
+  ["higher priority charging device", "優先順位が高い充電機器を先に制御します"],
   ["TOU mode is already enabled", "TOUモードはすでに有効です"],
   ["energy modes already disabled", "動作モードはすでに無効です"],
   ["small surplus is below normal charge start requirement", "売電量が通常充電の開始条件未満のためパススルー調整候補です"],

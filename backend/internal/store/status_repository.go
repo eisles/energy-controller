@@ -21,15 +21,15 @@ func (r *StatusRepository) CurrentStatus(ctx context.Context) (domain.Status, er
 	var status domain.Status
 	var updatedAt string
 	var batterySoc, batteryInputW, batteryOutputW, acChargeLimitW, backupReserveSoc, energyBackupEnabled, touModeEnabled, selfPoweredEnabled, scheduledEnabled, intelligentEnabled, batteryFullEnergyWh sql.NullInt64
-	var lastError, surplusPlanJSON, nightChargePlanJSON, delta3AuxPlanJSON sql.NullString
+	var lastError, ecoflowDiagnosticsJSON, surplusPlanJSON, nightChargePlanJSON, delta3AuxPlanJSON sql.NullString
 
 	err := r.db.QueryRowContext(ctx, `SELECT
 		grid_w, import_w, export_w, battery_soc, battery_input_w,
 		battery_output_w, ac_charge_limit_w, target_charge_w, state, mode,
 		last_decision_reason, last_error, updated_at, backup_reserve_soc,
 		energy_backup_enabled, tou_mode_enabled, self_powered_enabled, scheduled_enabled,
-		intelligent_enabled, battery_full_energy_wh, surplus_plan_json, night_charge_plan_json,
-		delta3_aux_plan_json
+		intelligent_enabled, battery_full_energy_wh, ecoflow_diagnostics_json, surplus_plan_json,
+		night_charge_plan_json, delta3_aux_plan_json
 		FROM current_status WHERE id = 1`,
 	).Scan(
 		&status.GridW,
@@ -52,6 +52,7 @@ func (r *StatusRepository) CurrentStatus(ctx context.Context) (domain.Status, er
 		&scheduledEnabled,
 		&intelligentEnabled,
 		&batteryFullEnergyWh,
+		&ecoflowDiagnosticsJSON,
 		&surplusPlanJSON,
 		&nightChargePlanJSON,
 		&delta3AuxPlanJSON,
@@ -71,6 +72,13 @@ func (r *StatusRepository) CurrentStatus(ctx context.Context) (domain.Status, er
 	status.ScheduledEnabled = boolPtrFromNull(scheduledEnabled)
 	status.IntelligentEnabled = boolPtrFromNull(intelligentEnabled)
 	status.BatteryFullEnergyWh = intPtrFromNull(batteryFullEnergyWh)
+	if ecoflowDiagnosticsJSON.Valid && ecoflowDiagnosticsJSON.String != "" {
+		diagnostics, err := mapFromJSON(ecoflowDiagnosticsJSON.String)
+		if err != nil {
+			return domain.Status{}, err
+		}
+		status.EcoFlowDiagnostics = diagnostics
+	}
 	if surplusPlanJSON.Valid && surplusPlanJSON.String != "" {
 		var plan domain.SurplusPlan
 		if err := json.Unmarshal([]byte(surplusPlanJSON.String), &plan); err != nil {
@@ -108,9 +116,9 @@ func (r *StatusRepository) UpdateCurrentStatus(ctx context.Context, status domai
 		id, grid_w, import_w, export_w, battery_soc, battery_input_w,
 		battery_output_w, ac_charge_limit_w, target_charge_w, state, mode, last_decision_reason,
 		last_error, updated_at, backup_reserve_soc, energy_backup_enabled, tou_mode_enabled,
-		self_powered_enabled, scheduled_enabled, intelligent_enabled, battery_full_energy_wh, surplus_plan_json,
-		night_charge_plan_json, delta3_aux_plan_json
-	) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		self_powered_enabled, scheduled_enabled, intelligent_enabled, battery_full_energy_wh,
+		ecoflow_diagnostics_json, surplus_plan_json, night_charge_plan_json, delta3_aux_plan_json
+	) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		grid_w = excluded.grid_w,
 		import_w = excluded.import_w,
@@ -131,6 +139,7 @@ func (r *StatusRepository) UpdateCurrentStatus(ctx context.Context, status domai
 		scheduled_enabled = excluded.scheduled_enabled,
 		intelligent_enabled = excluded.intelligent_enabled,
 		battery_full_energy_wh = excluded.battery_full_energy_wh,
+		ecoflow_diagnostics_json = excluded.ecoflow_diagnostics_json,
 		surplus_plan_json = excluded.surplus_plan_json,
 		night_charge_plan_json = excluded.night_charge_plan_json,
 		delta3_aux_plan_json = excluded.delta3_aux_plan_json,
@@ -155,6 +164,7 @@ func (r *StatusRepository) UpdateCurrentStatus(ctx context.Context, status domai
 		nullableBool(status.ScheduledEnabled),
 		nullableBool(status.IntelligentEnabled),
 		nullableInt(status.BatteryFullEnergyWh),
+		nullableJSON(status.EcoFlowDiagnostics),
 		nullableJSON(status.SurplusPlan),
 		nullableJSON(status.NightChargePlan),
 		nullableJSON(status.Delta3AuxPlan),
@@ -211,4 +221,15 @@ func nullableJSON(value any) any {
 		return nil
 	}
 	return string(encoded)
+}
+
+func mapFromJSON(value string) (map[string]any, error) {
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(value), &decoded); err != nil {
+		return nil, err
+	}
+	if len(decoded) == 0 {
+		return nil, nil
+	}
+	return decoded, nil
 }

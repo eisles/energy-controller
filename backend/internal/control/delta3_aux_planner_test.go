@@ -105,6 +105,42 @@ func TestPlanDelta3AuxChargingWaitsForPro3Candidate(t *testing.T) {
 	}
 }
 
+func TestPlanDelta3AuxChargingBypassesPro3WaitWhenHigherPriority(t *testing.T) {
+	currentLimit := 100
+	soc := 70
+	plan := PlanDelta3AuxCharging(Delta3AuxPlanInput{
+		Status: domain.Status{
+			ExportW:        900,
+			ACChargeLimitW: 400,
+			BatterySoc:     70,
+			SurplusPlan: &domain.SurplusPlan{
+				StrategyState:             "READY",
+				ShouldAdjustACChargeLimit: true,
+				RecommendedACChargeLimitW: 800,
+			},
+		},
+		Delta3: Delta3AuxStatus{
+			Available:      true,
+			SOC:            &soc,
+			ACChargeLimitW: &currentLimit,
+		},
+		IgnorePro3Wait: true,
+	}, Delta3AuxSettings{
+		Enabled:          true,
+		SafetyMarginW:    50,
+		MinCommandDiffW:  100,
+		MaxIncreaseStepW: 300,
+		MaxDecreaseStepW: 500,
+	}, DefaultSettings())
+
+	if plan.StrategyState == "WAIT_PRO3" {
+		t.Fatal("StrategyState = WAIT_PRO3, want DELTA 3 Plus priority to bypass Pro3 wait")
+	}
+	if !plan.ShouldAdjustACChargeLimit {
+		t.Fatal("ShouldAdjustACChargeLimit = false, want true")
+	}
+}
+
 func TestPlanDelta3AuxChargingDoesNotWriteNearMaxSoc(t *testing.T) {
 	currentLimit := 100
 	soc := 99

@@ -9,6 +9,9 @@ func TestBatteryStatusFromQuotas(t *testing.T) {
 		"powOutSumW":              323.0,
 		"plugInInfoAcInChgPowMax": 1500.0,
 		"cmsBattFullEnergy":       12288.0,
+		"bmsMasterTemp":           42.0,
+		"outputPowerOffMemory":    1.0,
+		"unrelatedQuota":          "ignored",
 	})
 	if err != nil {
 		t.Fatalf("BatteryStatusFromQuotas failed: %v", err)
@@ -18,6 +21,12 @@ func TestBatteryStatusFromQuotas(t *testing.T) {
 	}
 	if status.FullEnergyWh == nil || *status.FullEnergyWh != 12288 {
 		t.Fatalf("FullEnergyWh = %v, want 12288", status.FullEnergyWh)
+	}
+	if status.EcoFlowDiagnostics["bmsMasterTemp"] != 42.0 || status.EcoFlowDiagnostics["outputPowerOffMemory"] != 1.0 {
+		t.Fatalf("EcoFlowDiagnostics = %#v, want selected diagnostic quotas", status.EcoFlowDiagnostics)
+	}
+	if _, ok := status.EcoFlowDiagnostics["unrelatedQuota"]; ok {
+		t.Fatalf("EcoFlowDiagnostics includes unrelated quota: %#v", status.EcoFlowDiagnostics)
 	}
 }
 

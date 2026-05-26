@@ -33,8 +33,8 @@ func (r *LogRepository) InsertPowerLog(ctx context.Context, log domain.PowerLog)
 		measured_at, grid_w, import_w, export_w, battery_soc,
 		battery_input_w, battery_output_w, ac_charge_limit_w, target_charge_w,
 		actual_command_w, decision_reason, mode, command_sent,
-		error_message, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		error_message, ecoflow_diagnostics_json, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		log.MeasuredAt.Format(time.RFC3339Nano),
 		log.GridW,
 		log.ImportW,
@@ -49,6 +49,7 @@ func (r *LogRepository) InsertPowerLog(ctx context.Context, log domain.PowerLog)
 		log.Mode,
 		boolToInt(log.CommandSent),
 		nullableString(log.ErrorMessage),
+		nullableJSON(log.EcoFlowDiagnostics),
 		log.CreatedAt.Format(time.RFC3339Nano),
 	)
 	return err
@@ -68,7 +69,7 @@ func (r *LogRepository) ListPowerLogsPage(ctx context.Context, limit int, offset
 		id, measured_at, grid_w, import_w, export_w, battery_soc,
 		battery_input_w, battery_output_w, ac_charge_limit_w, target_charge_w,
 		actual_command_w, decision_reason, mode, command_sent,
-		error_message, created_at
+		error_message, ecoflow_diagnostics_json, created_at
 		FROM power_logs
 		`+whereClause+`
 		ORDER BY measured_at DESC, id DESC
@@ -104,7 +105,7 @@ func (r *LogRepository) ListPowerLogsSince(ctx context.Context, since time.Time,
 		id, measured_at, grid_w, import_w, export_w, battery_soc,
 		battery_input_w, battery_output_w, ac_charge_limit_w, target_charge_w,
 		actual_command_w, decision_reason, mode, command_sent,
-		error_message, created_at
+		error_message, ecoflow_diagnostics_json, created_at
 		FROM power_logs
 		WHERE julianday(measured_at) >= julianday(?)
 		ORDER BY measured_at DESC, id DESC`+limitClause, args...)
@@ -123,7 +124,7 @@ func scanPowerLogs(rows *sql.Rows, capacity int) ([]domain.PowerLog, error) {
 		var measuredAt, createdAt string
 		var batterySoc, batteryInputW, batteryOutputW, acChargeLimitW, actualCommandW sql.NullInt64
 		var commandSent int
-		var errorMessage sql.NullString
+		var errorMessage, ecoflowDiagnosticsJSON sql.NullString
 		if err := rows.Scan(
 			&log.ID,
 			&measuredAt,
@@ -140,6 +141,7 @@ func scanPowerLogs(rows *sql.Rows, capacity int) ([]domain.PowerLog, error) {
 			&log.Mode,
 			&commandSent,
 			&errorMessage,
+			&ecoflowDiagnosticsJSON,
 			&createdAt,
 		); err != nil {
 			return nil, err
@@ -161,6 +163,13 @@ func scanPowerLogs(rows *sql.Rows, capacity int) ([]domain.PowerLog, error) {
 		log.ActualCommandW = intPtrFromNull(actualCommandW)
 		if errorMessage.Valid {
 			log.ErrorMessage = &errorMessage.String
+		}
+		if ecoflowDiagnosticsJSON.Valid && ecoflowDiagnosticsJSON.String != "" {
+			diagnostics, err := mapFromJSON(ecoflowDiagnosticsJSON.String)
+			if err != nil {
+				return nil, err
+			}
+			log.EcoFlowDiagnostics = diagnostics
 		}
 		log.CommandSent = commandSent != 0
 		logs = append(logs, log)

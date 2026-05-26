@@ -63,9 +63,34 @@ type recordingSurplusWriteClient struct {
 	acChargePowerW *int
 }
 
+type recordingDelta3AuxWriteClient struct {
+	acChargePowerW *int
+}
+
+type fakeDelta3AuxCommandRepository struct {
+	previous *domain.Delta3AuxControlCommandLog
+}
+
 func (c *recordingSurplusWriteClient) SetACChargePower(_ context.Context, watts int) error {
 	c.acChargePowerW = intPtr(watts)
 	return nil
+}
+
+func (c *recordingDelta3AuxWriteClient) SetACChargePower(_ context.Context, watts int) error {
+	c.acChargePowerW = intPtr(watts)
+	return nil
+}
+
+func (r fakeDelta3AuxCommandRepository) InsertDelta3AuxControlCommandLog(context.Context, domain.Delta3AuxControlCommandLog) error {
+	return nil
+}
+
+func (r fakeDelta3AuxCommandRepository) LatestDelta3AuxControlCommandLog(context.Context) (*domain.Delta3AuxControlCommandLog, error) {
+	return r.previous, nil
+}
+
+func (r fakeDelta3AuxCommandRepository) LatestDelta3AuxControlWriteCandidateLog(context.Context) (*domain.Delta3AuxControlCommandLog, error) {
+	return r.previous, nil
 }
 
 func (c *recordingSurplusWriteClient) SetBackupReserveSoc(context.Context, int) error {
@@ -208,6 +233,148 @@ func TestEcoFlowCloudSurplusWriteClientUsesMasterSNAndGuards(t *testing.T) {
 	}
 	if recordingClient.acChargePowerW == nil || *recordingClient.acChargePowerW != 900 {
 		t.Fatalf("recorded AC charge W = %v, want 900", recordingClient.acChargePowerW)
+	}
+}
+
+func TestChargingPriorityContextRequiresDelta3AuxControlReadiness(t *testing.T) {
+	priority := chargingPriorityContext{
+		pro3OK: true,
+		pro3: domain.ChargingDevice{
+			Name:     "DELTA Pro 3",
+			Priority: 20,
+		},
+		delta3OK: true,
+		delta3: domain.ChargingDevice{
+			Name:     "DELTA 3 Plus",
+			Priority: 10,
+		},
+	}
+
+	if priority.ignorePro3WaitForDelta3(config.Config{}) {
+		t.Fatal("ignorePro3WaitForDelta3 without aux/read = true, want false")
+	}
+
+	cfg := config.Config{
+		Delta3ReadEnabled: true,
+		Delta3Aux: config.Delta3AuxConfig{
+			Enabled: true,
+		},
+	}
+	if !priority.ignorePro3WaitForDelta3(cfg) {
+		t.Fatal("ignorePro3WaitForDelta3 = false, want true")
+	}
+}
+
+func TestHigherPriorityDelta3ChargeCandidateRequiresActionablePlan(t *testing.T) {
+	now := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
+	priority := chargingPriorityContext{
+		pro3OK: true,
+		pro3: domain.ChargingDevice{
+			Name:     "DELTA Pro 3",
+			Priority: 20,
+		},
+		delta3OK: true,
+		delta3: domain.ChargingDevice{
+			Name:     "DELTA 3 Plus",
+			Priority: 10,
+		},
+	}
+	cfg := config.Config{
+		MockMode:                false,
+		SimulationMode:          false,
+		EnableRealControl:       true,
+		AutoControlEnabled:      true,
+		ConfirmEcoFlowWrite:     "I_UNDERSTAND",
+		RealControlTrialUntil:   now.Add(time.Hour),
+		Clock:                   fixedMainClock{now: now},
+		Delta3ReadEnabled:       true,
+		Delta3AllowAutoWrite:    true,
+		Delta3ExecuteWrite:      true,
+		Delta3AllowPrivateWrite: true,
+		Delta3Aux: config.Delta3AuxConfig{
+			Enabled:                   true,
+			MinChargeW:                100,
+			MaxChargeW:                1500,
+			SafetyMarginW:             50,
+			MinCommandDiffW:           100,
+			MaxIncreaseStepW:          300,
+			MaxDecreaseStepW:          500,
+			MinCommandInterval:        2 * time.Minute,
+			StopImportThresholdW:      50,
+			TargetMaxSocBufferPercent: 2,
+		},
+	}
+	status := domain.Status{
+		GridW:     -900,
+		ImportW:   0,
+		ExportW:   900,
+		UpdatedAt: now,
+	}
+	currentLimitW := 100
+	maxSoc := 100
+	fullSoc := 99
+	availableSoc := 50
+
+	got := higherPriorityDelta3ChargeCandidateDevice(
+		context.Background(),
+		cfg,
+		status,
+		priority,
+		stubDelta3StatusReader{status: api.Delta3StatusResponse{
+			Available:      true,
+			SOC:            &fullSoc,
+			ACChargeLimitW: &currentLimitW,
+			MaxChargeSoc:   &maxSoc,
+		}},
+		&recordingDelta3AuxWriteClient{},
+		fakeDelta3AuxCommandRepository{},
+		slog.Default(),
+	)
+	if got != "" {
+		t.Fatalf("higherPriorityDelta3ChargeCandidateDevice near full = %q, want empty", got)
+	}
+
+	got = higherPriorityDelta3ChargeCandidateDevice(
+		context.Background(),
+		cfg,
+		status,
+		priority,
+		stubDelta3StatusReader{status: api.Delta3StatusResponse{
+			Available:      true,
+			SOC:            &availableSoc,
+			ACChargeLimitW: &currentLimitW,
+			MaxChargeSoc:   &maxSoc,
+		}},
+		&recordingDelta3AuxWriteClient{},
+		fakeDelta3AuxCommandRepository{previous: &domain.Delta3AuxControlCommandLog{
+			MeasuredAt:           now.Add(-time.Minute),
+			CommandFingerprint:   "delta3_aux;state=READY;ac=400;adjust_ac=true",
+			WouldWrite:           true,
+			TargetACChargeLimitW: intPtr(400),
+		}},
+		slog.Default(),
+	)
+	if got != "" {
+		t.Fatalf("higherPriorityDelta3ChargeCandidateDevice during DELTA 3 guard interval = %q, want empty", got)
+	}
+
+	got = higherPriorityDelta3ChargeCandidateDevice(
+		context.Background(),
+		cfg,
+		status,
+		priority,
+		stubDelta3StatusReader{status: api.Delta3StatusResponse{
+			Available:      true,
+			SOC:            &availableSoc,
+			ACChargeLimitW: &currentLimitW,
+			MaxChargeSoc:   &maxSoc,
+		}},
+		&recordingDelta3AuxWriteClient{},
+		fakeDelta3AuxCommandRepository{},
+		slog.Default(),
+	)
+	if got != "DELTA 3 Plus" {
+		t.Fatalf("higherPriorityDelta3ChargeCandidateDevice = %q, want DELTA 3 Plus", got)
 	}
 }
 

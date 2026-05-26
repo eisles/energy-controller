@@ -32,7 +32,7 @@ func (g WriteGuards) Validate() error {
 		return fmt.Errorf("DELTA_3 private write disabled: ENABLE_REAL_CONTROL=false")
 	}
 	if g.AutoControlEnabled && !g.AllowAutoControlOverlap {
-		return fmt.Errorf("DELTA_3 private write disabled: AUTO_CONTROL_ENABLED=true; set ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=true or --allow-auto-control-overlap for one-shot DELTA_3 validation")
+		return fmt.Errorf("DELTA_3 private write disabled: AUTO_CONTROL_ENABLED=true; set --allow-auto-control-overlap for one-shot DELTA_3 validation")
 	}
 	if g.ConfirmEcoFlowWrite != ConfirmWriteValue {
 		return fmt.Errorf("DELTA_3 private write disabled: CONFIRM_ECOFLOW_WRITE is not %s", ConfirmWriteValue)

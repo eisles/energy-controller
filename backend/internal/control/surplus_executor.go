@@ -18,6 +18,7 @@ type SurplusCommandGuardInput struct {
 	AutoControl            bool
 	ConfirmEcoFlowWrite    string
 	RealControlTrialActive bool
+	HigherPriorityDevice   string
 	Previous               *domain.SurplusControlCommandLog
 }
 
@@ -83,6 +84,9 @@ func EvaluateSurplusCommandGuard(input SurplusCommandGuardInput, settings Settin
 func surplusCommandSuppressedReason(input SurplusCommandGuardInput, settings Settings, log domain.SurplusControlCommandLog) string {
 	if log.CommandKind == "none" {
 		return "no command candidate"
+	}
+	if input.HigherPriorityDevice != "" {
+		return fmt.Sprintf("higher priority charging device %s should absorb surplus first", input.HigherPriorityDevice)
 	}
 	if input.MockMode {
 		return "mock mode, EcoFlow write disabled"

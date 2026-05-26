@@ -116,6 +116,25 @@ func TestEvaluateSurplusCommandGuardBlocksUnsafeModes(t *testing.T) {
 	}
 }
 
+func TestEvaluateSurplusCommandGuardBlocksLowerPriorityPro3(t *testing.T) {
+	now := time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC)
+	log := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
+		Status:                 surplusGuardStatus(now),
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
+		HigherPriorityDevice:   "DELTA 3 Plus",
+	}, DefaultSettings())
+
+	if log.WouldWrite {
+		t.Fatal("WouldWrite = true, want false")
+	}
+	if !strings.Contains(log.SuppressedReason, "higher priority charging device DELTA 3 Plus") {
+		t.Fatalf("SuppressedReason = %q, want higher-priority device", log.SuppressedReason)
+	}
+}
+
 func TestExecuteSurplusCommandSendsCommandsAndMarksLog(t *testing.T) {
 	now := time.Date(2026, 5, 20, 10, 0, 0, 0, time.UTC)
 	log := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{

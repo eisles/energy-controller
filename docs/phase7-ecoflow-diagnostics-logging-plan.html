@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Phase 7 EcoFlow 診断情報ログ保存 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; margin: 40px; color: #172033; }
+    main { max-width: 960px; margin: 0 auto; }
+    h1, h2 { line-height: 1.3; }
+    code { background: #f2f4f7; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    ul { padding-left: 1.4rem; }
+    section { border-top: 1px solid #d9dee7; padding-top: 1rem; margin-top: 1.5rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Phase 7 EcoFlow 診断情報ログ保存 実装計画</h1>
+
+  <section>
+    <h2>目的</h2>
+    <p>DELTA Pro 3 の AC 出力が一時的に 0W または OFF になった場合に、後から原因を追跡できるように、EcoFlow Cloud の read-only quota から温度・警告・異常・保護・AC 出力状態に関連しそうな値を保存する。</p>
+    <p>今回の目的は原因特定に使える観測データを残すことであり、温度上昇時の自動停止や AC 出力 ON/OFF 制御は実装しない。</p>
+  </section>
+
+  <section>
+    <h2>非目的</h2>
+    <ul>
+      <li>DELTA Pro 3 の AC 出力 ON/OFF write API は追加しない。</li>
+      <li>温度や警告に基づく自動停止制御は追加しない。</li>
+      <li>EcoFlow write gate や実制御条件は変更しない。</li>
+      <li>EcoFlow の raw quota 全量保存は行わない。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>変更方針</h2>
+    <ol>
+      <li><code>BatteryStatus</code> / <code>Status</code> / <code>PowerLog</code> に <code>EcoFlowDiagnostics</code> を追加する。</li>
+      <li>EcoFlow Cloud quota から <code>temp</code>、<code>alarm</code>、<code>warn</code>、<code>fault</code>、<code>error</code>、<code>protect</code>、<code>acout</code>、<code>ac_out</code>、<code>output</code> を含むキーだけを抽出する。</li>
+      <li><code>current_status.ecoflow_diagnostics_json</code> と <code>power_logs.ecoflow_diagnostics_json</code> に JSON として保存する。</li>
+      <li><code>/api/status</code> と <code>/api/logs</code> の JSON に診断情報を含める。</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>安全境界</h2>
+    <ul>
+      <li>read-only quota の保存のみ行う。</li>
+      <li>EcoFlow write command は追加しない。</li>
+      <li>AC 出力 ON/OFF 操作は追加しない。</li>
+      <li>温度値や警告値が取得できても、この Phase では制御判断に使わない。</li>
+      <li>既存の実制御 gate、機器マスタ、優先順位制御には影響させない。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>検証</h2>
+    <ul>
+      <li><code>cd backend &amp;&amp; rtk go test ./...</code></li>
+      <li><code>cd frontend &amp;&amp; rtk npm run build</code></li>
+      <li><code>rtk codex review --uncommitted</code></li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

@@ -3,6 +3,8 @@ package ecoflow
 import (
 	"fmt"
 	"math"
+	"sort"
+	"strings"
 
 	"github.com/eisles/energy-controller/backend/internal/domain"
 )
@@ -35,8 +37,50 @@ func BatteryStatusFromQuotas(quotas map[string]any) (domain.BatteryStatus, error
 		ScheduledEnabled:    scheduledEnabled,
 		IntelligentEnabled:  intelligentEnabled,
 		FullEnergyWh:        fullEnergyWh,
+		EcoFlowDiagnostics:  diagnosticQuotasFromQuotas(quotas),
 		IsOnline:            true,
 	}, nil
+}
+
+func diagnosticQuotasFromQuotas(quotas map[string]any) map[string]any {
+	if len(quotas) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(quotas))
+	for key := range quotas {
+		if isDiagnosticQuotaKey(key) {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	sort.Strings(keys)
+	diagnostics := make(map[string]any, len(keys))
+	for _, key := range keys {
+		diagnostics[key] = quotas[key]
+	}
+	return diagnostics
+}
+
+func isDiagnosticQuotaKey(key string) bool {
+	normalized := strings.ToLower(key)
+	for _, token := range []string{
+		"temp",
+		"alarm",
+		"warn",
+		"fault",
+		"error",
+		"protect",
+		"acout",
+		"ac_out",
+		"output",
+	} {
+		if strings.Contains(normalized, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func numberFromQuotas(quotas map[string]any, keys ...string) (float64, bool) {

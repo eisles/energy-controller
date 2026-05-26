@@ -243,11 +243,13 @@ ECOFLOW_PRIVATE_PASSWORD=...
 ECOFLOW_DELTA3_MQTT_CLIENT_ID=
 ECOFLOW_DELTA3_TIMEOUT_SEC=20
 ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=false
+ECOFLOW_DELTA3_EXECUTE=false
+ECOFLOW_DELTA3_ALLOW_PRIVATE_API_WRITE=false
 ```
 
 DELTA 3 Plus の `deviceSn` と `deviceType` は dashboard の「設定」→「充電機器マスタ」で管理します。`statusSource=ecoflow_private_mqtt` の EcoFlow 機器は、上記の `ECOFLOW_PRIVATE_EMAIL` / `ECOFLOW_PRIVATE_PASSWORD` を共通認証として使い、機器ごとの SN/type はマスタ値を使います。one-shot CLI 検証だけは `ecoflow-delta3-probe --sn ... --device-type ...` で指定できます。
 
-DELTA 3 Plus 補助充電の自動 write は対象機器をマスタに登録し、`enabled=true`、`controlEnabled=true`、`supportsAcChargeLimit=true` にしたうえで、既存の real-control gate と `ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=true` をすべて満たす場合だけ実行候補になります。
+DELTA 3 Plus 補助充電の自動 write は機器マスターを正とします。対象機器を `enabled=true`、`controlEnabled=true`、`supportsAcChargeLimit=true` にしたうえで、既存の real-control gate（`ENABLE_REAL_CONTROL=true`、`SIMULATION_MODE=false`、`AUTO_CONTROL_ENABLED=true`、`CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND`、実制御期限内）と DELTA 3 Plus private API 用の追加安全 gate（`ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=true`、`ECOFLOW_DELTA3_EXECUTE=true`、`ECOFLOW_DELTA3_ALLOW_PRIVATE_API_WRITE=true`）を満たす場合だけ実行候補になります。SN/type は機器マスター、送信可否はマスターと安全 gate の両方で判定します。
 
 read-only probe:
 
@@ -281,7 +283,9 @@ go run ./cmd/ecoflow-delta3-probe --energy-backup-enabled=false --energy-backup-
 
 dashboard で DELTA 3 Plus の read-only 状態を表示する場合は、private API 認証情報に加えて `ECOFLOW_DELTA3_READ_ENABLED=true` を設定します。表示対象は SOC、AC入力/出力、AC充電上限、`gridBypassDisabled`、`acOutputEnabled` です。取得失敗時は dashboard 内で unavailable と表示し、既存 `/api/status` には影響しません。
 
-実送信は、既存の write gate に加えて `--execute` と `--allow-private-api-write` が必要です。既存の自動制御を止めずに DELTA_3 系の one-shot 検証を行う場合は、追加で `ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=true` または `--allow-auto-control-overlap` が必要です。
+DELTA Pro 3 の AC 出力が一時的に 0W / OFF になった原因を後から追えるように、EcoFlow Cloud の read-only quota から温度、警告、異常、保護、AC出力状態に関係しそうなキーだけを `ecoflowDiagnostics` として `/api/status` と `/api/logs` に保存します。この診断情報は観測用で、温度や警告に基づく自動停止制御や AC 出力 ON/OFF 操作は行いません。
+
+one-shot CLI の実送信は、自動制御とは別の検証経路のため `--execute` と `--allow-private-api-write` が必要です。既存の自動制御を止めずに DELTA_3 系の one-shot 検証を行う場合は、追加で `--allow-auto-control-overlap` が必要です。
 
 ```bash
 cd backend
@@ -301,9 +305,8 @@ MOCK_MODE=false \
 SIMULATION_MODE=false \
 ENABLE_REAL_CONTROL=true \
 AUTO_CONTROL_ENABLED=true \
-ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=true \
 CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND \
-go run ./cmd/ecoflow-delta3-probe --set-ac-charge-w 100 --execute --allow-private-api-write
+go run ./cmd/ecoflow-delta3-probe --set-ac-charge-w 100 --execute --allow-private-api-write --allow-auto-control-overlap
 ```
 
 この CLI の write 対象は `set_ac_charge_power`、`set_backup_reserve_soc`、`set_grid_bypass_disabled`、`set_min_discharge_soc`、`set_max_charge_soc`、`set_energy_backup_enabled` の one-shot 検証だけです。SwitchBot 制御や既存の余剰追従自動制御には接続しません。

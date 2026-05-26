@@ -49,6 +49,7 @@ func migrate(db *sql.DB) error {
 			mode TEXT NOT NULL,
 			command_sent INTEGER NOT NULL DEFAULT 0,
 			error_message TEXT,
+			ecoflow_diagnostics_json TEXT,
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS energy_meter_logs (
@@ -181,6 +182,7 @@ func migrate(db *sql.DB) error {
 			mode TEXT NOT NULL,
 			last_decision_reason TEXT NOT NULL,
 			last_error TEXT,
+			ecoflow_diagnostics_json TEXT,
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS delta3_aux_control_command_logs (
@@ -258,6 +260,9 @@ func migrate(db *sql.DB) error {
 	if err := addKnownColumnIfMissing(db, "power_logs", "ac_charge_limit_w"); err != nil {
 		return err
 	}
+	if err := addKnownColumnIfMissing(db, "power_logs", "ecoflow_diagnostics_json"); err != nil {
+		return err
+	}
 	if err := addKnownColumnIfMissing(db, "current_status", "ac_charge_limit_w"); err != nil {
 		return err
 	}
@@ -284,6 +289,7 @@ func migrate(db *sql.DB) error {
 		"scheduled_enabled",
 		"intelligent_enabled",
 		"battery_full_energy_wh",
+		"ecoflow_diagnostics_json",
 		"surplus_plan_json",
 		"night_charge_plan_json",
 		"delta3_aux_plan_json",
@@ -370,20 +376,22 @@ var knownMigrationColumns = map[string]map[string]string{
 		"minimum_reserve_soc":      "INTEGER NOT NULL DEFAULT 30",
 	},
 	"power_logs": {
-		"ac_charge_limit_w": "INTEGER",
+		"ac_charge_limit_w":        "INTEGER",
+		"ecoflow_diagnostics_json": "TEXT",
 	},
 	"current_status": {
-		"ac_charge_limit_w":      "INTEGER",
-		"backup_reserve_soc":     "INTEGER",
-		"energy_backup_enabled":  "INTEGER",
-		"tou_mode_enabled":       "INTEGER",
-		"self_powered_enabled":   "INTEGER",
-		"scheduled_enabled":      "INTEGER",
-		"intelligent_enabled":    "INTEGER",
-		"battery_full_energy_wh": "INTEGER",
-		"surplus_plan_json":      "TEXT",
-		"night_charge_plan_json": "TEXT",
-		"delta3_aux_plan_json":   "TEXT",
+		"ac_charge_limit_w":        "INTEGER",
+		"backup_reserve_soc":       "INTEGER",
+		"energy_backup_enabled":    "INTEGER",
+		"tou_mode_enabled":         "INTEGER",
+		"self_powered_enabled":     "INTEGER",
+		"scheduled_enabled":        "INTEGER",
+		"intelligent_enabled":      "INTEGER",
+		"battery_full_energy_wh":   "INTEGER",
+		"ecoflow_diagnostics_json": "TEXT",
+		"surplus_plan_json":        "TEXT",
+		"night_charge_plan_json":   "TEXT",
+		"delta3_aux_plan_json":     "TEXT",
 	},
 	"tariff_plans": {
 		"export_rate_yen": "REAL NOT NULL DEFAULT 7.0",
