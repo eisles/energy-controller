@@ -146,6 +146,7 @@ type delta3ConfigStatusReader interface {
 
 type delta3AuxWriteClient interface {
 	SetACChargePower(ctx context.Context, watts int) error
+	SetEnergyBackupEnabled(ctx context.Context, enabled bool, startSoc int) error
 }
 
 type delta3WriteTargetProvider interface {
@@ -384,6 +385,38 @@ func (w ecoFlowDelta3AuxWriteClient) SetACChargePower(ctx context.Context, watts
 	return err
 }
 
+func (w ecoFlowDelta3AuxWriteClient) SetEnergyBackupEnabled(ctx context.Context, enabled bool, startSoc int) error {
+	cfg, ok, err := delta3WriteConfig(ctx, w.cfg, w.targetProvider)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("DELTA 3 Plus master write target is unavailable")
+	}
+	client := ecoflowdelta3.NewClient(ecoflowdelta3.Config{
+		PrivateAPIHost: cfg.Delta3PrivateAPIHost,
+		Email:          cfg.Delta3PrivateEmail,
+		Password:       cfg.Delta3PrivatePassword,
+		DeviceSN:       cfg.Delta3DeviceSN,
+		DeviceType:     cfg.Delta3DeviceType,
+		MQTTClientID:   cfg.Delta3MQTTClientID,
+		Timeout:        cfg.Delta3Timeout,
+	})
+	_, err = client.ExecuteEnergyBackupEnabled(ctx, enabled, startSoc, ecoflowdelta3.WriteGuards{
+		MockMode:                cfg.MockMode,
+		SimulationMode:          cfg.SimulationMode,
+		EnableRealControl:       cfg.EnableRealControl,
+		AutoControlEnabled:      cfg.AutoControlEnabled,
+		AllowAutoControlOverlap: cfg.Delta3AllowAutoWrite,
+		ConfirmEcoFlowWrite:     cfg.ConfirmEcoFlowWrite,
+		Execute:                 cfg.Delta3ExecuteWrite,
+		AllowPrivateAPIWrite:    cfg.Delta3AllowPrivateWrite,
+		Command:                 "set_energy_backup_enabled",
+		DeviceType:              cfg.Delta3DeviceType,
+	})
+	return err
+}
+
 func delta3WriteConfig(ctx context.Context, cfg config.Config, targetProvider delta3WriteTargetProvider) (config.Config, bool, error) {
 	if targetProvider == nil {
 		return cfg, true, nil
@@ -548,14 +581,16 @@ func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domai
 	status.Delta3AuxPlan = ptrToDelta3AuxPlan(control.PlanDelta3AuxCharging(control.Delta3AuxPlanInput{
 		Status: *status,
 		Delta3: control.Delta3AuxStatus{
-			Available:      delta3Status.Available,
-			DeviceType:     delta3Status.DeviceType,
-			SOC:            delta3Status.SOC,
-			ACInW:          delta3Status.ACInW,
-			ACOutW:         delta3Status.ACOutW,
-			ACChargeLimitW: delta3Status.ACChargeLimitW,
-			MaxChargeSoc:   delta3Status.MaxChargeSoc,
-			LastError:      delta3Status.LastError,
+			Available:            delta3Status.Available,
+			DeviceType:           delta3Status.DeviceType,
+			SOC:                  delta3Status.SOC,
+			ACInW:                delta3Status.ACInW,
+			ACOutW:               delta3Status.ACOutW,
+			ACChargeLimitW:       delta3Status.ACChargeLimitW,
+			MaxChargeSoc:         delta3Status.MaxChargeSoc,
+			BackupReserveSoc:     delta3Status.BackupReserveSoc,
+			BackupReserveEnabled: delta3Status.BackupReserveEnabled,
+			LastError:            delta3Status.LastError,
 		},
 		IgnorePro3Wait:      ignorePro3Wait,
 		Pro3PreviousCommand: previousPro3,
@@ -782,18 +817,20 @@ func higherPriorityDelta3ChargeCandidateDevice(ctx context.Context, cfg config.C
 	plan := control.PlanDelta3AuxCharging(control.Delta3AuxPlanInput{
 		Status: status,
 		Delta3: control.Delta3AuxStatus{
-			Available:      delta3Status.Available,
-			DeviceType:     delta3Status.DeviceType,
-			SOC:            delta3Status.SOC,
-			ACInW:          delta3Status.ACInW,
-			ACOutW:         delta3Status.ACOutW,
-			ACChargeLimitW: delta3Status.ACChargeLimitW,
-			MaxChargeSoc:   delta3Status.MaxChargeSoc,
-			LastError:      delta3Status.LastError,
+			Available:            delta3Status.Available,
+			DeviceType:           delta3Status.DeviceType,
+			SOC:                  delta3Status.SOC,
+			ACInW:                delta3Status.ACInW,
+			ACOutW:               delta3Status.ACOutW,
+			ACChargeLimitW:       delta3Status.ACChargeLimitW,
+			MaxChargeSoc:         delta3Status.MaxChargeSoc,
+			BackupReserveSoc:     delta3Status.BackupReserveSoc,
+			BackupReserveEnabled: delta3Status.BackupReserveEnabled,
+			LastError:            delta3Status.LastError,
 		},
 		IgnorePro3Wait: true,
 	}, delta3AuxSettingsFromConfig(cfg), cfg.ControlSettings)
-	if !plan.ShouldAdjustACChargeLimit {
+	if !plan.ShouldAdjustACChargeLimit && !plan.ShouldSetBackupReserve {
 		return ""
 	}
 	previous, err := delta3AuxControlCommandRepository.LatestDelta3AuxControlWriteCandidateLog(ctx)

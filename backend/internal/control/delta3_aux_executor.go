@@ -25,6 +25,7 @@ type Delta3AuxCommandGuardInput struct {
 
 type Delta3AuxWriteClient interface {
 	SetACChargePower(ctx context.Context, watts int) error
+	SetEnergyBackupEnabled(ctx context.Context, enabled bool, startSoc int) error
 }
 
 func EvaluateDelta3AuxCommandGuard(input Delta3AuxCommandGuardInput, settings Delta3AuxSettings) domain.Delta3AuxControlCommandLog {
@@ -48,20 +49,29 @@ func EvaluateDelta3AuxCommandGuard(input Delta3AuxCommandGuardInput, settings De
 		log.ResidualExportW = plan.ResidualExportW
 		log.Delta3Soc = plan.Delta3Soc
 		log.PreviousACChargeLimitW = plan.CurrentACChargeLimitW
+		log.PreviousBackupReserveSoc = plan.CurrentBackupReserveSoc
 		if plan.ShouldAdjustACChargeLimit {
 			log.TargetACChargeLimitW = intPtr(plan.RecommendedACChargeLimitW)
 		}
+		if plan.ShouldSetBackupReserve {
+			log.TargetBackupReserveSoc = plan.RecommendedBackupReserveSoc
+		}
+		if plan.ShouldDisableBackupReserve {
+			log.TargetBackupReserveSoc = plan.RecommendedBackupReserveSoc
+		}
 		log.ShouldAdjustACChargeLimit = plan.ShouldAdjustACChargeLimit
+		log.ShouldSetBackupReserve = plan.ShouldSetBackupReserve
+		log.ShouldDisableBackupReserve = plan.ShouldDisableBackupReserve
 		log.DecisionReason = plan.Reason
 	}
 	log.CommandFingerprint = delta3AuxCommandFingerprint(log)
 	log.SuppressedReason = delta3AuxCommandSuppressedReason(input, settings, log)
-	log.WouldWrite = log.SuppressedReason == "" && log.ShouldAdjustACChargeLimit
+	log.WouldWrite = log.SuppressedReason == "" && (log.ShouldAdjustACChargeLimit || log.ShouldSetBackupReserve || log.ShouldDisableBackupReserve)
 	return log
 }
 
 func delta3AuxCommandSuppressedReason(input Delta3AuxCommandGuardInput, settings Delta3AuxSettings, log domain.Delta3AuxControlCommandLog) string {
-	if !log.ShouldAdjustACChargeLimit {
+	if !log.ShouldAdjustACChargeLimit && !log.ShouldSetBackupReserve && !log.ShouldDisableBackupReserve {
 		return "no command candidate"
 	}
 	if !settings.Enabled {
@@ -100,10 +110,19 @@ func delta3AuxCommandSuppressedReason(input Delta3AuxCommandGuardInput, settings
 	if !input.AllowPrivateAPIWrite {
 		return "ECOFLOW_DELTA3_ALLOW_PRIVATE_API_WRITE=false"
 	}
-	if log.PreviousACChargeLimitW == nil || log.TargetACChargeLimitW == nil {
+	if log.ShouldAdjustACChargeLimit && (log.PreviousACChargeLimitW == nil || log.TargetACChargeLimitW == nil) {
 		return "DELTA 3 Plus current or target AC charge limit unavailable"
 	}
-	if abs(*log.TargetACChargeLimitW-*log.PreviousACChargeLimitW) < settings.MinCommandDiffW {
+	if (log.ShouldSetBackupReserve || log.ShouldDisableBackupReserve) && log.PreviousBackupReserveSoc == nil {
+		return "DELTA 3 Plus current backup reserve unavailable"
+	}
+	if log.ShouldSetBackupReserve && log.TargetBackupReserveSoc == nil {
+		return "DELTA 3 Plus target backup reserve unavailable"
+	}
+	if log.ShouldDisableBackupReserve && log.TargetBackupReserveSoc == nil {
+		return "DELTA 3 Plus target backup reserve unavailable"
+	}
+	if log.ShouldAdjustACChargeLimit && !log.ShouldSetBackupReserve && !log.ShouldDisableBackupReserve && abs(*log.TargetACChargeLimitW-*log.PreviousACChargeLimitW) < settings.MinCommandDiffW {
 		return "command suppressed by minimum diff"
 	}
 	if previousDelta3AuxWriteCandidate(input.Previous) {
@@ -131,18 +150,37 @@ func ExecuteDelta3AuxCommand(ctx context.Context, log domain.Delta3AuxControlCom
 	if writer == nil {
 		return delta3AuxCommandError(log, "DELTA 3 Plus write client is unavailable")
 	}
-	if log.TargetACChargeLimitW == nil {
+	if log.ShouldAdjustACChargeLimit && log.TargetACChargeLimitW == nil {
 		return delta3AuxCommandError(log, "target AC charge limit is missing")
 	}
-	if err := writer.SetACChargePower(ctx, *log.TargetACChargeLimitW); err != nil {
-		return delta3AuxCommandError(log, fmt.Sprintf("set DELTA 3 Plus AC charge power: %v", err))
+	if log.ShouldAdjustACChargeLimit {
+		if err := writer.SetACChargePower(ctx, *log.TargetACChargeLimitW); err != nil {
+			return delta3AuxCommandError(log, fmt.Sprintf("set DELTA 3 Plus AC charge power: %v", err))
+		}
+		log.CommandSent = true
 	}
-	log.CommandSent = true
+	if log.ShouldSetBackupReserve {
+		if log.TargetBackupReserveSoc == nil {
+			return delta3AuxCommandError(log, "target backup reserve SOC is missing")
+		}
+		if err := writer.SetEnergyBackupEnabled(ctx, true, *log.TargetBackupReserveSoc); err != nil {
+			return delta3AuxCommandError(log, fmt.Sprintf("set DELTA 3 Plus backup reserve SOC: %v", err))
+		}
+		log.CommandSent = true
+	}
+	if log.ShouldDisableBackupReserve {
+		if log.TargetBackupReserveSoc == nil {
+			return delta3AuxCommandError(log, "target backup reserve SOC is missing")
+		}
+		if err := writer.SetEnergyBackupEnabled(ctx, false, *log.TargetBackupReserveSoc); err != nil {
+			return delta3AuxCommandError(log, fmt.Sprintf("disable DELTA 3 Plus backup reserve SOC: %v", err))
+		}
+		log.CommandSent = true
+	}
 	return log
 }
 
 func delta3AuxCommandError(log domain.Delta3AuxControlCommandLog, message string) domain.Delta3AuxControlCommandLog {
-	log.CommandSent = false
 	log.DryRun = false
 	log.WouldWrite = false
 	log.ErrorMessage = &message
@@ -154,11 +192,15 @@ func delta3AuxCommandFingerprint(log domain.Delta3AuxControlCommandLog) string {
 	if log.TargetACChargeLimitW != nil {
 		target = fmt.Sprintf("%d", *log.TargetACChargeLimitW)
 	}
-	return fmt.Sprintf("delta3_aux;state=%s;ac=%s;adjust_ac=%t", log.StrategyState, target, log.ShouldAdjustACChargeLimit)
+	reserve := "-"
+	if log.TargetBackupReserveSoc != nil {
+		reserve = fmt.Sprintf("%d", *log.TargetBackupReserveSoc)
+	}
+	return fmt.Sprintf("delta3_aux;state=%s;ac=%s;reserve=%s;adjust_ac=%t;set_reserve=%t;disable_reserve=%t", log.StrategyState, target, reserve, log.ShouldAdjustACChargeLimit, log.ShouldSetBackupReserve, log.ShouldDisableBackupReserve)
 }
 
 func previousDelta3AuxWriteCandidate(previous *domain.Delta3AuxControlCommandLog) bool {
-	return previous != nil && (previous.WouldWrite || previous.CommandSent) && previous.CommandFingerprint != ""
+	return previous != nil && previous.ErrorMessage == nil && (previous.WouldWrite || previous.CommandSent) && previous.CommandFingerprint != ""
 }
 
 func previousDelta3AuxErroredCandidate(previous *domain.Delta3AuxControlCommandLog) bool {

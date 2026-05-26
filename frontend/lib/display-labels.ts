@@ -82,8 +82,11 @@ const exactReasonLabels: Record<string, string> = {
   "waiting for recent DELTA Pro 3 command to settle": "直近のDELTA Pro 3制御の反映待ちです",
   "DELTA Pro 3 still has priority surplus absorption candidate": "DELTA Pro 3でまだ余剰吸収できるため待機します",
   "residual export is below DELTA 3 Plus auxiliary adjustment threshold": "残余売電がDELTA 3 Plus補助調整のしきい値未満です",
+  "DELTA 3 Plus backup reserve disabled during recovery": "買電回復のためDELTA 3 Plusバックアップ制御を解除します",
   "DELTA 3 Plus auxiliary target is within command diff threshold": "DELTA 3 Plus補助目標が変更しきい値内です",
-  "DELTA Pro 3 priority is satisfied; use DELTA 3 Plus to absorb residual export": "DELTA Pro 3優先後の残余売電をDELTA 3 Plusで吸収します"
+  "DELTA Pro 3 priority is satisfied; use DELTA 3 Plus to absorb residual export": "DELTA Pro 3優先後の残余売電をDELTA 3 Plusで吸収します",
+  "DELTA Pro 3 priority is satisfied; set DELTA 3 Plus AC charge and backup reserve to absorb export": "DELTA 3 PlusのAC充電上限とバックアップを上げて売電を吸収します",
+  "DELTA 3 Plus AC charge is maxed but passthrough; raise backup reserve above current SOC": "DELTA 3 Plusがパススルーのためバックアップを現在SOCより上げます"
 };
 
 const partialReasonLabels: Array<[string, string]> = [

@@ -24,10 +24,10 @@ func NewDelta3AuxControlCommandRepository(db *sql.DB) *Delta3AuxControlCommandRe
 func (r *Delta3AuxControlCommandRepository) InsertDelta3AuxControlCommandLog(ctx context.Context, log domain.Delta3AuxControlCommandLog) error {
 	_, err := r.db.ExecContext(ctx, `INSERT INTO delta3_aux_control_command_logs (
 		measured_at, strategy_state, command_fingerprint, grid_w, import_w, export_w, residual_export_w,
-		delta3_soc, previous_ac_charge_limit_w, target_ac_charge_limit_w,
-		command_sent, dry_run, would_write, should_adjust_ac_charge_limit,
-		suppressed_reason, decision_reason, error_message, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		delta3_soc, previous_ac_charge_limit_w, target_ac_charge_limit_w, previous_backup_reserve_soc,
+		target_backup_reserve_soc, command_sent, dry_run, would_write, should_adjust_ac_charge_limit,
+		should_set_backup_reserve, should_disable_backup_reserve, suppressed_reason, decision_reason, error_message, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		log.MeasuredAt.Format(time.RFC3339Nano),
 		log.StrategyState,
 		log.CommandFingerprint,
@@ -38,10 +38,14 @@ func (r *Delta3AuxControlCommandRepository) InsertDelta3AuxControlCommandLog(ctx
 		nullableInt(log.Delta3Soc),
 		nullableInt(log.PreviousACChargeLimitW),
 		nullableInt(log.TargetACChargeLimitW),
+		nullableInt(log.PreviousBackupReserveSoc),
+		nullableInt(log.TargetBackupReserveSoc),
 		boolToInt(log.CommandSent),
 		boolToInt(log.DryRun),
 		boolToInt(log.WouldWrite),
 		boolToInt(log.ShouldAdjustACChargeLimit),
+		boolToInt(log.ShouldSetBackupReserve),
+		boolToInt(log.ShouldDisableBackupReserve),
 		log.SuppressedReason,
 		log.DecisionReason,
 		nullableString(log.ErrorMessage),
@@ -61,8 +65,9 @@ func (r *Delta3AuxControlCommandRepository) LatestDelta3AuxControlWriteCandidate
 func (r *Delta3AuxControlCommandRepository) latestDelta3AuxControlCommandLog(ctx context.Context, whereClause string) (*domain.Delta3AuxControlCommandLog, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT
 		id, measured_at, strategy_state, command_fingerprint, grid_w, import_w, export_w, residual_export_w,
-		delta3_soc, previous_ac_charge_limit_w, target_ac_charge_limit_w,
-		command_sent, dry_run, would_write, should_adjust_ac_charge_limit,
+		delta3_soc, previous_ac_charge_limit_w, target_ac_charge_limit_w, previous_backup_reserve_soc,
+		target_backup_reserve_soc, command_sent, dry_run, would_write, should_adjust_ac_charge_limit,
+		should_set_backup_reserve, should_disable_backup_reserve,
 		suppressed_reason, decision_reason, error_message, created_at
 		FROM delta3_aux_control_command_logs
 		`+whereClause+`
@@ -89,8 +94,9 @@ func (r *Delta3AuxControlCommandRepository) ListDelta3AuxControlCommandLogsPage(
 	args := append(queryArgs, limit, offset)
 	rows, err := r.db.QueryContext(ctx, `SELECT
 		id, measured_at, strategy_state, command_fingerprint, grid_w, import_w, export_w, residual_export_w,
-		delta3_soc, previous_ac_charge_limit_w, target_ac_charge_limit_w,
-		command_sent, dry_run, would_write, should_adjust_ac_charge_limit,
+		delta3_soc, previous_ac_charge_limit_w, target_ac_charge_limit_w, previous_backup_reserve_soc,
+		target_backup_reserve_soc, command_sent, dry_run, would_write, should_adjust_ac_charge_limit,
+		should_set_backup_reserve, should_disable_backup_reserve,
 		suppressed_reason, decision_reason, error_message, created_at
 		FROM delta3_aux_control_command_logs
 		`+whereClause+`
@@ -116,8 +122,8 @@ func scanDelta3AuxControlCommandLogs(rows *sql.Rows, capacity int) ([]domain.Del
 	for rows.Next() {
 		var log domain.Delta3AuxControlCommandLog
 		var measuredAt, createdAt string
-		var delta3Soc, previousACChargeLimitW, targetACChargeLimitW sql.NullInt64
-		var commandSent, dryRun, wouldWrite, shouldAdjustACChargeLimit int
+		var delta3Soc, previousACChargeLimitW, targetACChargeLimitW, previousBackupReserveSoc, targetBackupReserveSoc sql.NullInt64
+		var commandSent, dryRun, wouldWrite, shouldAdjustACChargeLimit, shouldSetBackupReserve, shouldDisableBackupReserve int
 		var errorMessage sql.NullString
 		if err := rows.Scan(
 			&log.ID,
@@ -131,10 +137,14 @@ func scanDelta3AuxControlCommandLogs(rows *sql.Rows, capacity int) ([]domain.Del
 			&delta3Soc,
 			&previousACChargeLimitW,
 			&targetACChargeLimitW,
+			&previousBackupReserveSoc,
+			&targetBackupReserveSoc,
 			&commandSent,
 			&dryRun,
 			&wouldWrite,
 			&shouldAdjustACChargeLimit,
+			&shouldSetBackupReserve,
+			&shouldDisableBackupReserve,
 			&log.SuppressedReason,
 			&log.DecisionReason,
 			&errorMessage,
@@ -155,10 +165,14 @@ func scanDelta3AuxControlCommandLogs(rows *sql.Rows, capacity int) ([]domain.Del
 		log.Delta3Soc = intPtrFromNull(delta3Soc)
 		log.PreviousACChargeLimitW = intPtrFromNull(previousACChargeLimitW)
 		log.TargetACChargeLimitW = intPtrFromNull(targetACChargeLimitW)
+		log.PreviousBackupReserveSoc = intPtrFromNull(previousBackupReserveSoc)
+		log.TargetBackupReserveSoc = intPtrFromNull(targetBackupReserveSoc)
 		log.CommandSent = commandSent != 0
 		log.DryRun = dryRun != 0
 		log.WouldWrite = wouldWrite != 0
 		log.ShouldAdjustACChargeLimit = shouldAdjustACChargeLimit != 0
+		log.ShouldSetBackupReserve = shouldSetBackupReserve != 0
+		log.ShouldDisableBackupReserve = shouldDisableBackupReserve != 0
 		if errorMessage.Valid {
 			log.ErrorMessage = &errorMessage.String
 		}

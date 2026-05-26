@@ -64,7 +64,8 @@ type recordingSurplusWriteClient struct {
 }
 
 type recordingDelta3AuxWriteClient struct {
-	acChargePowerW *int
+	acChargePowerW   *int
+	backupReserveSoc *int
 }
 
 type fakeDelta3AuxCommandRepository struct {
@@ -78,6 +79,13 @@ func (c *recordingSurplusWriteClient) SetACChargePower(_ context.Context, watts 
 
 func (c *recordingDelta3AuxWriteClient) SetACChargePower(_ context.Context, watts int) error {
 	c.acChargePowerW = intPtr(watts)
+	return nil
+}
+
+func (c *recordingDelta3AuxWriteClient) SetEnergyBackupEnabled(_ context.Context, enabled bool, startSoc int) error {
+	if enabled {
+		c.backupReserveSoc = intPtr(startSoc)
+	}
 	return nil
 }
 

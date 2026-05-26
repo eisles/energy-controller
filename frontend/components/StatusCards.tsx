@@ -150,8 +150,11 @@ export function Delta3StatusCard({
               <Detail label="補助計画" value={strategyStateLabel(auxiliaryPlan?.strategyState || "UNAVAILABLE")} />
               <Detail label="推奨AC上限" value={nullableWatt(auxiliaryPlan?.recommendedAcChargeLimitW)} />
               <Detail label="現在AC上限" value={nullableWatt(auxiliaryPlan?.currentAcChargeLimitW)} />
+              <Detail label="推奨バックアップ" value={nullablePercent(auxiliaryPlan?.recommendedBackupReserveSoc)} />
+              <Detail label="現在バックアップ" value={nullablePercent(auxiliaryPlan?.currentBackupReserveSoc)} />
               <Detail label="残余売電" value={nullableWatt(auxiliaryPlan?.residualExportW ?? sourceStatus.exportW)} />
               <Detail label="安全余力" value={nullableWatt(auxiliaryPlan?.safetyMarginW)} />
+              <Detail label="バックアップ解除" value={writeCandidateLabel(auxiliaryPlan?.shouldDisableBackupReserve)} />
               <Detail label="実行" value={writeCandidateLabel(auxiliaryPlan?.wouldWrite)} />
               <Detail label="抑制" value={guardReasonLabel(auxiliaryPlan?.suppressedReason)} />
               <Detail label="理由" value={decisionReasonLabel(auxiliaryPlan?.reason)} />
@@ -179,8 +182,11 @@ export function Delta3StatusCard({
               <Detail label="補助計画" value={strategyStateLabel(auxiliaryPlan?.strategyState || "UNAVAILABLE")} />
               <Detail label="推奨AC上限" value={nullableWatt(auxiliaryPlan?.recommendedAcChargeLimitW)} />
               <Detail label="現在AC上限" value={nullableWatt(auxiliaryPlan?.currentAcChargeLimitW)} />
+              <Detail label="推奨バックアップ" value={nullablePercent(auxiliaryPlan?.recommendedBackupReserveSoc)} />
+              <Detail label="現在バックアップ" value={nullablePercent(auxiliaryPlan?.currentBackupReserveSoc)} />
               <Detail label="残余売電" value={nullableWatt(auxiliaryPlan?.residualExportW ?? sourceStatus.exportW)} />
               <Detail label="安全余力" value={nullableWatt(auxiliaryPlan?.safetyMarginW)} />
+              <Detail label="バックアップ解除" value={writeCandidateLabel(auxiliaryPlan?.shouldDisableBackupReserve)} />
               <Detail label="実行" value={writeCandidateLabel(auxiliaryPlan?.wouldWrite)} />
               <Detail label="抑制" value={guardReasonLabel(auxiliaryPlan?.suppressedReason)} />
               <Detail label="理由" value={decisionReasonLabel(auxiliaryPlan?.reason)} />

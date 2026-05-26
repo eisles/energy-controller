@@ -46,6 +46,8 @@ func TestPlanDelta3AuxChargingTracksResidualExportFromCurrentLimit(t *testing.T)
 func TestPlanDelta3AuxChargingReducesTowardMinimumWhenImporting(t *testing.T) {
 	currentLimit := 700
 	soc := 70
+	reserve := 72
+	enabled := true
 	plan := PlanDelta3AuxCharging(Delta3AuxPlanInput{
 		Status: domain.Status{
 			ImportW:     180,
@@ -53,9 +55,11 @@ func TestPlanDelta3AuxChargingReducesTowardMinimumWhenImporting(t *testing.T) {
 			UpdatedAt:   time.Date(2026, 5, 24, 10, 0, 0, 0, time.UTC),
 		},
 		Delta3: Delta3AuxStatus{
-			Available:      true,
-			SOC:            &soc,
-			ACChargeLimitW: &currentLimit,
+			Available:            true,
+			SOC:                  &soc,
+			ACChargeLimitW:       &currentLimit,
+			BackupReserveSoc:     &reserve,
+			BackupReserveEnabled: &enabled,
 		},
 	}, Delta3AuxSettings{
 		Enabled:              true,
@@ -73,6 +77,9 @@ func TestPlanDelta3AuxChargingReducesTowardMinimumWhenImporting(t *testing.T) {
 	}
 	if !plan.ShouldAdjustACChargeLimit {
 		t.Fatal("ShouldAdjustACChargeLimit = false, want true")
+	}
+	if !plan.ShouldDisableBackupReserve {
+		t.Fatal("ShouldDisableBackupReserve = false, want true when importing with backup reserve enabled")
 	}
 }
 
@@ -161,5 +168,290 @@ func TestPlanDelta3AuxChargingDoesNotWriteNearMaxSoc(t *testing.T) {
 
 	if plan.StrategyState != "FULL" {
 		t.Fatalf("StrategyState = %q, want FULL", plan.StrategyState)
+	}
+}
+
+func TestPlanDelta3AuxChargingDisablesBackupReserveNearMaxSoc(t *testing.T) {
+	currentLimit := 1500
+	soc := 99
+	maxSoc := 100
+	reserve := 40
+	enabled := true
+	plan := PlanDelta3AuxCharging(Delta3AuxPlanInput{
+		Status: domain.Status{
+			ExportW:     60,
+			BatterySoc:  95,
+			SurplusPlan: &domain.SurplusPlan{StrategyState: "HOLD"},
+		},
+		Delta3: Delta3AuxStatus{
+			Available:            true,
+			SOC:                  &soc,
+			ACChargeLimitW:       &currentLimit,
+			MaxChargeSoc:         &maxSoc,
+			BackupReserveSoc:     &reserve,
+			BackupReserveEnabled: &enabled,
+		},
+	}, Delta3AuxSettings{Enabled: true, TargetMaxSocBufferPercent: 2}, DefaultSettings())
+
+	if plan.StrategyState != "FULL" {
+		t.Fatalf("StrategyState = %q, want FULL", plan.StrategyState)
+	}
+	if !plan.ShouldDisableBackupReserve {
+		t.Fatal("ShouldDisableBackupReserve = false, want true")
+	}
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != reserve {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want current reserve %d for disable command", plan.RecommendedBackupReserveSoc, reserve)
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true")
+	}
+}
+
+func TestPlanDelta3AuxChargingRaisesBackupReserveWhenPassthroughAtMaxAC(t *testing.T) {
+	currentLimit := 1500
+	soc := 30
+	maxSoc := 90
+	acIn := 469
+	acOut := 469
+	reserve := 0
+	plan := PlanDelta3AuxCharging(Delta3AuxPlanInput{
+		Status: domain.Status{
+			ExportW:        1200,
+			ACChargeLimitW: 1500,
+			BatterySoc:     95,
+			SurplusPlan:    &domain.SurplusPlan{StrategyState: "CHARGING"},
+			UpdatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		},
+		Delta3: Delta3AuxStatus{
+			Available:        true,
+			SOC:              &soc,
+			ACInW:            &acIn,
+			ACOutW:           &acOut,
+			ACChargeLimitW:   &currentLimit,
+			MaxChargeSoc:     &maxSoc,
+			BackupReserveSoc: &reserve,
+		},
+	}, Delta3AuxSettings{
+		Enabled:          true,
+		MinChargeW:       100,
+		MaxChargeW:       1500,
+		SafetyMarginW:    50,
+		MinCommandDiffW:  100,
+		MaxIncreaseStepW: 300,
+		MaxDecreaseStepW: 500,
+	}, DefaultSettings())
+
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 32 {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want 32", plan.RecommendedBackupReserveSoc)
+	}
+	if !plan.ShouldSetBackupReserve {
+		t.Fatal("ShouldSetBackupReserve = false, want true")
+	}
+	if plan.ShouldAdjustACChargeLimit {
+		t.Fatal("ShouldAdjustACChargeLimit = true, want false when AC is already max")
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true")
+	}
+}
+
+func TestPlanDelta3AuxChargingDisablesBackupReserveWhenExportBelowThreshold(t *testing.T) {
+	currentLimit := 1500
+	soc := 30
+	acIn := 469
+	acOut := 469
+	reserve := 40
+	enabled := true
+	plan := PlanDelta3AuxCharging(Delta3AuxPlanInput{
+		Status: domain.Status{
+			ExportW:        60,
+			ACChargeLimitW: 1500,
+			BatterySoc:     95,
+			SurplusPlan:    &domain.SurplusPlan{StrategyState: "HOLD"},
+			UpdatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		},
+		Delta3: Delta3AuxStatus{
+			Available:            true,
+			SOC:                  &soc,
+			ACInW:                &acIn,
+			ACOutW:               &acOut,
+			ACChargeLimitW:       &currentLimit,
+			BackupReserveSoc:     &reserve,
+			BackupReserveEnabled: &enabled,
+		},
+	}, Delta3AuxSettings{
+		Enabled:          true,
+		MinChargeW:       100,
+		MaxChargeW:       1500,
+		SafetyMarginW:    50,
+		MinCommandDiffW:  100,
+		MaxIncreaseStepW: 300,
+		MaxDecreaseStepW: 500,
+	}, DefaultSettings())
+
+	if !plan.ShouldDisableBackupReserve {
+		t.Fatal("ShouldDisableBackupReserve = false, want true")
+	}
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != reserve {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want current reserve %d for disable command", plan.RecommendedBackupReserveSoc, reserve)
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true")
+	}
+}
+
+func TestPlanDelta3AuxChargingClampsBackupReserveToWritableMinimum(t *testing.T) {
+	currentLimit := 1500
+	soc := 1
+	acIn := 469
+	acOut := 469
+	reserve := 0
+	plan := PlanDelta3AuxCharging(Delta3AuxPlanInput{
+		Status: domain.Status{
+			ExportW:        1200,
+			ACChargeLimitW: 1500,
+			BatterySoc:     95,
+			SurplusPlan:    &domain.SurplusPlan{StrategyState: "CHARGING"},
+			UpdatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		},
+		Delta3: Delta3AuxStatus{
+			Available:        true,
+			SOC:              &soc,
+			ACInW:            &acIn,
+			ACOutW:           &acOut,
+			ACChargeLimitW:   &currentLimit,
+			BackupReserveSoc: &reserve,
+		},
+	}, Delta3AuxSettings{
+		Enabled:          true,
+		MinChargeW:       100,
+		MaxChargeW:       1500,
+		SafetyMarginW:    50,
+		MinCommandDiffW:  100,
+		MaxIncreaseStepW: 300,
+		MaxDecreaseStepW: 500,
+	}, DefaultSettings())
+
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 5 {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want 5", plan.RecommendedBackupReserveSoc)
+	}
+	if !plan.ShouldSetBackupReserve {
+		t.Fatal("ShouldSetBackupReserve = false, want true")
+	}
+}
+
+func TestPlanDelta3AuxChargingDoesNotSetBackupReserveWhenCurrentReserveUnavailable(t *testing.T) {
+	currentLimit := 1500
+	soc := 30
+	acIn := 469
+	acOut := 469
+	plan := PlanDelta3AuxCharging(Delta3AuxPlanInput{
+		Status: domain.Status{
+			ExportW:        1200,
+			ACChargeLimitW: 1500,
+			BatterySoc:     95,
+			SurplusPlan:    &domain.SurplusPlan{StrategyState: "CHARGING"},
+			UpdatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		},
+		Delta3: Delta3AuxStatus{
+			Available:      true,
+			SOC:            &soc,
+			ACInW:          &acIn,
+			ACOutW:         &acOut,
+			ACChargeLimitW: &currentLimit,
+		},
+	}, Delta3AuxSettings{
+		Enabled:          true,
+		MinChargeW:       100,
+		MaxChargeW:       1500,
+		SafetyMarginW:    50,
+		MinCommandDiffW:  100,
+		MaxIncreaseStepW: 300,
+		MaxDecreaseStepW: 500,
+	}, DefaultSettings())
+
+	if plan.ShouldSetBackupReserve {
+		t.Fatal("ShouldSetBackupReserve = true, want false when current backup reserve is unavailable")
+	}
+	if plan.WouldWrite {
+		t.Fatal("WouldWrite = true, want false when only reserve write would be possible but current reserve is unknown")
+	}
+}
+
+func TestPlanDelta3AuxChargingClampsBackupReserveToMaxSocBuffer(t *testing.T) {
+	currentLimit := 1500
+	soc := 97
+	maxSoc := 100
+	acIn := 469
+	acOut := 469
+	reserve := 30
+	plan := PlanDelta3AuxCharging(Delta3AuxPlanInput{
+		Status: domain.Status{
+			ExportW:        1200,
+			ACChargeLimitW: 1500,
+			BatterySoc:     95,
+			SurplusPlan:    &domain.SurplusPlan{StrategyState: "CHARGING"},
+			UpdatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		},
+		Delta3: Delta3AuxStatus{
+			Available:        true,
+			SOC:              &soc,
+			ACInW:            &acIn,
+			ACOutW:           &acOut,
+			ACChargeLimitW:   &currentLimit,
+			MaxChargeSoc:     &maxSoc,
+			BackupReserveSoc: &reserve,
+		},
+	}, Delta3AuxSettings{
+		Enabled:                   true,
+		MinChargeW:                100,
+		MaxChargeW:                1500,
+		SafetyMarginW:             50,
+		MinCommandDiffW:           100,
+		MaxIncreaseStepW:          300,
+		MaxDecreaseStepW:          500,
+		TargetMaxSocBufferPercent: 2,
+	}, DefaultSettings())
+
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 98 {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want 98", plan.RecommendedBackupReserveSoc)
+	}
+}
+
+func TestPlanDelta3AuxChargingDoesNotTreatDischargeAsPassthrough(t *testing.T) {
+	currentLimit := 1500
+	soc := 30
+	acIn := 0
+	acOut := 500
+	plan := PlanDelta3AuxCharging(Delta3AuxPlanInput{
+		Status: domain.Status{
+			ExportW:        1200,
+			ACChargeLimitW: 1500,
+			BatterySoc:     95,
+			SurplusPlan:    &domain.SurplusPlan{StrategyState: "CHARGING"},
+			UpdatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		},
+		Delta3: Delta3AuxStatus{
+			Available:      true,
+			SOC:            &soc,
+			ACInW:          &acIn,
+			ACOutW:         &acOut,
+			ACChargeLimitW: &currentLimit,
+		},
+	}, Delta3AuxSettings{
+		Enabled:          true,
+		MinChargeW:       100,
+		MaxChargeW:       1500,
+		SafetyMarginW:    50,
+		MinCommandDiffW:  100,
+		MaxIncreaseStepW: 300,
+		MaxDecreaseStepW: 500,
+	}, DefaultSettings())
+
+	if plan.ShouldSetBackupReserve {
+		t.Fatal("ShouldSetBackupReserve = true, want false for ordinary discharge")
+	}
+	if plan.WouldWrite {
+		t.Fatal("WouldWrite = true, want false when AC is max and DELTA 3 is discharging")
 	}
 }

@@ -197,10 +197,14 @@ func migrate(db *sql.DB) error {
 			delta3_soc INTEGER,
 			previous_ac_charge_limit_w INTEGER,
 			target_ac_charge_limit_w INTEGER,
+			previous_backup_reserve_soc INTEGER,
+			target_backup_reserve_soc INTEGER,
 			command_sent INTEGER NOT NULL,
 			dry_run INTEGER NOT NULL,
 			would_write INTEGER NOT NULL,
 			should_adjust_ac_charge_limit INTEGER NOT NULL,
+			should_set_backup_reserve INTEGER NOT NULL DEFAULT 0,
+			should_disable_backup_reserve INTEGER NOT NULL DEFAULT 0,
 			suppressed_reason TEXT NOT NULL,
 			decision_reason TEXT NOT NULL,
 			error_message TEXT,
@@ -329,6 +333,16 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
+	for _, column := range []string{
+		"previous_backup_reserve_soc",
+		"target_backup_reserve_soc",
+		"should_set_backup_reserve",
+		"should_disable_backup_reserve",
+	} {
+		if err := addKnownColumnIfMissing(db, "delta3_aux_control_command_logs", column); err != nil {
+			return err
+		}
+	}
 	return seedDefaults(db, time.Now())
 }
 
@@ -420,6 +434,12 @@ var knownMigrationColumns = map[string]map[string]string{
 		"device_sn":     "TEXT NOT NULL DEFAULT ''",
 		"device_type":   "TEXT NOT NULL DEFAULT ''",
 		"status_source": "TEXT NOT NULL DEFAULT ''",
+	},
+	"delta3_aux_control_command_logs": {
+		"previous_backup_reserve_soc":   "INTEGER",
+		"target_backup_reserve_soc":     "INTEGER",
+		"should_set_backup_reserve":     "INTEGER NOT NULL DEFAULT 0",
+		"should_disable_backup_reserve": "INTEGER NOT NULL DEFAULT 0",
 	},
 }
 

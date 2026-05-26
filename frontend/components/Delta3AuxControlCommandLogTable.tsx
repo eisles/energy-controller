@@ -48,13 +48,14 @@ export function Delta3AuxControlCommandLogTable({ logs, error, page, pageSize, t
                 <TableHead>Grid</TableHead>
                 <TableHead>DELTA 3</TableHead>
                 <TableHead>AC上限</TableHead>
+                <TableHead>バックアップ</TableHead>
                 <TableHead>判定</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {logs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="empty-cell">
+                  <TableCell colSpan={7} className="empty-cell">
                     DELTA 3 Plus 補助充電ログはまだ記録されていません。
                   </TableCell>
                 </TableRow>
@@ -72,11 +73,13 @@ export function Delta3AuxControlCommandLogTable({ logs, error, page, pageSize, t
                       <span className="readonly-note">残余売電 {log.residualExportW} W</span>
                     </TableCell>
                     <TableCell>{formatChange(log.previousAcChargeLimitW, log.targetAcChargeLimitW, "W")}</TableCell>
+                    <TableCell>{formatChange(log.previousBackupReserveSoc, log.targetBackupReserveSoc, "%")}</TableCell>
                     <TableCell className="reason-cell">
                       <Badge variant={log.commandSent ? "warning" : log.dryRun ? "secondary" : "success"}>
                         {commandResultLabel(log)}
                       </Badge>
                       <p>{decisionReasonLabel(log.decisionReason)}</p>
+                      {log.shouldDisableBackupReserve ? <p className="readonly-note">バックアップ制御解除</p> : null}
                       {log.suppressedReason ? <p className="readonly-note">抑制: {guardReasonLabel(log.suppressedReason)}</p> : null}
                       {log.errorMessage ? <p className="inline-error">{log.errorMessage}</p> : null}
                     </TableCell>

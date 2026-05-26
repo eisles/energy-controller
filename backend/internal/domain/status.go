@@ -80,18 +80,22 @@ type SurplusPlan struct {
 }
 
 type Delta3AuxPlan struct {
-	Mode                      string `json:"mode"`
-	StrategyState             string `json:"strategyState"`
-	RecommendedACChargeLimitW int    `json:"recommendedAcChargeLimitW"`
-	CurrentACChargeLimitW     *int   `json:"currentAcChargeLimitW,omitempty"`
-	Delta3Soc                 *int   `json:"delta3Soc,omitempty"`
-	Delta3MaxChargeSoc        *int   `json:"delta3MaxChargeSoc,omitempty"`
-	ResidualExportW           int    `json:"residualExportW"`
-	SafetyMarginW             int    `json:"safetyMarginW"`
-	WouldWrite                bool   `json:"wouldWrite"`
-	ShouldAdjustACChargeLimit bool   `json:"shouldAdjustAcChargeLimit"`
-	SuppressedReason          string `json:"suppressedReason,omitempty"`
-	Reason                    string `json:"reason"`
+	Mode                        string `json:"mode"`
+	StrategyState               string `json:"strategyState"`
+	RecommendedACChargeLimitW   int    `json:"recommendedAcChargeLimitW"`
+	CurrentACChargeLimitW       *int   `json:"currentAcChargeLimitW,omitempty"`
+	RecommendedBackupReserveSoc *int   `json:"recommendedBackupReserveSoc,omitempty"`
+	CurrentBackupReserveSoc     *int   `json:"currentBackupReserveSoc,omitempty"`
+	Delta3Soc                   *int   `json:"delta3Soc,omitempty"`
+	Delta3MaxChargeSoc          *int   `json:"delta3MaxChargeSoc,omitempty"`
+	ResidualExportW             int    `json:"residualExportW"`
+	SafetyMarginW               int    `json:"safetyMarginW"`
+	WouldWrite                  bool   `json:"wouldWrite"`
+	ShouldAdjustACChargeLimit   bool   `json:"shouldAdjustAcChargeLimit"`
+	ShouldSetBackupReserve      bool   `json:"shouldSetBackupReserve"`
+	ShouldDisableBackupReserve  bool   `json:"shouldDisableBackupReserve"`
+	SuppressedReason            string `json:"suppressedReason,omitempty"`
+	Reason                      string `json:"reason"`
 }
 
 type WeatherForecast struct {
@@ -369,25 +373,29 @@ type SurplusControlCommandLog struct {
 }
 
 type Delta3AuxControlCommandLog struct {
-	ID                        int64     `json:"id"`
-	MeasuredAt                time.Time `json:"measuredAt"`
-	StrategyState             string    `json:"strategyState"`
-	CommandFingerprint        string    `json:"commandFingerprint"`
-	GridW                     int       `json:"gridW"`
-	ImportW                   int       `json:"importW"`
-	ExportW                   int       `json:"exportW"`
-	ResidualExportW           int       `json:"residualExportW"`
-	Delta3Soc                 *int      `json:"delta3Soc"`
-	PreviousACChargeLimitW    *int      `json:"previousAcChargeLimitW"`
-	TargetACChargeLimitW      *int      `json:"targetAcChargeLimitW"`
-	CommandSent               bool      `json:"commandSent"`
-	DryRun                    bool      `json:"dryRun"`
-	WouldWrite                bool      `json:"wouldWrite"`
-	ShouldAdjustACChargeLimit bool      `json:"shouldAdjustAcChargeLimit"`
-	SuppressedReason          string    `json:"suppressedReason"`
-	DecisionReason            string    `json:"decisionReason"`
-	ErrorMessage              *string   `json:"errorMessage"`
-	CreatedAt                 time.Time `json:"createdAt"`
+	ID                         int64     `json:"id"`
+	MeasuredAt                 time.Time `json:"measuredAt"`
+	StrategyState              string    `json:"strategyState"`
+	CommandFingerprint         string    `json:"commandFingerprint"`
+	GridW                      int       `json:"gridW"`
+	ImportW                    int       `json:"importW"`
+	ExportW                    int       `json:"exportW"`
+	ResidualExportW            int       `json:"residualExportW"`
+	Delta3Soc                  *int      `json:"delta3Soc"`
+	PreviousACChargeLimitW     *int      `json:"previousAcChargeLimitW"`
+	TargetACChargeLimitW       *int      `json:"targetAcChargeLimitW"`
+	PreviousBackupReserveSoc   *int      `json:"previousBackupReserveSoc"`
+	TargetBackupReserveSoc     *int      `json:"targetBackupReserveSoc"`
+	CommandSent                bool      `json:"commandSent"`
+	DryRun                     bool      `json:"dryRun"`
+	WouldWrite                 bool      `json:"wouldWrite"`
+	ShouldAdjustACChargeLimit  bool      `json:"shouldAdjustAcChargeLimit"`
+	ShouldSetBackupReserve     bool      `json:"shouldSetBackupReserve"`
+	ShouldDisableBackupReserve bool      `json:"shouldDisableBackupReserve"`
+	SuppressedReason           string    `json:"suppressedReason"`
+	DecisionReason             string    `json:"decisionReason"`
+	ErrorMessage               *string   `json:"errorMessage"`
+	CreatedAt                  time.Time `json:"createdAt"`
 }
 
 type NotificationLog struct {
