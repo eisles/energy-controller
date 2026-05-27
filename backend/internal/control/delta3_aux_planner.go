@@ -18,6 +18,7 @@ type Delta3AuxSettings struct {
 	MinCommandInterval        time.Duration
 	StopImportThresholdW      int
 	TargetMaxSocBufferPercent int
+	MinDischargeReserveSoc    int
 }
 
 type Delta3AuxStatus struct {
@@ -53,6 +54,7 @@ func DefaultDelta3AuxSettings() Delta3AuxSettings {
 		MinCommandInterval:        120 * time.Second,
 		StopImportThresholdW:      50,
 		TargetMaxSocBufferPercent: 2,
+		MinDischargeReserveSoc:    20,
 	}
 }
 
@@ -107,10 +109,14 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 		}
 		plan.RecommendedACChargeLimitW = target
 		plan.ShouldAdjustACChargeLimit = currentLimitW > safeChargeLimitW || abs(target-currentLimitW) >= settings.MinCommandDiffW
-		maybeDisableDelta3BackupReserve(&plan, input.Delta3)
-		plan.WouldWrite = plan.ShouldAdjustACChargeLimit || plan.ShouldDisableBackupReserve
+		maybeSetDelta3DischargeReserve(&plan, input.Delta3, settings)
+		plan.WouldWrite = plan.ShouldAdjustACChargeLimit || plan.ShouldSetBackupReserve
 		if currentLimitW > safeChargeLimitW {
 			plan.Reason = fmt.Sprintf("AC charge limit exceeds output-aware safe limit while importing from grid; reduce DELTA 3 Plus auxiliary charge (%dW = max %dW - AC output %dW)", safeChargeLimitW, settings.MaxChargeW, delta3ACOutputLoadW(input.Delta3))
+			return plan
+		}
+		if plan.ShouldSetBackupReserve {
+			plan.Reason = "importing from grid; lower DELTA 3 Plus backup reserve to the master minimum so it can discharge"
 			return plan
 		}
 		plan.Reason = "importing from grid; reduce DELTA 3 Plus auxiliary charge toward safe minimum"
@@ -218,6 +224,22 @@ func maybeSetDelta3BackupReserve(plan *domain.Delta3AuxPlan, status Delta3AuxSta
 	plan.ShouldSetBackupReserve = true
 }
 
+func maybeSetDelta3DischargeReserve(plan *domain.Delta3AuxPlan, status Delta3AuxStatus, settings Delta3AuxSettings) {
+	if plan == nil || status.SOC == nil || status.BackupReserveSoc == nil {
+		return
+	}
+	target := settings.MinDischargeReserveSoc
+	if *status.SOC <= target {
+		return
+	}
+	if *status.BackupReserveSoc == target && backupReserveEnabled(status.BackupReserveEnabled) {
+		return
+	}
+	plan.RecommendedBackupReserveSoc = &target
+	plan.ShouldSetBackupReserve = true
+	plan.ShouldDisableBackupReserve = false
+}
+
 func maybeDisableDelta3BackupReserve(plan *domain.Delta3AuxPlan, status Delta3AuxStatus) {
 	if plan == nil || status.BackupReserveSoc == nil || !backupReserveEnabled(status.BackupReserveEnabled) {
 		return
@@ -301,6 +323,10 @@ func normalizeDelta3AuxSettings(settings Delta3AuxSettings) Delta3AuxSettings {
 	if settings.TargetMaxSocBufferPercent < 0 {
 		settings.TargetMaxSocBufferPercent = defaults.TargetMaxSocBufferPercent
 	}
+	if settings.MinDischargeReserveSoc <= 0 {
+		settings.MinDischargeReserveSoc = defaults.MinDischargeReserveSoc
+	}
+	settings.MinDischargeReserveSoc = clamp(settings.MinDischargeReserveSoc, 5, 100)
 	return settings
 }
 

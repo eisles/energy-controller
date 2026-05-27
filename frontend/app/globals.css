@@ -772,6 +772,21 @@ input {
   margin-top: 4px;
 }
 
+.device-status-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.device-flow-summary {
+  margin: 6px 0 0;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 .tariff-plan-actions {
   display: flex;
   flex-wrap: wrap;

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Phase 7 DELTA 3 Plus リザーブ下げ放電制御 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; margin: 40px; color: #172033; }
+    h1, h2, h3 { line-height: 1.3; }
+    code { background: #f3f5f7; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    pre { background: #f3f5f7; padding: 1rem; border-radius: 8px; overflow-x: auto; }
+    li { margin: 0.25rem 0; }
+  </style>
+</head>
+<body>
+  <h1>Phase 7 DELTA 3 Plus リザーブ下げ放電制御 実装計画</h1>
+
+  <h2>Goal</h2>
+  <p>DELTA 3 Plus が十分な残量を持つのに、買電中でもパススルーまたは微充電に留まる状態を改善する。</p>
+  <p>充電機器マスタの <code>reserveSoc</code> を「自動制御が一時的に下げてよい最低バックアップリザーブ SOC」として扱い、買電時には DELTA 3 Plus の backup reserve をこの値まで下げることで放電へ寄せる。</p>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li>EcoFlow の新しい未検証 API コマンドは追加しない。</li>
+    <li>DELTA 3 Plus の AC output ON/OFF 制御は追加しない。</li>
+    <li>grid bypass の自動制御は追加しない。</li>
+    <li>DELTA Pro 3 の既存余剰追従ロジックは変更しない。</li>
+    <li><code>.env</code> の専用ゲートを増やさない。</li>
+    <li>実機制御のデフォルト有効化はしない。</li>
+  </ul>
+
+  <h2>Current State</h2>
+  <ul>
+    <li><code>backend/internal/control/delta3_aux_planner.go</code> は DELTA 3 Plus の AC充電上限と backup reserve を計画する。</li>
+    <li><code>backend/internal/control/delta3_aux_executor.go</code> は既に <code>SetEnergyBackupEnabled(ctx, enabled, startSoc)</code> を実行できる。</li>
+    <li><code>backend/cmd/server/main.go</code> の <code>delta3AuxSettingsForDevice</code> は機器マスタの <code>minChargeW</code> / <code>maxChargeW</code> を設定へ反映しているが、<code>reserveSoc</code> は DELTA 3 Plus 補助制御へ反映していない。</li>
+    <li>買電時の現行計画は AC充電上限を下げ、backup reserve が有効な場合は無効化する方向になっている。</li>
+    <li>そのため、アプリ側の backup reserve や実機挙動によりパススルーになるケースでは、十分な SOC があっても放電へ寄せられない。</li>
+  </ul>
+
+  <h2>Data And API Contract</h2>
+  <h3>Charging Device Master</h3>
+  <p><code>charging_devices.reserve_soc</code> を DELTA 3 Plus 補助制御では以下の意味で扱う。</p>
+  <ul>
+    <li>充電時: これを直接の充電目標にはしない。</li>
+    <li>買電回復時: 放電させてもよい最低 backup reserve SOC として使う。</li>
+    <li>例: <code>reserveSoc=20</code>、SOC 89% の場合、買電中は backup reserve を 20% に設定して放電余地を作る。</li>
+  </ul>
+
+  <h3>Delta3AuxSettings</h3>
+  <p><code>Delta3AuxSettings</code> に <code>MinDischargeReserveSoc</code> を追加する。</p>
+  <ul>
+    <li>デフォルト: 20%</li>
+    <li><code>delta3AuxSettingsForDevice</code> で <code>device.ReserveSoc &gt; 0</code> の場合はその値を使う。</li>
+    <li>5-100% の範囲へ正規化する。EcoFlow private API の <code>ValidateBackupReserveSoc</code> が 5% 未満を拒否するため、下限は 5% とする。</li>
+  </ul>
+
+  <h3>Delta3AuxPlan</h3>
+  <p>既存の <code>RecommendedBackupReserveSoc</code> / <code>ShouldSetBackupReserve</code> / <code>ShouldDisableBackupReserve</code> を使う。</p>
+  <ul>
+    <li>買電中で SOC が <code>MinDischargeReserveSoc</code> より十分高い場合: <code>RecommendedBackupReserveSoc = MinDischargeReserveSoc</code>、<code>ShouldSetBackupReserve = true</code>、<code>ShouldDisableBackupReserve = false</code></li>
+    <li>SOC が下限以下の場合: reserve を下げない。</li>
+    <li>current backup reserve が取得できない場合: 既存ガードどおり write しない。</li>
+  </ul>
+
+  <h2>Safety Boundaries</h2>
+  <ul>
+    <li>実機 write は既存ガードを維持する。</li>
+    <li>AC充電上限は既存の <code>AC出力W + AC充電W &lt;= maxChargeW</code> 相当の安全上限を維持する。</li>
+    <li>405 / AC出力OFF の再発を避けるため、AC出力制御や grid bypass 制御は追加しない。</li>
+    <li>backup reserve を下げる対象は DELTA 3 Plus 補助制御対象の1台目だけに限定する。</li>
+    <li>command interval / duplicate fingerprint は既存ロジックを維持する。</li>
+  </ul>
+
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li><code>Delta3AuxSettings</code> に <code>MinDischargeReserveSoc</code> を追加する。</li>
+    <li><code>DefaultDelta3AuxSettings</code> と <code>normalizeDelta3AuxSettings</code> で 5-100% に正規化する。</li>
+    <li><code>backend/cmd/server/main.go</code> の <code>delta3AuxSettingsForDevice</code> で <code>device.ReserveSoc</code> を <code>MinDischargeReserveSoc</code> に反映する。</li>
+    <li>買電回復時の backup reserve 制御を変更する。</li>
+    <li>既存の余剰充電時 backup reserve 引き上げ制御は維持する。</li>
+    <li>単体テストを追加・修正する。</li>
+  </ol>
+
+  <h2>Review Points</h2>
+  <ul>
+    <li>backup reserve を下げる条件が買電時に限定されていること。</li>
+    <li>current reserve 不明時に write しない既存ガードが残っていること。</li>
+    <li>実機 write ガードを緩めていないこと。</li>
+    <li>DELTA Pro 3 の既存制御に影響しないこと。</li>
+    <li>既存の AC出力安全上限制御と競合しないこと。</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <pre><code>cd backend &amp;&amp; rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build</code></pre>
+
+  <h2>Rollback / Operational Notes</h2>
+  <ul>
+    <li>問題が出た場合は充電機器マスタの DELTA 3 Plus <code>controlEnabled=false</code> で DELTA 3 Plus 補助制御だけ止められる。</li>
+    <li>さらに必要なら <code>.env</code> の <code>DELTA3_AUX_ENABLED=false</code> または <code>ECOFLOW_DELTA3_EXECUTE=false</code> で write を止める。</li>
+    <li><code>reserveSoc</code> は「普段のアプリ設定」ではなく「自動制御が下げてよい最低SOC」として運用する。</li>
+  </ul>
+</body>
+</html>

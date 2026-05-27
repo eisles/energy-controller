@@ -273,6 +273,27 @@ func TestChargingPriorityContextRequiresDelta3AuxControlReadiness(t *testing.T) 
 	}
 }
 
+func TestDelta3AuxSettingsForDeviceUsesMasterReserveAsDischargeFloor(t *testing.T) {
+	settings := delta3AuxSettingsForDevice(config.Config{
+		Delta3Aux: config.Delta3AuxConfig{
+			Enabled:              true,
+			MinChargeW:           100,
+			MaxChargeW:           1400,
+			SafetyMarginW:        50,
+			MinCommandDiffW:      100,
+			StopImportThresholdW: 50,
+		},
+	}, domain.ChargingDevice{
+		MinChargeW: 100,
+		MaxChargeW: 1400,
+		ReserveSoc: 25,
+	})
+
+	if settings.MinDischargeReserveSoc != 25 {
+		t.Fatalf("MinDischargeReserveSoc = %d, want 25", settings.MinDischargeReserveSoc)
+	}
+}
+
 func TestHigherPriorityDelta3ChargeCandidateRequiresActionablePlan(t *testing.T) {
 	now := time.Date(2026, 5, 26, 10, 0, 0, 0, time.UTC)
 	priority := chargingPriorityContext{

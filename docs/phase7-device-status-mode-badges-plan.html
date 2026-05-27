@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phase 7 充電機器ステータス・モード表示改善 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; color: #172033; max-width: 960px; margin: 40px auto; padding: 0 24px; }
+    h1, h2 { line-height: 1.3; }
+    h1 { font-size: 28px; border-bottom: 2px solid #d9e2ec; padding-bottom: 12px; }
+    h2 { margin-top: 32px; font-size: 20px; }
+    code, pre { background: #f5f7fa; border-radius: 6px; }
+    code { padding: 2px 5px; }
+    pre { padding: 14px; overflow-x: auto; }
+    ul { padding-left: 1.4rem; }
+  </style>
+</head>
+<body>
+  <h1>Phase 7 充電機器ステータス・モード表示改善 実装計画</h1>
+  <h2>目的</h2>
+  <p>管理画面の「充電機器ステータス」で、各充電機器が現在 <code>充電中</code>、<code>放電中</code>、<code>パススルー</code>、<code>待機</code>、<code>取得不可</code> のどれなのかを、数値を読まなくてもすぐ分かるようにする。</p>
+  <p>あわせて、取得できているモードや設定状態を要約し、DELTA Pro 3 と DELTA 3 Plus がどの状態で動いているかを一覧内で確認しやすくする。</p>
+
+  <h2>非目的</h2>
+  <ul>
+    <li>実機制御ロジックは変更しない。</li>
+    <li>EcoFlow への write API は追加しない。</li>
+    <li>新しい backend API や DB migration は追加しない。</li>
+    <li>EcoFlow private MQTT の raw decode 追加は今回の範囲外とする。</li>
+  </ul>
+
+  <h2>現状</h2>
+  <ul>
+    <li><code>frontend/components/StatusCards.tsx</code> の <code>Delta3StatusCard</code> で機器ごとの SOC、AC入力、AC出力、AC充電上限などを表示している。</li>
+    <li><code>frontend/lib/types.ts</code> には機器ごとの <code>acInW</code>、<code>acOutW</code>、<code>acChargeLimitW</code>、<code>backupReserveSoc</code>、<code>backupReserveEnabled</code>、<code>gridBypassDisabled</code>、<code>acOutputEnabled</code> が既にある。</li>
+    <li>現在は AC入力/出力の数値を読めば状態を推測できるが、状態名としては表示されていない。</li>
+  </ul>
+
+  <h2>方針</h2>
+  <p>frontend 側で既存の read-only 値から表示用ステータスを推定する。</p>
+  <pre><code>取得不可: device.status.available が false
+取得不可: acInW または acOutW が null/undefined
+判定前に AC出力 は abs(AC出力) へ正規化する
+パススルー: AC入力 >= 50W かつ abs(AC出力) >= 50W かつ abs(AC入力 - abs(AC出力)) &lt;= 100W
+充電中: AC入力 - abs(AC出力) > 100W
+放電中: abs(AC出力) - AC入力 > 100W
+待機: 上記以外</code></pre>
+  <ul>
+    <li>機器名の右側に状態 Badge を出す。</li>
+    <li>状態の下に <code>AC入力 / AC出力 / 実質W</code> の短い要約を出す。</li>
+    <li>設定状態として、<code>AC出力 ON/OFF</code>、<code>バックアップ ON/OFF</code>、<code>Grid bypass</code>、<code>最大充電SOC</code>、<code>最低放電SOC</code> をモード要約として表示する。</li>
+    <li>状態 Badge の色は <code>充電中=success</code>、<code>放電中=warning</code>、<code>パススルー=secondary</code>、<code>待機=secondary</code>、<code>取得不可=destructive</code> とする。</li>
+  </ul>
+
+  <h2>変更予定ファイル</h2>
+  <ul>
+    <li><code>frontend/components/StatusCards.tsx</code>: 状態判定 helper、状態 Badge、状態要約、モード要約を追加する。</li>
+    <li><code>frontend/app/globals.css</code>: 状態サマリー行の最小限のスタイルを追加する。</li>
+  </ul>
+
+  <h2>安全境界</h2>
+  <ul>
+    <li>read-only 表示だけを変更する。</li>
+    <li><code>ENABLE_REAL_CONTROL</code>、<code>SIMULATION_MODE</code>、EcoFlow write gate、機器マスタ、制御ログ保存には触れない。</li>
+    <li>実機への追加 write は行わない。</li>
+    <li><code>.env</code>、認証情報、シリアル番号は変更しない。</li>
+  </ul>
+
+  <h2>レビュー観点</h2>
+  <ul>
+    <li>パススルー判定が同時入出力の誤読を減らすこと。</li>
+    <li>負値の AC 出力が来ても <code>abs()</code> で表示・判定できること。</li>
+    <li>取得不可機器で null 値を参照して UI が落ちないこと。</li>
+    <li>既存の detail 情報が消えないこと。</li>
+    <li>build が通ること。</li>
+  </ul>
+
+  <h2>検証コマンド</h2>
+  <pre><code>cd frontend &amp;&amp; rtk npm run build
+rtk codex review --uncommitted</code></pre>
+
+  <h2>運用メモ</h2>
+  <p>この変更は表示改善のみ。実機制御が期待通りかは、既存の DELTA 3 Plus 補助充電ログと実機ステータスで別途確認する。</p>
+</body>
+</html>

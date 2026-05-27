@@ -656,6 +656,9 @@ func delta3AuxSettingsForDevice(cfg config.Config, device domain.ChargingDevice)
 	if device.MaxChargeW > 0 {
 		settings.MaxChargeW = device.MaxChargeW
 	}
+	if device.ReserveSoc > 0 {
+		settings.MinDischargeReserveSoc = device.ReserveSoc
+	}
 	return settings
 }
 

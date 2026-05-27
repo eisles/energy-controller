@@ -18,6 +18,17 @@ type Metric = {
 type MetricKey = "gridW" | "importW" | "exportW" | "targetChargeW" | "state" | "updatedAt";
 
 const primaryMetrics: MetricKey[] = ["gridW", "importW", "exportW", "targetChargeW", "state", "updatedAt"];
+const passthroughToleranceW = 100;
+const activePowerThresholdW = 50;
+
+type BadgeVariant = "default" | "secondary" | "success" | "warning" | "destructive";
+
+type DeviceFlowState = {
+  label: string;
+  variant: BadgeVariant;
+  netW: number | null;
+  summary: string;
+};
 
 export type StatusCardSectionKey = "charts" | "decision" | "surplusPlan" | "nightPlan";
 
@@ -105,46 +116,57 @@ export function Delta3StatusCard({
         {sortedDeviceStatuses.length > 0 ? (
           <>
             <div className="delta3-device-status-list">
-              {sortedDeviceStatuses.map((device) => (
-                <div className="delta3-device-status-item" key={device.id || device.credentialRef}>
-                  <div className="panel-title-row">
-                    <div>
-                      <strong>{device.name}</strong>
-                      <p className="readonly-note">
-                        {deviceKindLabel(device.kind)} / 優先 {device.priority} / {device.credentialRef} / {statusSourceLabel(device.statusSource)} / {maskDeviceSn(device.deviceSn)}
-                      </p>
+              {sortedDeviceStatuses.map((device) => {
+                const flowState = deviceFlowState(device);
+                const modeSummary = deviceModeSummary(device);
+                return (
+                  <div className="delta3-device-status-item" key={device.id || device.credentialRef}>
+                    <div className="panel-title-row">
+                      <div>
+                        <strong>{device.name}</strong>
+                        <p className="device-flow-summary">{flowState.summary}</p>
+                        <p className="readonly-note">
+                          {deviceKindLabel(device.kind)} / 優先 {device.priority} / {device.credentialRef} / {statusSourceLabel(device.statusSource)} / {maskDeviceSn(device.deviceSn)}
+                        </p>
+                      </div>
+                      <div className="device-status-badges">
+                        <Badge variant={flowState.variant}>{flowState.label}</Badge>
+                        <Badge variant={device.status.available ? "success" : "secondary"}>{device.status.available ? "接続中" : "取得不可"}</Badge>
+                      </div>
                     </div>
-                    <Badge variant={device.status.available ? "success" : "secondary"}>{device.status.available ? "接続中" : "取得不可"}</Badge>
+                    {device.status.available ? (
+                      <>
+                        <div className="detail-strip" aria-label={`${device.name} read-only status`}>
+                          <Detail label="状態" value={<Badge variant={flowState.variant}>{flowState.label}</Badge>} />
+                          <Detail label="残量" value={deviceSocLabel(device)} />
+                          <Detail label="AC入力" value={nullableWatt(device.status.acInW)} />
+                          <Detail label="AC出力" value={nullablePositiveWatt(device.status.acOutW)} />
+                          <Detail label="実質W" value={formatDeviceNetFlow(flowState.netW)} />
+                          <Detail label="AC充電上限" value={nullableWatt(device.status.acChargeLimitW)} />
+                          <Detail label="容量" value={formatWhCapacity(device.capacityWh)} />
+                          <Detail label="設定範囲" value={`${device.minChargeW}-${device.maxChargeW} W`} />
+                          <Detail label="モード" value={modeSummary} />
+                        </div>
+                        <div className="detail-strip planner-secondary" aria-label={`${device.name} configuration status`}>
+                          <Detail label="最大充電SOC" value={nullablePercent(device.status.maxChargeSoc)} />
+                          <Detail label="最低放電SOC" value={nullablePercent(device.status.minDischargeSoc)} />
+                          <Detail label="バックアップ" value={nullablePercent(device.status.backupReserveSoc ?? device.reserveSoc)} />
+                          <Detail label="Grid bypass" value={nullableOnOff(device.status.gridBypassDisabled)} />
+                          <Detail label="AC出力" value={nullableOnOff(device.status.acOutputEnabled)} />
+                          <Detail label="Device type" value={device.status.deviceType || device.deviceType || "-"} />
+                          <Detail label="Updated" value={formatDateTime(device.status.updatedAt || "")} />
+                          <Detail label="制御候補" value={device.controlEnabled ? "有効" : "無効"} />
+                        </div>
+                      </>
+                    ) : (
+                      <Alert className="delta3-alert">
+                        <AlertTitle>{device.name} read-only status</AlertTitle>
+                        <AlertDescription>{device.status.lastError || "read-only status is not loaded"}</AlertDescription>
+                      </Alert>
+                    )}
                   </div>
-                  {device.status.available ? (
-                    <>
-                      <div className="detail-strip" aria-label={`${device.name} read-only status`}>
-                        <Detail label="残量" value={deviceSocLabel(device)} />
-                        <Detail label="AC入力" value={nullableWatt(device.status.acInW)} />
-                        <Detail label="AC出力" value={nullablePositiveWatt(device.status.acOutW)} />
-                        <Detail label="AC充電上限" value={nullableWatt(device.status.acChargeLimitW)} />
-                        <Detail label="容量" value={formatWhCapacity(device.capacityWh)} />
-                        <Detail label="設定範囲" value={`${device.minChargeW}-${device.maxChargeW} W`} />
-                      </div>
-                      <div className="detail-strip planner-secondary" aria-label={`${device.name} configuration status`}>
-                        <Detail label="最大充電SOC" value={nullablePercent(device.status.maxChargeSoc)} />
-                        <Detail label="最低放電SOC" value={nullablePercent(device.status.minDischargeSoc)} />
-                        <Detail label="バックアップ" value={nullablePercent(device.status.backupReserveSoc ?? device.reserveSoc)} />
-                        <Detail label="Grid bypass" value={nullableOnOff(device.status.gridBypassDisabled)} />
-                        <Detail label="AC出力" value={nullableOnOff(device.status.acOutputEnabled)} />
-                        <Detail label="Device type" value={device.status.deviceType || device.deviceType || "-"} />
-                        <Detail label="Updated" value={formatDateTime(device.status.updatedAt || "")} />
-                        <Detail label="制御候補" value={device.controlEnabled ? "有効" : "無効"} />
-                      </div>
-                    </>
-                  ) : (
-                    <Alert className="delta3-alert">
-                      <AlertTitle>{device.name} read-only status</AlertTitle>
-                      <AlertDescription>{device.status.lastError || "read-only status is not loaded"}</AlertDescription>
-                    </Alert>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
             <div className="detail-strip planner-secondary" aria-label="DELTA 3 Plus auxiliary battery plan">
               <Detail label="補助計画" value={strategyStateLabel(auxiliaryPlan?.strategyState || "UNAVAILABLE")} />
@@ -605,6 +627,65 @@ function nullableWatt(value: number | null | undefined) {
 
 function nullablePositiveWatt(value: number | null | undefined) {
   return value === null || value === undefined ? "-" : `${Math.abs(value)} W`;
+}
+
+function deviceFlowState(device: DeviceStatus): DeviceFlowState {
+  if (!device.status.available) {
+    return {
+      label: "取得不可",
+      variant: "destructive",
+      netW: null,
+      summary: device.status.lastError || "ステータスを取得できていません"
+    };
+  }
+  if (device.status.acInW === null || device.status.acInW === undefined || device.status.acOutW === null || device.status.acOutW === undefined) {
+    return {
+      label: "取得不可",
+      variant: "destructive",
+      netW: null,
+      summary: "AC入力またはAC出力の値を取得できていません"
+    };
+  }
+
+  const inputW = device.status.acInW;
+  const outputW = Math.abs(device.status.acOutW);
+  const netW = inputW - outputW;
+  const powerSummary = `AC入力 ${inputW} W / AC出力 ${outputW} W / ${formatDeviceNetFlow(netW)}`;
+
+  if (inputW >= activePowerThresholdW && outputW >= activePowerThresholdW && Math.abs(netW) <= passthroughToleranceW) {
+    return { label: "パススルー", variant: "secondary", netW, summary: powerSummary };
+  }
+  if (netW > passthroughToleranceW) {
+    return { label: "充電中", variant: "success", netW, summary: powerSummary };
+  }
+  if (netW < -passthroughToleranceW) {
+    return { label: "放電中", variant: "warning", netW, summary: powerSummary };
+  }
+  return { label: "待機", variant: "secondary", netW, summary: powerSummary };
+}
+
+function formatDeviceNetFlow(value: number | null) {
+  if (value === null) {
+    return "-";
+  }
+  if (value > 0) {
+    return `実質充電 ${value} W`;
+  }
+  if (value < 0) {
+    return `実質放電 ${Math.abs(value)} W`;
+  }
+  return "差分 0 W";
+}
+
+function deviceModeSummary(device: DeviceStatus) {
+  const parts = [
+    `AC出力 ${nullableOnOff(device.status.acOutputEnabled)}`,
+    `バックアップ ${nullableOnOff(device.status.backupReserveEnabled)}`,
+    `Grid bypass ${nullableOnOff(device.status.gridBypassDisabled)}`,
+    `最大SOC ${nullablePercent(device.status.maxChargeSoc)}`,
+    `最低SOC ${nullablePercent(device.status.minDischargeSoc)}`
+  ];
+  return parts.join(" / ");
 }
 
 function yesNo(value: boolean) {
