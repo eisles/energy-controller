@@ -69,6 +69,8 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 		CurrentBackupReserveSoc:   input.Delta3.BackupReserveSoc,
 		Delta3Soc:                 input.Delta3.SOC,
 		Delta3MaxChargeSoc:        input.Delta3.MaxChargeSoc,
+		Delta3ACOutputW:           positiveIntPtr(delta3ACOutputLoadW(input.Delta3)),
+		SafeACChargeLimitW:        delta3SafeACChargeLimitW(input.Delta3, settings),
 		RecommendedACChargeLimitW: valueOrZero(input.Delta3.ACChargeLimitW),
 		WouldWrite:                false,
 	}
@@ -90,26 +92,46 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 	}
 
 	currentLimitW := *input.Delta3.ACChargeLimitW
+	safeChargeLimitW := delta3SafeACChargeLimitW(input.Delta3, settings)
 	maxChargeSoc := 100
 	if input.Delta3.MaxChargeSoc != nil && *input.Delta3.MaxChargeSoc > 0 && *input.Delta3.MaxChargeSoc < maxChargeSoc {
 		maxChargeSoc = *input.Delta3.MaxChargeSoc
-	}
-	if *input.Delta3.SOC >= maxChargeSoc-settings.TargetMaxSocBufferPercent {
-		plan.StrategyState = "FULL"
-		maybeDisableDelta3BackupReserve(&plan, input.Delta3)
-		plan.WouldWrite = plan.ShouldDisableBackupReserve
-		plan.Reason = fmt.Sprintf("DELTA 3 Plus SOC %d%% is near max charge SOC %d%%", *input.Delta3.SOC, maxChargeSoc)
-		return plan
 	}
 
 	if status.ImportW >= settings.StopImportThresholdW {
 		plan.StrategyState = "RECOVERING"
 		target := delta3ImportRecoveryChargeW(currentLimitW, status.ImportW, settings)
+		target = min(target, safeChargeLimitW)
+		if currentLimitW > safeChargeLimitW {
+			plan.StrategyState = "SAFE_LIMIT"
+		}
 		plan.RecommendedACChargeLimitW = target
-		plan.ShouldAdjustACChargeLimit = abs(target-currentLimitW) >= settings.MinCommandDiffW
+		plan.ShouldAdjustACChargeLimit = currentLimitW > safeChargeLimitW || abs(target-currentLimitW) >= settings.MinCommandDiffW
 		maybeDisableDelta3BackupReserve(&plan, input.Delta3)
 		plan.WouldWrite = plan.ShouldAdjustACChargeLimit || plan.ShouldDisableBackupReserve
+		if currentLimitW > safeChargeLimitW {
+			plan.Reason = fmt.Sprintf("AC charge limit exceeds output-aware safe limit while importing from grid; reduce DELTA 3 Plus auxiliary charge (%dW = max %dW - AC output %dW)", safeChargeLimitW, settings.MaxChargeW, delta3ACOutputLoadW(input.Delta3))
+			return plan
+		}
 		plan.Reason = "importing from grid; reduce DELTA 3 Plus auxiliary charge toward safe minimum"
+		return plan
+	}
+
+	if currentLimitW > safeChargeLimitW {
+		plan.StrategyState = "SAFE_LIMIT"
+		plan.RecommendedACChargeLimitW = safeChargeLimitW
+		plan.ShouldAdjustACChargeLimit = true
+		maybeDisableDelta3BackupReserve(&plan, input.Delta3)
+		plan.WouldWrite = plan.ShouldAdjustACChargeLimit || plan.ShouldDisableBackupReserve
+		plan.Reason = fmt.Sprintf("DELTA 3 Plus AC charge limit exceeds output-aware safe limit (%dW = max %dW - AC output %dW)", safeChargeLimitW, settings.MaxChargeW, delta3ACOutputLoadW(input.Delta3))
+		return plan
+	}
+
+	if *input.Delta3.SOC >= maxChargeSoc-settings.TargetMaxSocBufferPercent {
+		plan.StrategyState = "FULL"
+		maybeDisableDelta3BackupReserve(&plan, input.Delta3)
+		plan.WouldWrite = plan.ShouldDisableBackupReserve
+		plan.Reason = fmt.Sprintf("DELTA 3 Plus SOC %d%% is near max charge SOC %d%%", *input.Delta3.SOC, maxChargeSoc)
 		return plan
 	}
 
@@ -137,12 +159,17 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 
 	target := currentLimitW + roundDownToHundred(residualHeadroomW)
 	target = clamp(target, settings.MinChargeW, settings.MaxChargeW)
+	target = min(target, safeChargeLimitW)
 	target = limitStep(currentLimitW, target, settings.MaxIncreaseStepW, settings.MaxDecreaseStepW)
+	target = min(target, safeChargeLimitW)
 	target = roundDownToHundred(target)
+	if target < settings.MinChargeW {
+		target = settings.MinChargeW
+	}
 	plan.StrategyState = "READY"
 	plan.RecommendedACChargeLimitW = target
 	plan.ShouldAdjustACChargeLimit = abs(target-currentLimitW) >= settings.MinCommandDiffW
-	maybeSetDelta3BackupReserve(&plan, input.Delta3, settings, pro3Settings)
+	maybeSetDelta3BackupReserve(&plan, input.Delta3, settings, pro3Settings, safeChargeLimitW)
 	plan.WouldWrite = plan.ShouldAdjustACChargeLimit || plan.ShouldSetBackupReserve
 	if !plan.ShouldAdjustACChargeLimit {
 		if plan.ShouldSetBackupReserve {
@@ -162,14 +189,14 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 	return plan
 }
 
-func maybeSetDelta3BackupReserve(plan *domain.Delta3AuxPlan, status Delta3AuxStatus, settings Delta3AuxSettings, pro3Settings Settings) {
+func maybeSetDelta3BackupReserve(plan *domain.Delta3AuxPlan, status Delta3AuxStatus, settings Delta3AuxSettings, pro3Settings Settings, safeChargeLimitW int) {
 	if plan == nil || status.SOC == nil || status.BackupReserveSoc == nil {
 		return
 	}
 	if status.MaxChargeSoc != nil && *status.SOC >= *status.MaxChargeSoc-settings.TargetMaxSocBufferPercent {
 		return
 	}
-	if !plan.ShouldAdjustACChargeLimit && plan.RecommendedACChargeLimitW < settings.MaxChargeW {
+	if !plan.ShouldAdjustACChargeLimit && plan.RecommendedACChargeLimitW < safeChargeLimitW {
 		return
 	}
 	if !delta3LooksPassthrough(status, settings) && !plan.ShouldAdjustACChargeLimit {
@@ -208,6 +235,34 @@ func delta3LooksPassthrough(status Delta3AuxStatus, settings Delta3AuxSettings) 
 		return false
 	}
 	return abs(*status.ACInW-abs(*status.ACOutW)) < settings.MinCommandDiffW
+}
+
+func delta3SafeACChargeLimitW(status Delta3AuxStatus, settings Delta3AuxSettings) int {
+	outputW := delta3ACOutputLoadW(status)
+	target := settings.MaxChargeW - outputW
+	if target < settings.MinChargeW {
+		return settings.MinChargeW
+	}
+	target = clamp(target, settings.MinChargeW, settings.MaxChargeW)
+	target = roundDownToHundred(target)
+	if target < settings.MinChargeW {
+		return settings.MinChargeW
+	}
+	return target
+}
+
+func delta3ACOutputLoadW(status Delta3AuxStatus) int {
+	if status.ACOutW == nil {
+		return 0
+	}
+	return abs(*status.ACOutW)
+}
+
+func positiveIntPtr(value int) *int {
+	if value <= 0 {
+		return nil
+	}
+	return &value
 }
 
 func backupReserveEnabled(value *bool) bool {

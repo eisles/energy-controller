@@ -88,6 +88,8 @@ type Delta3AuxPlan struct {
 	CurrentBackupReserveSoc     *int   `json:"currentBackupReserveSoc,omitempty"`
 	Delta3Soc                   *int   `json:"delta3Soc,omitempty"`
 	Delta3MaxChargeSoc          *int   `json:"delta3MaxChargeSoc,omitempty"`
+	Delta3ACOutputW             *int   `json:"delta3AcOutputW,omitempty"`
+	SafeACChargeLimitW          int    `json:"safeAcChargeLimitW"`
 	ResidualExportW             int    `json:"residualExportW"`
 	SafetyMarginW               int    `json:"safetyMarginW"`
 	WouldWrite                  bool   `json:"wouldWrite"`

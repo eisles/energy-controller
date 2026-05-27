@@ -94,6 +94,8 @@ export type Delta3AuxPlan = {
   currentBackupReserveSoc?: number | null;
   delta3Soc?: number | null;
   delta3MaxChargeSoc?: number | null;
+  delta3AcOutputW?: number | null;
+  safeAcChargeLimitW: number;
   residualExportW: number;
   safetyMarginW: number;
   wouldWrite: boolean;

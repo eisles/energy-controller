@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phase 7 DELTA 3 Plus AC出力考慮安全上限制御 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; color: #172033; max-width: 960px; margin: 40px auto; padding: 0 24px; }
+    h1, h2 { line-height: 1.3; }
+    h1 { font-size: 28px; border-bottom: 2px solid #d9e2ec; padding-bottom: 12px; }
+    h2 { margin-top: 32px; font-size: 20px; }
+    code, pre { background: #f5f7fa; border-radius: 6px; }
+    code { padding: 2px 5px; }
+    pre { padding: 14px; overflow-x: auto; }
+    ul, ol { padding-left: 1.4rem; }
+    .note { border-left: 4px solid #2f80ed; background: #f4f8ff; padding: 12px 16px; }
+  </style>
+</head>
+<body>
+  <h1>Phase 7 DELTA 3 Plus AC出力考慮安全上限制御 実装計画</h1>
+  <h2>目的</h2>
+  <p>DELTA 3 Plus がエラーコード 405 を表示して AC 出力 OFF になる事象を受け、補助充電制御で <code>AC充電上限 + AC出力W &lt;= 安全上限</code> を守る。</p>
+  <p>今回の変更は、DELTA 3 Plus への充電指示をより保守的にするためのものであり、AC 出力 ON/OFF の自動復帰は実装しない。</p>
+  <h2>非目的</h2>
+  <ul>
+    <li>AC 出力を自動で ON に戻す制御は実装しない。</li>
+    <li>EcoFlow private MQTT の未解析エラーコード取得は今回の範囲外とする。</li>
+    <li>DELTA Pro 3 の余剰追従制御は変更しない。</li>
+    <li>実機制御 gate の既定値や安全条件を緩めない。</li>
+  </ul>
+  <h2>現状</h2>
+  <ul>
+    <li>DELTA 3 Plus 補助制御は AC 充電上限とバックアップリザーブを調整している。</li>
+    <li>AC 出力 ON/OFF を直接切り替える書き込み処理はない。</li>
+    <li>405 発生時、液晶には 405 のみ表示される。</li>
+    <li>既存の <code>Delta3AuxSettings.MaxChargeW</code> は DELTA 3 Plus の充電上限として使われている。</li>
+    <li>機器マスタには <code>minChargeW</code> / <code>maxChargeW</code> があるため、制御対象ごとの安全上限として利用できる。</li>
+  </ul>
+  <h2>方針</h2>
+  <pre><code>safeAcChargeLimitW = max(minChargeW, roundDownTo100(maxChargeW - abs(acOutW)))
+recommendedAcChargeLimitW &lt;= safeAcChargeLimitW</code></pre>
+  <p>例えば <code>maxChargeW=1500W</code>、<code>AC出力=410W</code> の場合は、推奨 AC 充電上限を <code>1000W</code> までに制限する。</p>
+  <h2>データ/API契約</h2>
+  <ul>
+    <li><code>delta3AcOutputW</code>: DELTA 3 Plus の現在 AC 出力W。不明または 0 以下なら省略可能。</li>
+    <li><code>safeAcChargeLimitW</code>: AC 出力を考慮した推奨上限の上限値。</li>
+  </ul>
+  <h2>実装手順</h2>
+  <ol>
+    <li><code>backend/internal/domain/status.go</code> に追加フィールドを定義する。</li>
+    <li><code>backend/internal/control/delta3_aux_planner.go</code> に安全上限計算と <code>SAFE_LIMIT</code> を追加する。</li>
+    <li><code>backend/cmd/server/main.go</code> で機器マスタの <code>minChargeW</code> / <code>maxChargeW</code> を反映する。</li>
+    <li><code>frontend/lib/types.ts</code> に型を追加する。</li>
+    <li><code>frontend/components/StatusCards.tsx</code> に read-only 表示を追加する。</li>
+    <li><code>frontend/lib/display-labels.ts</code> に日本語表示を追加する。</li>
+    <li>planner の単体テストを追加する。</li>
+  </ol>
+  <h2>安全境界</h2>
+  <ul>
+    <li>実機 write は既存 gate を通す。</li>
+    <li>必要な環境変数と確認文字列、試験期限、private write 許可が揃わない限り送信しない。</li>
+    <li>AC 出力 ON/OFF の自動操作は行わない。</li>
+    <li>405 検知時の自動復帰は行わない。</li>
+  </ul>
+  <h2>レビュー観点</h2>
+  <ul>
+    <li><code>AC充電上限 + AC出力W &lt;= maxChargeW</code> が planner の候補値で守られていること。</li>
+    <li><code>ACOutW</code> が負値でも正しく絶対値で扱われること。</li>
+    <li>機器マスタの <code>maxChargeW</code> が反映されること。</li>
+    <li>実機 write gate が緩んでいないこと。</li>
+    <li>UI は read-only 表示に留まること。</li>
+  </ul>
+  <h2>検証コマンド</h2>
+  <pre><code>rtk go test ./...    # backend directory
+rtk npm run build    # frontend directory</code></pre>
+  <h2>運用メモ</h2>
+  <p class="note">405 が再発する場合は、DELTA 3 Plus の自動制御は無効のままにし、次フェーズでエラーコード/保護状態の raw 診断ログ保存を検討する。</p>
+</body>
+</html>

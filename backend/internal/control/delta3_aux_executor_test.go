@@ -114,6 +114,36 @@ func TestExecuteDelta3AuxCommandSendsTargetWhenAllowed(t *testing.T) {
 	}
 }
 
+func TestEvaluateDelta3AuxCommandGuardAllowsSafeLimitCutBelowMinimumDiff(t *testing.T) {
+	now := time.Date(2026, 5, 24, 10, 0, 0, 0, time.UTC)
+	current := 1050
+	target := 1000
+	status := domain.Status{
+		ExportW:   900,
+		UpdatedAt: now,
+		Delta3AuxPlan: &domain.Delta3AuxPlan{
+			StrategyState:             "SAFE_LIMIT",
+			RecommendedACChargeLimitW: target,
+			CurrentACChargeLimitW:     &current,
+			ResidualExportW:           900,
+			ShouldAdjustACChargeLimit: true,
+			Reason:                    "DELTA 3 Plus AC charge limit exceeds output-aware safe limit",
+		},
+	}
+
+	log := EvaluateDelta3AuxCommandGuard(delta3AuxRealWriteGuardInput(status, nil), Delta3AuxSettings{
+		Enabled:         true,
+		MinCommandDiffW: 100,
+	})
+
+	if !log.WouldWrite {
+		t.Fatalf("WouldWrite = false, want true for SAFE_LIMIT cut below minimum diff; suppressed=%q", log.SuppressedReason)
+	}
+	if log.TargetACChargeLimitW == nil || *log.TargetACChargeLimitW != target {
+		t.Fatalf("TargetACChargeLimitW = %v, want %d", log.TargetACChargeLimitW, target)
+	}
+}
+
 func TestExecuteDelta3AuxCommandClearsWouldWriteOnFailure(t *testing.T) {
 	target := 300
 	log := domain.Delta3AuxControlCommandLog{

@@ -122,7 +122,7 @@ func delta3AuxCommandSuppressedReason(input Delta3AuxCommandGuardInput, settings
 	if log.ShouldDisableBackupReserve && log.TargetBackupReserveSoc == nil {
 		return "DELTA 3 Plus target backup reserve unavailable"
 	}
-	if log.ShouldAdjustACChargeLimit && !log.ShouldSetBackupReserve && !log.ShouldDisableBackupReserve && abs(*log.TargetACChargeLimitW-*log.PreviousACChargeLimitW) < settings.MinCommandDiffW {
+	if log.ShouldAdjustACChargeLimit && log.StrategyState != "SAFE_LIMIT" && !log.ShouldSetBackupReserve && !log.ShouldDisableBackupReserve && abs(*log.TargetACChargeLimitW-*log.PreviousACChargeLimitW) < settings.MinCommandDiffW {
 		return "command suppressed by minimum diff"
 	}
 	if previousDelta3AuxWriteCandidate(input.Previous) {

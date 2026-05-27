@@ -150,6 +150,8 @@ export function Delta3StatusCard({
               <Detail label="補助計画" value={strategyStateLabel(auxiliaryPlan?.strategyState || "UNAVAILABLE")} />
               <Detail label="推奨AC上限" value={nullableWatt(auxiliaryPlan?.recommendedAcChargeLimitW)} />
               <Detail label="現在AC上限" value={nullableWatt(auxiliaryPlan?.currentAcChargeLimitW)} />
+              <Detail label="AC出力考慮上限" value={nullableWatt(auxiliaryPlan?.safeAcChargeLimitW)} />
+              <Detail label="DELTA 3 Plus出力" value={nullableWatt(auxiliaryPlan?.delta3AcOutputW)} />
               <Detail label="推奨バックアップ" value={nullablePercent(auxiliaryPlan?.recommendedBackupReserveSoc)} />
               <Detail label="現在バックアップ" value={nullablePercent(auxiliaryPlan?.currentBackupReserveSoc)} />
               <Detail label="残余売電" value={nullableWatt(auxiliaryPlan?.residualExportW ?? sourceStatus.exportW)} />
@@ -182,6 +184,8 @@ export function Delta3StatusCard({
               <Detail label="補助計画" value={strategyStateLabel(auxiliaryPlan?.strategyState || "UNAVAILABLE")} />
               <Detail label="推奨AC上限" value={nullableWatt(auxiliaryPlan?.recommendedAcChargeLimitW)} />
               <Detail label="現在AC上限" value={nullableWatt(auxiliaryPlan?.currentAcChargeLimitW)} />
+              <Detail label="AC出力考慮上限" value={nullableWatt(auxiliaryPlan?.safeAcChargeLimitW)} />
+              <Detail label="DELTA 3 Plus出力" value={nullableWatt(auxiliaryPlan?.delta3AcOutputW)} />
               <Detail label="推奨バックアップ" value={nullablePercent(auxiliaryPlan?.recommendedBackupReserveSoc)} />
               <Detail label="現在バックアップ" value={nullablePercent(auxiliaryPlan?.currentBackupReserveSoc)} />
               <Detail label="残余売電" value={nullableWatt(auxiliaryPlan?.residualExportW ?? sourceStatus.exportW)} />

@@ -551,6 +551,7 @@ func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domai
 	}
 	delta3ControlEnabled := true
 	delta3ControlCfg := cfg
+	var delta3ControlDevice domain.ChargingDevice
 	if delta3TargetProvider != nil {
 		device, ok, err := delta3TargetProvider.Delta3WriteTarget(ctx)
 		if err != nil {
@@ -559,6 +560,7 @@ func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domai
 		} else if !ok {
 			delta3ControlEnabled = false
 		} else {
+			delta3ControlDevice = device
 			delta3ControlCfg = api.Delta3ConfigForDevice(cfg, device)
 		}
 	}
@@ -578,6 +580,7 @@ func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domai
 			logger.Warn("failed to load latest surplus control write candidate for DELTA 3 Plus aux plan", "error", err)
 		}
 	}
+	delta3Settings := delta3AuxSettingsForDevice(cfg, delta3ControlDevice)
 	status.Delta3AuxPlan = ptrToDelta3AuxPlan(control.PlanDelta3AuxCharging(control.Delta3AuxPlanInput{
 		Status: *status,
 		Delta3: control.Delta3AuxStatus{
@@ -594,7 +597,7 @@ func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domai
 		},
 		IgnorePro3Wait:      ignorePro3Wait,
 		Pro3PreviousCommand: previousPro3,
-	}, delta3AuxSettingsFromConfig(cfg), cfg.ControlSettings))
+	}, delta3Settings, cfg.ControlSettings))
 
 	previous, err := delta3AuxControlCommandRepository.LatestDelta3AuxControlWriteCandidateLog(ctx)
 	if err != nil {
@@ -615,7 +618,7 @@ func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domai
 		Execute:                cfg.Delta3ExecuteWrite,
 		AllowPrivateAPIWrite:   cfg.Delta3AllowPrivateWrite,
 		Previous:               previous,
-	}, delta3AuxSettingsFromConfig(cfg))
+	}, delta3Settings)
 	commandLog = control.ExecuteDelta3AuxCommand(ctx, commandLog, delta3Writer)
 	if status.Delta3AuxPlan != nil {
 		status.Delta3AuxPlan.WouldWrite = commandLog.WouldWrite
@@ -643,6 +646,17 @@ func delta3AuxSettingsFromConfig(cfg config.Config) control.Delta3AuxSettings {
 		StopImportThresholdW:      cfg.Delta3Aux.StopImportThresholdW,
 		TargetMaxSocBufferPercent: cfg.Delta3Aux.TargetMaxSocBufferPercent,
 	}
+}
+
+func delta3AuxSettingsForDevice(cfg config.Config, device domain.ChargingDevice) control.Delta3AuxSettings {
+	settings := delta3AuxSettingsFromConfig(cfg)
+	if device.MinChargeW > 0 {
+		settings.MinChargeW = device.MinChargeW
+	}
+	if device.MaxChargeW > 0 {
+		settings.MaxChargeW = device.MaxChargeW
+	}
+	return settings
 }
 
 func recordManualChargeAlert(ctx context.Context, cfg config.Config, status domain.Status, repository notificationLogWriter, service manualChargeAlertEvaluator, logger *slog.Logger) {
@@ -814,6 +828,7 @@ func higherPriorityDelta3ChargeCandidateDevice(ctx context.Context, cfg config.C
 	} else {
 		delta3Status = delta3Reader.CurrentStatus(ctx)
 	}
+	delta3Settings := delta3AuxSettingsForDevice(cfg, priorityContext.delta3)
 	plan := control.PlanDelta3AuxCharging(control.Delta3AuxPlanInput{
 		Status: status,
 		Delta3: control.Delta3AuxStatus{
@@ -829,7 +844,7 @@ func higherPriorityDelta3ChargeCandidateDevice(ctx context.Context, cfg config.C
 			LastError:            delta3Status.LastError,
 		},
 		IgnorePro3Wait: true,
-	}, delta3AuxSettingsFromConfig(cfg), cfg.ControlSettings)
+	}, delta3Settings, cfg.ControlSettings)
 	if !plan.ShouldAdjustACChargeLimit && !plan.ShouldSetBackupReserve {
 		return ""
 	}
@@ -854,7 +869,7 @@ func higherPriorityDelta3ChargeCandidateDevice(ctx context.Context, cfg config.C
 		Execute:                cfg.Delta3ExecuteWrite,
 		AllowPrivateAPIWrite:   cfg.Delta3AllowPrivateWrite,
 		Previous:               previous,
-	}, delta3AuxSettingsFromConfig(cfg))
+	}, delta3Settings)
 	if !commandLog.WouldWrite {
 		return ""
 	}
