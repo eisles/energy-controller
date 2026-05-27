@@ -38,6 +38,8 @@ type chargingDevicePayload struct {
 	CapacityWh            int    `json:"capacityWh"`
 	TargetSoc             int    `json:"targetSoc"`
 	ReserveSoc            int    `json:"reserveSoc"`
+	BackupReserveMinSoc   int    `json:"backupReserveMinSoc"`
+	BackupReserveMaxSoc   int    `json:"backupReserveMaxSoc"`
 	SupportsSocRead       bool   `json:"supportsSocRead"`
 	SupportsACChargeLimit bool   `json:"supportsAcChargeLimit"`
 	SupportsOnOff         bool   `json:"supportsOnOff"`
@@ -103,7 +105,7 @@ func deleteChargingDeviceHandler(store ChargingDeviceStore, logger *slog.Logger)
 }
 
 func chargingDeviceFromPayload(payload chargingDevicePayload) domain.ChargingDevice {
-	return domain.ChargingDevice{
+	device := domain.ChargingDevice{
 		ID:                    payload.ID,
 		Name:                  strings.TrimSpace(payload.Name),
 		Kind:                  strings.TrimSpace(payload.Kind),
@@ -122,11 +124,14 @@ func chargingDeviceFromPayload(payload chargingDevicePayload) domain.ChargingDev
 		CapacityWh:            payload.CapacityWh,
 		TargetSoc:             payload.TargetSoc,
 		ReserveSoc:            payload.ReserveSoc,
+		BackupReserveMinSoc:   payload.BackupReserveMinSoc,
+		BackupReserveMaxSoc:   payload.BackupReserveMaxSoc,
 		SupportsSocRead:       payload.SupportsSocRead,
 		SupportsACChargeLimit: payload.SupportsACChargeLimit,
 		SupportsOnOff:         payload.SupportsOnOff,
 		Notes:                 strings.TrimSpace(payload.Notes),
 	}
+	return normalizeChargingDevicePayloadReserveBounds(device)
 }
 
 func validChargingDevice(device domain.ChargingDevice) bool {
@@ -144,9 +149,39 @@ func validChargingDevice(device domain.ChargingDevice) bool {
 		device.TargetSoc <= 100 &&
 		device.ReserveSoc >= 0 &&
 		device.ReserveSoc <= 100 &&
+		device.BackupReserveMinSoc >= 5 &&
+		device.BackupReserveMinSoc <= 100 &&
+		device.BackupReserveMaxSoc >= 5 &&
+		device.BackupReserveMaxSoc <= 100 &&
+		device.BackupReserveMaxSoc >= device.BackupReserveMinSoc &&
 		validChargingDeviceSN(device.DeviceSN) &&
 		validChargingDeviceType(device) &&
 		validChargingDeviceStatusSource(device)
+}
+
+func normalizeChargingDevicePayloadReserveBounds(device domain.ChargingDevice) domain.ChargingDevice {
+	explicitMax := device.BackupReserveMaxSoc != 0
+	if device.BackupReserveMinSoc == 0 {
+		device.BackupReserveMinSoc = clampChargingDeviceSoc(device.ReserveSoc)
+	}
+	if device.BackupReserveMaxSoc == 0 {
+		device.BackupReserveMaxSoc = clampChargingDeviceSoc(device.TargetSoc)
+	}
+	if device.BackupReserveMaxSoc < device.BackupReserveMinSoc && !explicitMax {
+		device.BackupReserveMaxSoc = device.BackupReserveMinSoc
+	}
+	device.ReserveSoc = device.BackupReserveMinSoc
+	return device
+}
+
+func clampChargingDeviceSoc(value int) int {
+	if value < 5 {
+		return 5
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
 }
 
 func allowedChargingDeviceKind(value string) bool {

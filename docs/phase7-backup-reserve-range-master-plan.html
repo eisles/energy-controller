@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Phase 7: 機器マスターによるバックアップリザーブ制御範囲</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.65; max-width: 960px; margin: 32px auto; padding: 0 20px; color: #111827; }
+    h1, h2, h3 { line-height: 1.25; }
+    code { background: #f3f4f6; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    pre { background: #111827; color: #f9fafb; padding: 16px; border-radius: 8px; overflow: auto; }
+    table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+    th, td { border: 1px solid #d1d5db; padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: #f9fafb; }
+  </style>
+</head>
+<body>
+  <h1>Phase 7: 機器マスターによるバックアップリザーブ制御範囲</h1>
+
+  <h2>Goal</h2>
+  <p>充電機器マスターに、EcoFlow 本体のバックアップリザーブ残量をこのシステムが動かしてよい範囲として <code>backup_reserve_min_soc</code> / <code>backup_reserve_max_soc</code> を追加する。</p>
+  <ul>
+    <li>買電中: 放電させたい場合、バックアップリザーブを <code>backup_reserve_min_soc</code> まで下げる。</li>
+    <li>売電中: 充電・パススルーへ誘導したい場合、バックアップリザーブを <code>backup_reserve_max_soc</code> 以下で上げる。</li>
+    <li>どちらの場合も、機器マスターの最小/最大範囲を超える実機write候補を作らない。</li>
+  </ul>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li>EcoFlow の新しい実機write API は追加しない。</li>
+    <li><code>ENABLE_REAL_CONTROL=true</code> / <code>SIMULATION_MODE=false</code> の既存安全ゲートは変更しない。</li>
+    <li>DELTA 3 Plus 2台目以降の配分ロジックは変更しない。</li>
+    <li>DELTA Pro 3 の夜間充電計画、SwitchBot 制御、通知制御は今回の対象外。</li>
+    <li><code>.env</code> の認証情報やシリアル番号は変更しない。</li>
+  </ul>
+
+  <h2>Current State</h2>
+  <ul>
+    <li><code>charging_devices.reserve_soc</code> は、自動制御が下げてよい互換用のリザーブ制御下限として使われている。</li>
+    <li><code>target_soc</code> は充電目標として存在するが、バックアップリザーブの上限として明示されていない。</li>
+    <li><code>Delta3AuxSettings.MinDischargeReserveSoc</code> は買電時にリザーブを下げる下限として使われる。</li>
+    <li>売電時の <code>maybeSetDelta3BackupReserve</code> は機器マスター由来の明示的な上限を持たない。</li>
+  </ul>
+
+  <h2>Data/API Contract</h2>
+  <h3><code>charging_devices</code></h3>
+  <table>
+    <thead><tr><th>column</th><th>type</th><th>meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>backup_reserve_min_soc</code></td><td>INTEGER NOT NULL DEFAULT 0</td><td>このシステムがバックアップリザーブを下げてよい最小残量%</td></tr>
+      <tr><td><code>backup_reserve_max_soc</code></td><td>INTEGER NOT NULL DEFAULT 0</td><td>このシステムがバックアップリザーブを上げてよい最大残量%</td></tr>
+    </tbody>
+  </table>
+  <p>既存データは <code>backup_reserve_min_soc = reserve_soc</code>、<code>backup_reserve_max_soc = target_soc</code> で補完する。正規化では 5-100% に丸める。保存時は永続値として 0 を許可せず、古い API クライアントが 0 または未指定で送信した場合は、保存前に <code>reserve_soc</code> / <code>target_soc</code> から 5-100% の実値へ補完する。最大が最小未満なら保存時に拒否する。</p>
+
+  <h3>Backend Domain/API</h3>
+  <p><code>domain.ChargingDevice</code> と JSON に <code>backupReserveMinSoc</code> / <code>backupReserveMaxSoc</code> を追加する。既存 API <code>/api/settings/charging-devices</code> は同じエンドポイントのまま追加フィールドを返す。</p>
+
+  <h3>Frontend</h3>
+  <p>設定画面に <strong>バックアップリザーブ最小%</strong> と <strong>バックアップリザーブ最大%</strong> を追加し、ステータスには <strong>リザーブ制御範囲</strong> を表示する。機器側の <strong>最大充電残量</strong> / <strong>最低放電残量</strong> は実機から取得した値として扱い、機器マスターの制御範囲とは分けて表示する。</p>
+
+  <h2>Control Contract</h2>
+  <p><code>control.Delta3AuxSettings</code> に <code>BackupReserveMinSoc</code> / <code>BackupReserveMaxSoc</code> を追加する。<code>MinDischargeReserveSoc</code> は互換のため残し、未指定時の fallback とする。<code>BackupReserveMaxSoc</code> が未指定なら対象機器の <code>target_soc</code> を使い、対象機器がない純粋な default settings の場合だけ 90% を既定値にする。</p>
+  <ol>
+    <li>買電中: <code>SOC &gt; BackupReserveMinSoc</code> かつ現在の <code>BackupReserveSoc</code> が取得済みなら、<code>RecommendedBackupReserveSoc = BackupReserveMinSoc</code> を候補にする。</li>
+    <li>売電中: <code>BackupReserveMaxSoc</code>、実機 <code>MaxChargeSoc - buffer</code>、100% の最小値を上限とし、推奨リザーブを範囲内に収める。</li>
+    <li>取得不能: <code>BackupReserveSoc</code> が取得不能な場合、推測で実機write候補を作らない。</li>
+  </ol>
+
+  <h2>Safety Boundaries</h2>
+  <ul>
+    <li>実機writeの可否は既存の <code>ENABLE_REAL_CONTROL</code> / <code>SIMULATION_MODE</code> / <code>controlEnabled</code> / command interval / fingerprint guard に従う。</li>
+    <li>今回の変更では write gate を緩めない。</li>
+    <li>新規カラムの初期値は既存 <code>reserve_soc</code> / <code>target_soc</code> から作り、意図しない 100% 固定にはしない。</li>
+    <li>既存 <code>reserve_soc</code> は互換用として残し、保存時に <code>backup_reserve_min_soc</code> と同期させる。</li>
+  </ul>
+
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li>DB migration: 新規カラム追加、既存行補完、migration test。</li>
+    <li>Domain/repository/API: フィールド追加、SELECT/INSERT/UPDATE/scan、永続値 5-100 と min&lt;=max の validation、古いクライアント向けの 0/未指定補完。</li>
+    <li>Control settings: settings に min/max 追加、機器マスター反映、正規化。</li>
+    <li>Planner: 買電時は min へ下げ、売電時は max を超えずに上げる。</li>
+    <li>Frontend: 型、空フォーム、編集フォーム、validation、ステータス表示。</li>
+    <li>Tests: migration、repository/domain roundtrip、planner、frontend build。</li>
+  </ol>
+
+  <h2>Review Points</h2>
+  <ul>
+    <li><code>reserve_soc</code> と新規 min/max の意味が混ざっていないこと。</li>
+    <li>実機 <code>backupReserveSoc</code> が取得不能な場合に推測writeしないこと。</li>
+    <li>max を超えてバックアップリザーブを上げないこと。</li>
+    <li>既存 DB でも migration 後に API が落ちないこと。</li>
+    <li>既存 <code>.env</code> や secrets に触れていないこと。</li>
+  </ul>
+
+  <h2>Verification Commands</h2>
+  <pre><code>cd backend &amp;&amp; rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build
+rtk codex review --uncommitted</code></pre>
+
+  <h2>Rollback / Operational Notes</h2>
+  <p>変更は schema additive なので既存行は保持される。実機制御を止める場合は、機器マスターの <code>controlEnabled=false</code> または既存 <code>.env</code> の安全ゲートで停止する。既存 <code>reserve_soc</code> は互換用に残す。</p>
+</body>
+</html>

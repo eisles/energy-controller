@@ -23,24 +23,26 @@ type stubChargingDeviceStore struct {
 func (s *stubChargingDeviceStore) ListChargingDevices(context.Context) ([]domain.ChargingDevice, error) {
 	return []domain.ChargingDevice{
 		{
-			ID:            1,
-			Name:          "DELTA Pro 3",
-			Kind:          "ecoflow_delta_pro3",
-			Provider:      "ecoflow",
-			Role:          "primary",
-			CredentialRef: "ecoflow_pro3_primary",
-			DeviceSN:      "TESTSN123",
-			DeviceType:    "DELTA_PRO3",
-			StatusSource:  "ecoflow_cloud",
-			Enabled:       true,
-			Priority:      10,
-			MinChargeW:    400,
-			MaxChargeW:    1500,
-			ChargeStepW:   100,
-			TargetSoc:     90,
-			ReserveSoc:    30,
-			CreatedAt:     time.Date(2026, 5, 25, 0, 0, 0, 0, time.UTC),
-			UpdatedAt:     time.Date(2026, 5, 25, 0, 0, 0, 0, time.UTC),
+			ID:                  1,
+			Name:                "DELTA Pro 3",
+			Kind:                "ecoflow_delta_pro3",
+			Provider:            "ecoflow",
+			Role:                "primary",
+			CredentialRef:       "ecoflow_pro3_primary",
+			DeviceSN:            "TESTSN123",
+			DeviceType:          "DELTA_PRO3",
+			StatusSource:        "ecoflow_cloud",
+			Enabled:             true,
+			Priority:            10,
+			MinChargeW:          400,
+			MaxChargeW:          1500,
+			ChargeStepW:         100,
+			TargetSoc:           90,
+			ReserveSoc:          30,
+			BackupReserveMinSoc: 30,
+			BackupReserveMaxSoc: 90,
+			CreatedAt:           time.Date(2026, 5, 25, 0, 0, 0, 0, time.UTC),
+			UpdatedAt:           time.Date(2026, 5, 25, 0, 0, 0, 0, time.UTC),
 		},
 	}, nil
 }
@@ -95,6 +97,56 @@ func TestPostChargingDeviceHandlerSavesDevice(t *testing.T) {
 	}
 	if store.saved.DeviceSN != "TESTSN456" || store.saved.DeviceType != "DELTA_3" || store.saved.StatusSource != "ecoflow_private_mqtt" {
 		t.Fatalf("saved identity = %q/%q/%q, want TESTSN456/DELTA_3/ecoflow_private_mqtt", store.saved.DeviceSN, store.saved.DeviceType, store.saved.StatusSource)
+	}
+	if store.saved.BackupReserveMinSoc != 20 || store.saved.BackupReserveMaxSoc != 90 {
+		t.Fatalf("backup reserve range = %d-%d, want 20-90", store.saved.BackupReserveMinSoc, store.saved.BackupReserveMaxSoc)
+	}
+}
+
+func TestPostChargingDeviceHandlerSavesExplicitBackupReserveRange(t *testing.T) {
+	store := &stubChargingDeviceStore{}
+	body := []byte(`{"name":"DELTA 3 Plus 2","kind":"ecoflow_delta3_plus","provider":"ecoflow","role":"auxiliary","credentialRef":"ecoflow_delta3_secondary","deviceSn":"TESTSN456","deviceType":"DELTA_3","enabled":true,"controlEnabled":false,"priority":30,"minChargeW":100,"maxChargeW":1500,"chargeStepW":100,"capacityWh":2048,"targetSoc":90,"reserveSoc":20,"backupReserveMinSoc":25,"backupReserveMaxSoc":85,"supportsSocRead":true,"supportsAcChargeLimit":true,"supportsOnOff":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/charging-devices", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	postChargingDeviceHandler(store, slog.Default())(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if store.saved.BackupReserveMinSoc != 25 || store.saved.BackupReserveMaxSoc != 85 {
+		t.Fatalf("backup reserve range = %d-%d, want 25-85", store.saved.BackupReserveMinSoc, store.saved.BackupReserveMaxSoc)
+	}
+	if store.saved.ReserveSoc != 25 {
+		t.Fatalf("ReserveSoc = %d, want synced backup reserve min 25", store.saved.ReserveSoc)
+	}
+}
+
+func TestPostChargingDeviceHandlerNormalizesOmittedBackupReserveMaxBelowMin(t *testing.T) {
+	store := &stubChargingDeviceStore{}
+	body := []byte(`{"name":"manual battery","kind":"manual","provider":"manual","role":"auxiliary","credentialRef":"manual_aux","enabled":true,"priority":30,"minChargeW":100,"maxChargeW":1000,"chargeStepW":100,"capacityWh":1000,"targetSoc":0,"reserveSoc":20}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/charging-devices", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	postChargingDeviceHandler(store, slog.Default())(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if store.saved.BackupReserveMinSoc != 20 || store.saved.BackupReserveMaxSoc != 20 {
+		t.Fatalf("backup reserve range = %d-%d, want 20-20", store.saved.BackupReserveMinSoc, store.saved.BackupReserveMaxSoc)
+	}
+}
+
+func TestPostChargingDeviceHandlerRejectsInvalidBackupReserveRange(t *testing.T) {
+	body := []byte(`{"name":"bad","kind":"ecoflow_delta3_plus","provider":"ecoflow","role":"auxiliary","credentialRef":"ecoflow_delta3_bad","deviceSn":"BADSN","deviceType":"DELTA_3","enabled":true,"priority":1,"minChargeW":100,"maxChargeW":1500,"chargeStepW":100,"targetSoc":90,"reserveSoc":20,"backupReserveMinSoc":80,"backupReserveMaxSoc":20}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/charging-devices", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	postChargingDeviceHandler(&stubChargingDeviceStore{}, slog.Default())(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
 

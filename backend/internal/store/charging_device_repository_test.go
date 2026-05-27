@@ -31,6 +31,8 @@ func TestChargingDeviceRepositoryPersistsDeviceIdentity(t *testing.T) {
 		CapacityWh:            2048,
 		TargetSoc:             90,
 		ReserveSoc:            20,
+		BackupReserveMinSoc:   20,
+		BackupReserveMaxSoc:   85,
 		SupportsSocRead:       true,
 		SupportsACChargeLimit: true,
 		SupportsOnOff:         true,
@@ -53,6 +55,39 @@ func TestChargingDeviceRepositoryPersistsDeviceIdentity(t *testing.T) {
 	}
 	if found.DeviceSN != "TESTSN123" || found.DeviceType != "DELTA_3" || found.StatusSource != "ecoflow_private_mqtt" {
 		t.Fatalf("device identity = %q/%q/%q, want TESTSN123/DELTA_3/ecoflow_private_mqtt", found.DeviceSN, found.DeviceType, found.StatusSource)
+	}
+	if found.BackupReserveMinSoc != 20 || found.BackupReserveMaxSoc != 85 {
+		t.Fatalf("backup reserve range = %d-%d, want 20-85", found.BackupReserveMinSoc, found.BackupReserveMaxSoc)
+	}
+}
+
+func TestChargingDeviceRepositoryNormalizesOmittedBackupReserveMaxBelowMin(t *testing.T) {
+	db := newChargingDeviceTestDB(t)
+	repo := NewChargingDeviceRepository(db)
+
+	saved, err := repo.UpsertChargingDevice(context.Background(), domain.ChargingDevice{
+		Name:          "manual battery",
+		Kind:          "manual_battery",
+		Provider:      "manual",
+		Role:          "auxiliary",
+		CredentialRef: "manual_aux",
+		Enabled:       true,
+		Priority:      20,
+		MinChargeW:    100,
+		MaxChargeW:    1000,
+		ChargeStepW:   100,
+		CapacityWh:    1000,
+		TargetSoc:     0,
+		ReserveSoc:    20,
+	})
+	if err != nil {
+		t.Fatalf("UpsertChargingDevice failed: %v", err)
+	}
+	if saved.BackupReserveMinSoc != 20 || saved.BackupReserveMaxSoc != 20 {
+		t.Fatalf("backup reserve range = %d-%d, want 20-20", saved.BackupReserveMinSoc, saved.BackupReserveMaxSoc)
+	}
+	if saved.ReserveSoc != 20 {
+		t.Fatalf("ReserveSoc = %d, want synced backup reserve min 20", saved.ReserveSoc)
 	}
 }
 

@@ -287,10 +287,44 @@ func TestDelta3AuxSettingsForDeviceUsesMasterReserveAsDischargeFloor(t *testing.
 		MinChargeW: 100,
 		MaxChargeW: 1400,
 		ReserveSoc: 25,
+		TargetSoc:  80,
 	})
 
 	if settings.MinDischargeReserveSoc != 25 {
 		t.Fatalf("MinDischargeReserveSoc = %d, want 25", settings.MinDischargeReserveSoc)
+	}
+	if settings.BackupReserveMinSoc != 25 {
+		t.Fatalf("BackupReserveMinSoc = %d, want 25", settings.BackupReserveMinSoc)
+	}
+	if settings.BackupReserveMaxSoc != 80 {
+		t.Fatalf("BackupReserveMaxSoc = %d, want 80", settings.BackupReserveMaxSoc)
+	}
+}
+
+func TestDelta3AuxSettingsForDeviceUsesBackupReserveRange(t *testing.T) {
+	settings := delta3AuxSettingsForDevice(config.Config{
+		Delta3Aux: config.Delta3AuxConfig{
+			Enabled:              true,
+			MinChargeW:           100,
+			MaxChargeW:           1400,
+			SafetyMarginW:        50,
+			MinCommandDiffW:      100,
+			StopImportThresholdW: 50,
+		},
+	}, domain.ChargingDevice{
+		MinChargeW:          100,
+		MaxChargeW:          1400,
+		ReserveSoc:          25,
+		TargetSoc:           80,
+		BackupReserveMinSoc: 30,
+		BackupReserveMaxSoc: 75,
+	})
+
+	if settings.MinDischargeReserveSoc != 30 || settings.BackupReserveMinSoc != 30 {
+		t.Fatalf("reserve min settings = MinDischargeReserveSoc:%d BackupReserveMinSoc:%d, want 30", settings.MinDischargeReserveSoc, settings.BackupReserveMinSoc)
+	}
+	if settings.BackupReserveMaxSoc != 75 {
+		t.Fatalf("BackupReserveMaxSoc = %d, want 75", settings.BackupReserveMaxSoc)
 	}
 }
 

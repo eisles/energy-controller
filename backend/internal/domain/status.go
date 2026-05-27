@@ -13,6 +13,8 @@ type BatteryStatus struct {
 	InputW              int            `json:"batteryInputW"`
 	OutputW             int            `json:"batteryOutputW"`
 	ACChargeLimitW      int            `json:"acChargeLimitW"`
+	MaxChargeSoc        *int           `json:"maxChargeSoc,omitempty"`
+	MinDischargeSoc     *int           `json:"minDischargeSoc,omitempty"`
 	BackupReserveSoc    *int           `json:"backupReserveSoc,omitempty"`
 	EnergyBackupEnabled *bool          `json:"energyBackupEnabled,omitempty"`
 	TOUModeEnabled      *bool          `json:"touModeEnabled,omitempty"`

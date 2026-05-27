@@ -62,6 +62,8 @@ export type DeviceStatus = {
   capacityWh: number;
   targetSoc: number;
   reserveSoc: number;
+  backupReserveMinSoc: number;
+  backupReserveMaxSoc: number;
   controlEnabled: boolean;
   status: Delta3Status;
 };
@@ -410,6 +412,8 @@ export type ChargingDevice = {
   capacityWh: number;
   targetSoc: number;
   reserveSoc: number;
+  backupReserveMinSoc: number;
+  backupReserveMaxSoc: number;
   supportsSocRead: boolean;
   supportsAcChargeLimit: boolean;
   supportsOnOff: boolean;

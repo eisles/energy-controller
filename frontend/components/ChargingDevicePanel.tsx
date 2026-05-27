@@ -27,6 +27,8 @@ const emptyDevice: ChargingDevice = {
   capacityWh: 2048,
   targetSoc: 90,
   reserveSoc: 20,
+  backupReserveMinSoc: 20,
+  backupReserveMaxSoc: 90,
   supportsSocRead: true,
   supportsAcChargeLimit: true,
   supportsOnOff: true,
@@ -300,8 +302,8 @@ export function ChargingDevicePanel() {
                     <NumberField id="charging-device-max-w" label="最大充電W" value={editing.maxChargeW} onChange={(value) => setEditing({ ...editing, maxChargeW: value })} />
                     <NumberField id="charging-device-step-w" label="刻みW" value={editing.chargeStepW} onChange={(value) => setEditing({ ...editing, chargeStepW: value })} />
                     <NumberField id="charging-device-capacity" label="容量Wh" value={editing.capacityWh} onChange={(value) => setEditing({ ...editing, capacityWh: value })} />
-                    <NumberField id="charging-device-target-soc" label="目標SOC%" value={editing.targetSoc} onChange={(value) => setEditing({ ...editing, targetSoc: value })} />
-                    <NumberField id="charging-device-reserve-soc" label="最低SOC%" value={editing.reserveSoc} onChange={(value) => setEditing({ ...editing, reserveSoc: value })} />
+                    <NumberField id="charging-device-backup-reserve-min-soc" label="バックアップリザーブ最小%" value={editing.backupReserveMinSoc} onChange={(value) => setEditing({ ...editing, backupReserveMinSoc: value })} />
+                    <NumberField id="charging-device-backup-reserve-max-soc" label="バックアップリザーブ最大%" value={editing.backupReserveMaxSoc} onChange={(value) => setEditing({ ...editing, backupReserveMaxSoc: value })} />
                   </div>
                   <div className="charging-device-switch-grid">
                     <CheckboxField label="有効" checked={editing.enabled} onChange={(checked) => setEditing({ ...editing, enabled: checked })} />
@@ -367,6 +369,8 @@ function CheckboxField({ label, checked, onChange }: { label: string; checked: b
 }
 
 function normalizeDeviceForSave(device: ChargingDevice): ChargingDevice {
+  const backupReserveMinSoc = device.backupReserveMinSoc === 0 ? clampSoc(device.reserveSoc) : device.backupReserveMinSoc;
+  const backupReserveMaxSoc = device.backupReserveMaxSoc === 0 ? clampSoc(device.targetSoc) : device.backupReserveMaxSoc;
   return {
     ...device,
     name: device.name.trim(),
@@ -377,6 +381,10 @@ function normalizeDeviceForSave(device: ChargingDevice): ChargingDevice {
     deviceSn: device.deviceSn.trim(),
     deviceType: defaultDeviceType(device.kind.trim(), device.deviceType.trim()),
     statusSource: defaultStatusSource(device.kind.trim(), device.statusSource.trim()),
+    targetSoc: backupReserveMaxSoc,
+    reserveSoc: backupReserveMinSoc,
+    backupReserveMinSoc,
+    backupReserveMaxSoc,
     notes: device.notes.trim()
   };
 }
@@ -391,6 +399,12 @@ function validateDevice(device: ChargingDevice) {
   if (device.targetSoc < 0 || device.targetSoc > 100 || device.reserveSoc < 0 || device.reserveSoc > 100) {
     throw new Error("SOCは0-100の範囲で入力してください。");
   }
+  if (device.backupReserveMinSoc < 5 || device.backupReserveMinSoc > 100 || device.backupReserveMaxSoc < 5 || device.backupReserveMaxSoc > 100) {
+    throw new Error("バックアップリザーブ範囲は5-100の範囲で入力してください。");
+  }
+  if (device.backupReserveMaxSoc < device.backupReserveMinSoc) {
+    throw new Error("バックアップリザーブ最大%は最小%以上で入力してください。");
+  }
   if (/\s|[\x00-\x1f\x7f]/.test(device.deviceSn)) {
     throw new Error("シリアル番号に空白や制御文字は使えません。");
   }
@@ -403,6 +417,16 @@ function validateDevice(device: ChargingDevice) {
   if (!validStatusSourceForKind(device.kind, device.statusSource)) {
     throw new Error("種別と取得方式の組み合わせが不正です。");
   }
+}
+
+function clampSoc(value: number) {
+  if (value < 5) {
+    return 5;
+  }
+  if (value > 100) {
+    return 100;
+  }
+  return value;
 }
 
 function defaultDeviceType(kind: string, value: string) {

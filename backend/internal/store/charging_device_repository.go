@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/eisles/energy-controller/backend/internal/domain"
@@ -19,7 +20,7 @@ func NewChargingDeviceRepository(db *sql.DB) *ChargingDeviceRepository {
 func (r *ChargingDeviceRepository) ListChargingDevices(ctx context.Context) ([]domain.ChargingDevice, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT
 		id, name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
-		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc,
+		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
 		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
 		FROM charging_devices
 		ORDER BY priority ASC, id ASC`)
@@ -31,12 +32,17 @@ func (r *ChargingDeviceRepository) ListChargingDevices(ctx context.Context) ([]d
 }
 
 func (r *ChargingDeviceRepository) UpsertChargingDevice(ctx context.Context, device domain.ChargingDevice) (domain.ChargingDevice, error) {
+	var err error
+	device, err = normalizeChargingDeviceReserveBounds(device)
+	if err != nil {
+		return domain.ChargingDevice{}, err
+	}
 	now := time.Now().Format(time.RFC3339Nano)
 	if device.ID > 0 {
 		result, err := r.db.ExecContext(ctx, `UPDATE charging_devices SET
 			name = ?, kind = ?, provider = ?, role = ?, credential_ref = ?, enabled = ?,
 			device_sn = ?, device_type = ?, status_source = ?, control_enabled = ?, priority = ?, min_charge_w = ?, max_charge_w = ?, charge_step_w = ?,
-			capacity_wh = ?, target_soc = ?, reserve_soc = ?, supports_soc_read = ?,
+			capacity_wh = ?, target_soc = ?, reserve_soc = ?, backup_reserve_min_soc = ?, backup_reserve_max_soc = ?, supports_soc_read = ?,
 			supports_ac_charge_limit = ?, supports_on_off = ?, notes = ?, updated_at = ?
 			WHERE id = ?`,
 			device.Name,
@@ -56,6 +62,8 @@ func (r *ChargingDeviceRepository) UpsertChargingDevice(ctx context.Context, dev
 			device.CapacityWh,
 			device.TargetSoc,
 			device.ReserveSoc,
+			device.BackupReserveMinSoc,
+			device.BackupReserveMaxSoc,
 			boolToInt(device.SupportsSocRead),
 			boolToInt(device.SupportsACChargeLimit),
 			boolToInt(device.SupportsOnOff),
@@ -78,9 +86,9 @@ func (r *ChargingDeviceRepository) UpsertChargingDevice(ctx context.Context, dev
 
 	result, err := r.db.ExecContext(ctx, `INSERT INTO charging_devices (
 		name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
-		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc,
+		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
 		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		device.Name,
 		device.Kind,
 		device.Provider,
@@ -98,6 +106,8 @@ func (r *ChargingDeviceRepository) UpsertChargingDevice(ctx context.Context, dev
 		device.CapacityWh,
 		device.TargetSoc,
 		device.ReserveSoc,
+		device.BackupReserveMinSoc,
+		device.BackupReserveMaxSoc,
 		boolToInt(device.SupportsSocRead),
 		boolToInt(device.SupportsACChargeLimit),
 		boolToInt(device.SupportsOnOff),
@@ -133,7 +143,7 @@ func (r *ChargingDeviceRepository) DeleteChargingDevice(ctx context.Context, id 
 func (r *ChargingDeviceRepository) chargingDeviceByID(ctx context.Context, id int64) (domain.ChargingDevice, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT
 		id, name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
-		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc,
+		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
 		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
 		FROM charging_devices
 		WHERE id = ?`, id)
@@ -177,7 +187,7 @@ func (r *ChargingDeviceRepository) EcoFlowCloudWriteTarget(ctx context.Context) 
 func (r *ChargingDeviceRepository) ecoFlowCloudTarget(ctx context.Context, requireWriteSupport bool) (domain.ChargingDevice, bool, error) {
 	query := `SELECT
 		id, name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
-		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc,
+		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
 		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
 		FROM charging_devices
 		WHERE enabled = 1
@@ -208,7 +218,7 @@ func (r *ChargingDeviceRepository) ecoFlowCloudTarget(ctx context.Context, requi
 func (r *ChargingDeviceRepository) delta3Target(ctx context.Context, requireWriteSupport bool) (domain.ChargingDevice, bool, error) {
 	query := `SELECT
 		id, name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
-		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc,
+		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
 		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
 		FROM charging_devices
 		WHERE enabled = 1
@@ -238,7 +248,7 @@ func (r *ChargingDeviceRepository) delta3Target(ctx context.Context, requireWrit
 func (r *ChargingDeviceRepository) delta3Targets(ctx context.Context, requireWriteSupport bool) ([]domain.ChargingDevice, error) {
 	query := `SELECT
 		id, name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
-		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc,
+		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
 		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
 		FROM charging_devices
 		WHERE enabled = 1
@@ -283,6 +293,8 @@ func scanChargingDevices(rows *sql.Rows) ([]domain.ChargingDevice, error) {
 			&device.CapacityWh,
 			&device.TargetSoc,
 			&device.ReserveSoc,
+			&device.BackupReserveMinSoc,
+			&device.BackupReserveMaxSoc,
 			&supportsSocRead,
 			&supportsACChargeLimit,
 			&supportsOnOff,
@@ -313,4 +325,41 @@ func scanChargingDevices(rows *sql.Rows) ([]domain.ChargingDevice, error) {
 		return nil, err
 	}
 	return devices, nil
+}
+
+func normalizeChargingDeviceReserveBounds(device domain.ChargingDevice) (domain.ChargingDevice, error) {
+	explicitMin := device.BackupReserveMinSoc != 0
+	explicitMax := device.BackupReserveMaxSoc != 0
+	if explicitMin && (device.BackupReserveMinSoc < 5 || device.BackupReserveMinSoc > 100) {
+		return domain.ChargingDevice{}, errors.New("backup reserve min soc is out of range")
+	}
+	if explicitMax && (device.BackupReserveMaxSoc < 5 || device.BackupReserveMaxSoc > 100) {
+		return domain.ChargingDevice{}, errors.New("backup reserve max soc is out of range")
+	}
+	if device.BackupReserveMinSoc == 0 {
+		device.BackupReserveMinSoc = clampSoc(device.ReserveSoc)
+	}
+	if device.BackupReserveMaxSoc == 0 {
+		device.BackupReserveMaxSoc = clampSoc(device.TargetSoc)
+	}
+	if device.BackupReserveMaxSoc < device.BackupReserveMinSoc {
+		if !explicitMax {
+			device.BackupReserveMaxSoc = device.BackupReserveMinSoc
+			device.ReserveSoc = device.BackupReserveMinSoc
+			return device, nil
+		}
+		return domain.ChargingDevice{}, errors.New("backup reserve max soc is below min soc")
+	}
+	device.ReserveSoc = device.BackupReserveMinSoc
+	return device, nil
+}
+
+func clampSoc(value int) int {
+	if value < 5 {
+		return 5
+	}
+	if value > 100 {
+		return 100
+	}
+	return value
 }

@@ -149,7 +149,8 @@ export function Delta3StatusCard({
                         </div>
                         <div className="detail-strip planner-secondary" aria-label={`${device.name} configuration status`}>
                           <Detail label="最大充電残量" value={nullablePercent(device.status.maxChargeSoc)} />
-                          <Detail label="最低放電残量" value={nullablePercent(device.reserveSoc)} />
+                          <Detail label="最低放電残量" value={nullablePercent(device.status.minDischargeSoc)} />
+                          <Detail label="リザーブ制御範囲" value={formatReserveRange(device.backupReserveMinSoc, device.backupReserveMaxSoc)} />
                           <Detail label="本体リザーブ" value={nullableOnOff(device.status.backupReserveEnabled)} />
                           <Detail label="本体リザーブ残量" value={nullablePercent(device.status.backupReserveSoc)} />
                           <Detail label="Grid bypass" value={nullableOnOff(device.status.gridBypassDisabled)} />
@@ -684,11 +685,19 @@ function deviceModeSummary(device: DeviceStatus) {
     `AC出力 ${nullableOnOff(device.status.acOutputEnabled)}`,
     `本体リザーブ ${nullableOnOff(device.status.backupReserveEnabled)}`,
     `本体リザーブ残量 ${nullablePercent(device.status.backupReserveSoc)}`,
+    `リザーブ制御範囲 ${formatReserveRange(device.backupReserveMinSoc, device.backupReserveMaxSoc)}`,
     `Grid bypass ${nullableOnOff(device.status.gridBypassDisabled)}`,
     `最大充電残量 ${nullablePercent(device.status.maxChargeSoc)}`,
-    `最低放電残量 ${nullablePercent(device.reserveSoc)}`
+    `最低放電残量 ${nullablePercent(device.status.minDischargeSoc)}`
   ];
   return parts.join(" / ");
+}
+
+function formatReserveRange(minSoc: number | null | undefined, maxSoc: number | null | undefined) {
+  if (minSoc === null || minSoc === undefined || maxSoc === null || maxSoc === undefined) {
+    return "-";
+  }
+  return `${minSoc}-${maxSoc}%`;
 }
 
 function yesNo(value: boolean) {

@@ -261,11 +261,15 @@ func TestDelta3StatusReaderReturnsEcoFlowCloudDeviceStatus(t *testing.T) {
 		requested = cfg
 		reserveSoc := 30
 		backupEnabled := true
+		maxChargeSoc := 100
+		minDischargeSoc := 0
 		return fakeEcoFlowCloudReader{status: domain.BatteryStatus{
 			Soc:                 88,
 			InputW:              410,
 			OutputW:             120,
 			ACChargeLimitW:      900,
+			MaxChargeSoc:        &maxChargeSoc,
+			MinDischargeSoc:     &minDischargeSoc,
 			BackupReserveSoc:    &reserveSoc,
 			EnergyBackupEnabled: &backupEnabled,
 			IsOnline:            true,
@@ -305,6 +309,8 @@ func TestDelta3StatusReaderReturnsEcoFlowCloudDeviceStatus(t *testing.T) {
 	assertIntPtrResponse(t, "ACInW", statuses[0].Status.ACInW, 410)
 	assertIntPtrResponse(t, "ACOutW", statuses[0].Status.ACOutW, 120)
 	assertIntPtrResponse(t, "ACChargeLimitW", statuses[0].Status.ACChargeLimitW, 900)
+	assertIntPtrResponse(t, "MaxChargeSoc", statuses[0].Status.MaxChargeSoc, 100)
+	assertIntPtrResponse(t, "MinDischargeSoc", statuses[0].Status.MinDischargeSoc, 0)
 	if statuses[0].CapacityWh != 12288 {
 		t.Fatalf("CapacityWh = %d, want 12288", statuses[0].CapacityWh)
 	}

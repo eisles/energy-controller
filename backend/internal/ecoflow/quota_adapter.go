@@ -17,6 +17,8 @@ func BatteryStatusFromQuotas(quotas map[string]any) (domain.BatteryStatus, error
 	inputW, _ := numberFromQuotas(quotas, "powInSumW")
 	outputW, _ := numberFromQuotas(quotas, "powOutSumW")
 	acChargeLimitW, _ := numberFromQuotas(quotas, "plugInInfoAcInChgPowMax")
+	maxChargeSoc := intPtrFromQuota(quotas, "cmsMaxChgSoc")
+	minDischargeSoc := intPtrFromQuota(quotas, "cmsMinDsgSoc")
 	backupReserveSoc := intPtrFromQuota(quotas, "energyBackupStartSoc", "backupReverseSoc")
 	energyBackupEnabled := boolPtrFromQuota(quotas, "energyBackupEn")
 	touModeEnabled := boolPtrFromQuota(quotas, "energyStrategyOperateMode.operateTouModeOpen")
@@ -30,6 +32,8 @@ func BatteryStatusFromQuotas(quotas map[string]any) (domain.BatteryStatus, error
 		InputW:              int(math.Round(inputW)),
 		OutputW:             int(math.Round(outputW)),
 		ACChargeLimitW:      int(math.Round(acChargeLimitW)),
+		MaxChargeSoc:        maxChargeSoc,
+		MinDischargeSoc:     minDischargeSoc,
 		BackupReserveSoc:    backupReserveSoc,
 		EnergyBackupEnabled: energyBackupEnabled,
 		TOUModeEnabled:      touModeEnabled,

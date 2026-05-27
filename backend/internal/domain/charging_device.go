@@ -21,6 +21,8 @@ type ChargingDevice struct {
 	CapacityWh            int       `json:"capacityWh"`
 	TargetSoc             int       `json:"targetSoc"`
 	ReserveSoc            int       `json:"reserveSoc"`
+	BackupReserveMinSoc   int       `json:"backupReserveMinSoc"`
+	BackupReserveMaxSoc   int       `json:"backupReserveMaxSoc"`
 	SupportsSocRead       bool      `json:"supportsSocRead"`
 	SupportsACChargeLimit bool      `json:"supportsAcChargeLimit"`
 	SupportsOnOff         bool      `json:"supportsOnOff"`

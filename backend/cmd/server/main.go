@@ -658,6 +658,16 @@ func delta3AuxSettingsForDevice(cfg config.Config, device domain.ChargingDevice)
 	}
 	if device.ReserveSoc > 0 {
 		settings.MinDischargeReserveSoc = device.ReserveSoc
+		settings.BackupReserveMinSoc = device.ReserveSoc
+	}
+	if device.BackupReserveMinSoc > 0 {
+		settings.BackupReserveMinSoc = device.BackupReserveMinSoc
+		settings.MinDischargeReserveSoc = device.BackupReserveMinSoc
+	}
+	if device.BackupReserveMaxSoc > 0 {
+		settings.BackupReserveMaxSoc = device.BackupReserveMaxSoc
+	} else if device.TargetSoc > 0 {
+		settings.BackupReserveMaxSoc = device.TargetSoc
 	}
 	return settings
 }

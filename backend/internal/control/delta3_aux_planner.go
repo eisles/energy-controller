@@ -19,6 +19,8 @@ type Delta3AuxSettings struct {
 	StopImportThresholdW      int
 	TargetMaxSocBufferPercent int
 	MinDischargeReserveSoc    int
+	BackupReserveMinSoc       int
+	BackupReserveMaxSoc       int
 }
 
 type Delta3AuxStatus struct {
@@ -55,6 +57,8 @@ func DefaultDelta3AuxSettings() Delta3AuxSettings {
 		StopImportThresholdW:      50,
 		TargetMaxSocBufferPercent: 2,
 		MinDischargeReserveSoc:    20,
+		BackupReserveMinSoc:       20,
+		BackupReserveMaxSoc:       90,
 	}
 }
 
@@ -212,11 +216,15 @@ func maybeSetDelta3BackupReserve(plan *domain.Delta3AuxPlan, status Delta3AuxSta
 	if status.MaxChargeSoc != nil && *status.MaxChargeSoc > 0 && *status.MaxChargeSoc < maxChargeSoc {
 		maxChargeSoc = *status.MaxChargeSoc
 	}
-	reserveCeiling := maxChargeSoc - settings.TargetMaxSocBufferPercent
+	reserveCeiling := min(settings.BackupReserveMaxSoc, maxChargeSoc-settings.TargetMaxSocBufferPercent)
 	if reserveCeiling <= *status.SOC {
 		return
 	}
-	target := clamp(*status.SOC+pro3Settings.ReserveRaiseStepPercent, max(5, *status.SOC+1), reserveCeiling)
+	reserveFloor := max(settings.BackupReserveMinSoc, *status.SOC+1)
+	if reserveFloor > reserveCeiling {
+		return
+	}
+	target := clamp(*status.SOC+pro3Settings.ReserveRaiseStepPercent, reserveFloor, reserveCeiling)
 	if *status.BackupReserveSoc >= target && backupReserveEnabled(status.BackupReserveEnabled) {
 		return
 	}
@@ -228,7 +236,7 @@ func maybeSetDelta3DischargeReserve(plan *domain.Delta3AuxPlan, status Delta3Aux
 	if plan == nil || status.SOC == nil || status.BackupReserveSoc == nil {
 		return
 	}
-	target := settings.MinDischargeReserveSoc
+	target := settings.BackupReserveMinSoc
 	if *status.SOC <= target {
 		return
 	}
@@ -327,6 +335,18 @@ func normalizeDelta3AuxSettings(settings Delta3AuxSettings) Delta3AuxSettings {
 		settings.MinDischargeReserveSoc = defaults.MinDischargeReserveSoc
 	}
 	settings.MinDischargeReserveSoc = clamp(settings.MinDischargeReserveSoc, 5, 100)
+	if settings.BackupReserveMinSoc <= 0 {
+		settings.BackupReserveMinSoc = settings.MinDischargeReserveSoc
+	}
+	settings.BackupReserveMinSoc = clamp(settings.BackupReserveMinSoc, 5, 100)
+	settings.MinDischargeReserveSoc = settings.BackupReserveMinSoc
+	if settings.BackupReserveMaxSoc <= 0 {
+		settings.BackupReserveMaxSoc = defaults.BackupReserveMaxSoc
+	}
+	settings.BackupReserveMaxSoc = clamp(settings.BackupReserveMaxSoc, 5, 100)
+	if settings.BackupReserveMaxSoc < settings.BackupReserveMinSoc {
+		settings.BackupReserveMaxSoc = settings.BackupReserveMinSoc
+	}
 	return settings
 }
 

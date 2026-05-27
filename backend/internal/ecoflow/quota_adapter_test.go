@@ -8,6 +8,8 @@ func TestBatteryStatusFromQuotas(t *testing.T) {
 		"powInSumW":               0.0,
 		"powOutSumW":              323.0,
 		"plugInInfoAcInChgPowMax": 1500.0,
+		"cmsMaxChgSoc":            100.0,
+		"cmsMinDsgSoc":            0.0,
 		"cmsBattFullEnergy":       12288.0,
 		"bmsMasterTemp":           42.0,
 		"outputPowerOffMemory":    1.0,
@@ -21,6 +23,12 @@ func TestBatteryStatusFromQuotas(t *testing.T) {
 	}
 	if status.FullEnergyWh == nil || *status.FullEnergyWh != 12288 {
 		t.Fatalf("FullEnergyWh = %v, want 12288", status.FullEnergyWh)
+	}
+	if status.MaxChargeSoc == nil || *status.MaxChargeSoc != 100 {
+		t.Fatalf("MaxChargeSoc = %v, want 100", status.MaxChargeSoc)
+	}
+	if status.MinDischargeSoc == nil || *status.MinDischargeSoc != 0 {
+		t.Fatalf("MinDischargeSoc = %v, want 0", status.MinDischargeSoc)
 	}
 	if status.EcoFlowDiagnostics["bmsMasterTemp"] != 42.0 || status.EcoFlowDiagnostics["outputPowerOffMemory"] != 1.0 {
 		t.Fatalf("EcoFlowDiagnostics = %#v, want selected diagnostic quotas", status.EcoFlowDiagnostics)

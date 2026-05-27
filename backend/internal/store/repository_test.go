@@ -148,6 +148,8 @@ func TestChargingDeviceRepositorySeedsAndUpsertsDevices(t *testing.T) {
 		CapacityWh:            2048,
 		TargetSoc:             90,
 		ReserveSoc:            20,
+		BackupReserveMinSoc:   20,
+		BackupReserveMaxSoc:   85,
 		SupportsSocRead:       true,
 		SupportsACChargeLimit: true,
 		SupportsOnOff:         true,
@@ -158,6 +160,9 @@ func TestChargingDeviceRepositorySeedsAndUpsertsDevices(t *testing.T) {
 	}
 	if saved.ID == 0 || saved.CredentialRef != "ecoflow_delta3_secondary" {
 		t.Fatalf("saved device = %+v", saved)
+	}
+	if saved.BackupReserveMinSoc != 20 || saved.BackupReserveMaxSoc != 85 {
+		t.Fatalf("saved backup reserve range = %d-%d, want 20-85", saved.BackupReserveMinSoc, saved.BackupReserveMaxSoc)
 	}
 
 	saved.Name = "DELTA 3 Plus 書斎"

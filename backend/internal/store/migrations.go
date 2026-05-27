@@ -229,6 +229,8 @@ func migrate(db *sql.DB) error {
 			capacity_wh INTEGER NOT NULL DEFAULT 0,
 			target_soc INTEGER NOT NULL DEFAULT 90,
 			reserve_soc INTEGER NOT NULL DEFAULT 30,
+			backup_reserve_min_soc INTEGER NOT NULL DEFAULT 0,
+			backup_reserve_max_soc INTEGER NOT NULL DEFAULT 0,
 			supports_soc_read INTEGER NOT NULL DEFAULT 0,
 			supports_ac_charge_limit INTEGER NOT NULL DEFAULT 0,
 			supports_on_off INTEGER NOT NULL DEFAULT 0,
@@ -243,7 +245,7 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
-	for _, column := range []string{"device_sn", "device_type", "status_source"} {
+	for _, column := range []string{"device_sn", "device_type", "status_source", "backup_reserve_min_soc", "backup_reserve_max_soc"} {
 		if err := addKnownColumnIfMissing(db, "charging_devices", column); err != nil {
 			return err
 		}
@@ -256,6 +258,29 @@ func migrate(db *sql.DB) error {
 			ELSE 'manual'
 		END
 		WHERE status_source = ''`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE charging_devices
+		SET backup_reserve_min_soc = CASE
+			WHEN reserve_soc < 5 THEN 5
+			WHEN reserve_soc > 100 THEN 100
+			ELSE reserve_soc
+		END
+		WHERE backup_reserve_min_soc = 0`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE charging_devices
+		SET backup_reserve_max_soc = CASE
+			WHEN target_soc < 5 THEN 5
+			WHEN target_soc > 100 THEN 100
+			ELSE target_soc
+		END
+		WHERE backup_reserve_max_soc = 0`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`UPDATE charging_devices
+		SET backup_reserve_max_soc = backup_reserve_min_soc
+		WHERE backup_reserve_max_soc < backup_reserve_min_soc`); err != nil {
 		return err
 	}
 	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_charging_devices_device_sn_nonempty ON charging_devices(device_sn) WHERE device_sn <> ''`); err != nil {
@@ -431,9 +456,11 @@ var knownMigrationColumns = map[string]map[string]string{
 		"mode_guard_reason":             "TEXT NOT NULL DEFAULT ''",
 	},
 	"charging_devices": {
-		"device_sn":     "TEXT NOT NULL DEFAULT ''",
-		"device_type":   "TEXT NOT NULL DEFAULT ''",
-		"status_source": "TEXT NOT NULL DEFAULT ''",
+		"device_sn":              "TEXT NOT NULL DEFAULT ''",
+		"device_type":            "TEXT NOT NULL DEFAULT ''",
+		"status_source":          "TEXT NOT NULL DEFAULT ''",
+		"backup_reserve_min_soc": "INTEGER NOT NULL DEFAULT 0",
+		"backup_reserve_max_soc": "INTEGER NOT NULL DEFAULT 0",
 	},
 	"delta3_aux_control_command_logs": {
 		"previous_backup_reserve_soc":   "INTEGER",
@@ -501,30 +528,31 @@ func seedChargingDevices(db *sql.DB, now time.Time) error {
 	_, err := db.Exec(
 		`INSERT INTO charging_devices (
 			name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
-			min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc,
+			min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
 			supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
 		)
 		SELECT name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
-			min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc,
+			min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
 			supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, ?, ?
 		FROM (
 			SELECT 'DELTA Pro 3' AS name, 'ecoflow_delta_pro3' AS kind, 'ecoflow' AS provider, 'primary' AS role,
 				'ecoflow_pro3_primary' AS credential_ref, '' AS device_sn, 'DELTA_PRO3' AS device_type, 'ecoflow_cloud' AS status_source,
 				1 AS enabled, 0 AS control_enabled, 10 AS priority,
 				400 AS min_charge_w, 1500 AS max_charge_w, 100 AS charge_step_w, 12288 AS capacity_wh,
-				90 AS target_soc, 30 AS reserve_soc, 1 AS supports_soc_read, 1 AS supports_ac_charge_limit,
+				90 AS target_soc, 30 AS reserve_soc, 30 AS backup_reserve_min_soc, 90 AS backup_reserve_max_soc,
+				1 AS supports_soc_read, 1 AS supports_ac_charge_limit,
 				0 AS supports_on_off, '既存の DELTA Pro 3 制御用。SN や認証情報は環境変数側で管理します。' AS notes
 			UNION ALL
 			SELECT 'DELTA 3 Plus', 'ecoflow_delta3_plus', 'ecoflow', 'auxiliary',
 				'ecoflow_delta3_primary', '', 'DELTA_3', 'ecoflow_private_mqtt', 1, 0, 20,
 				100, 1500, 100, 2048,
-				90, 20, 1, 1,
+				90, 20, 20, 90, 1, 1,
 				1, 'DELTA 3 Plus 補助充電候補。追加台はこのマスタで増やします。'
 			UNION ALL
 			SELECT '手動補助バッテリー', 'manual', 'manual', 'manual_auxiliary',
 				'manual_auxiliary', '', '', 'manual', 1, 0, 90,
 				0, 0, 1, 0,
-				90, 20, 0, 0,
+				90, 20, 20, 90, 0, 0,
 				0, 'API制御できない補助充電の運用メモ用です。'
 		)
 		WHERE NOT EXISTS (SELECT 1 FROM charging_devices)`,
