@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <title>Phase 7 DELTA 3 Plus 買電時放電制御 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; max-width: 960px; margin: 32px auto; padding: 0 20px; color: #172033; }
+    h1, h2, h3 { line-height: 1.3; }
+    code, pre { background: #f4f6f8; border-radius: 6px; }
+    code { padding: 2px 5px; }
+    pre { padding: 14px 16px; overflow-x: auto; }
+    section { margin: 28px 0; }
+    ul { padding-left: 1.4rem; }
+  </style>
+</head>
+<body>
+  <h1>Phase 7 DELTA 3 Plus 買電時放電制御 実装計画</h1>
+
+  <section>
+    <h2>Goal</h2>
+    <p>買電中に DELTA 3 Plus がパススルーに近い状態になっている場合、バッテリー残量に余力があれば機器マスタの <code>reserveSoc</code> まで放電できるように、補助制御の判定と表示を整理する。</p>
+    <p><code>importW &gt; 0</code> かつ DELTA 3 Plus の残量%が <code>reserveSoc</code> より高い場合、AC 充電上限を最小へ下げるだけでなく、放電下限として <code>backupReserveSoc = reserveSoc</code> を設定する候補を作る。</p>
+    <p><code>SOC</code> は <code>State of Charge</code>、つまりバッテリー残量率を意味する。UI 表示では <code>残量%</code> / <code>制御下限残量%</code> と表記し、内部フィールド名としてだけ <code>SOC</code> を使う。</p>
+  </section>
+
+  <section>
+    <h2>Non-Goals</h2>
+    <ul>
+      <li>DELTA 3 Plus の AC output ON/OFF は変更しない。</li>
+      <li>Grid bypass / EPS / home grid 連携の write API は追加しない。</li>
+      <li>複数 DELTA 3 Plus への同時配分制御は追加しない。</li>
+      <li><code>.env</code> の安全 gate を緩めない。</li>
+      <li>実機 write を既定 ON にしない。</li>
+      <li>既存の DELTA Pro 3 余剰追従制御を広範囲に作り替えない。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Current State</h2>
+    <ul>
+      <li><code>charging_devices.reserve_soc</code> は、DELTA 3 Plus 自動制御が一時的に下げてよい放電下限残量%として扱う。</li>
+      <li><code>backend/internal/control/delta3_aux_planner.go</code> には、買電中に <code>maybeSetDelta3DischargeReserve</code> を呼ぶ処理がある。</li>
+      <li>実機観測では、DELTA 3 Plus が <code>AC入力 ~= AC出力</code> のパススルーに見える状態で、制御計画が <code>no command candidate</code> になることがある。</li>
+      <li><code>/api/status</code> の <code>delta3AuxPlan</code> は read-only 表示になっており、write gate の抑制理由と planner の候補理由が UI 上で分かりにくい。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Data And Control Contract</h2>
+    <h3>Inputs</h3>
+    <ul>
+      <li><code>domain.Status.ImportW</code> / <code>ExportW</code></li>
+      <li>DELTA 3 Plus status: <code>SOC</code>, <code>ACInW</code>, <code>ACOutW</code>, <code>ACChargeLimitW</code>, <code>BackupReserveSoc</code>, <code>BackupReserveEnabled</code>, <code>MaxChargeSoc</code></li>
+      <li><code>control.Delta3AuxSettings</code>: <code>MinChargeW</code>, <code>MaxChargeW</code>, <code>SafetyMarginW</code>, <code>MinCommandDiffW</code>, <code>StopImportThresholdW</code>, <code>MinDischargeReserveSoc</code></li>
+    </ul>
+    <h3>Planner Output</h3>
+    <ul>
+      <li><code>StrategyState = RECOVERING</code></li>
+      <li><code>RecommendedACChargeLimitW</code> は最小または安全上限内の回復値</li>
+      <li>必要な場合は <code>ShouldSetBackupReserve = true</code></li>
+      <li><code>RecommendedBackupReserveSoc = MinDischargeReserveSoc</code></li>
+      <li><code>WouldWrite = true</code> before write guards</li>
+    </ul>
+    <h3>Guard Output</h3>
+    <p>実writeは既存 gate をすべて通った場合だけ実行する。mock / simulation / real control / auto control / confirmation / trial / DELTA 3 read / 機器マスタ control / private write gate / command interval / previous error backoff を迂回しない。</p>
+  </section>
+
+  <section>
+    <h2>Safety Boundaries</h2>
+    <ul>
+      <li>既定では mock + simulation + read-only を維持する。</li>
+      <li>追加する write 候補も既存の <code>EvaluateDelta3AuxCommandGuard</code> を必ず通す。</li>
+      <li><code>reserveSoc</code> 未満へ放電させない。</li>
+      <li><code>SOC &lt;= reserveSoc</code> の時は放電用リザーブ変更候補を作らない。</li>
+      <li><code>BackupReserveSoc</code> が取得不能な時は、実write候補を作らず、理由をログに残す。</li>
+      <li>405 / AC output OFF の再発を避けるため、AC充電上限は既存の出力考慮安全上限を超えない。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Implementation Steps</h2>
+    <ol>
+      <li><code>backend/internal/control/delta3_aux_planner.go</code> の買電回復分岐で、残量%と機器マスタの制御下限残量を使った放電リザーブ候補を明確化する。</li>
+      <li><code>backend/internal/control/delta3_aux_planner_test.go</code> に、買電中・パススルー・SOC下限・backup reserve未取得のテストを追加する。</li>
+      <li><code>frontend/lib/display-labels.ts</code> に新しい reason を日本語化する。</li>
+      <li>必要に応じて <code>frontend/components/StatusCards.tsx</code> の表示を微修正する。</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Review Points</h2>
+    <ul>
+      <li>買電中に充電を増やす候補を作っていないこと。</li>
+      <li><code>reserveSoc</code> より下に放電する候補を作っていないこと。</li>
+      <li><code>backupReserveSoc</code> 未取得時に危険な推測 write をしないこと。</li>
+      <li>既存 write gate を迂回していないこと。</li>
+      <li>unit test で実機なしに判定できること。</li>
+      <li>UI で <code>本体リザーブ残量</code> と <code>制御下限残量</code> が混同されないこと。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Verification Commands</h2>
+    <pre><code>cd backend &amp;&amp; rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build
+rtk codex review --uncommitted</code></pre>
+  </section>
+
+  <section>
+    <h2>Operational Notes</h2>
+    <ul>
+      <li>実装後にサーバーを再ビルド・再起動しない限り、稼働中の <code>backend/bin/server</code> には反映されない。</li>
+      <li>期待通り放電しない場合は、EcoFlow private API の <code>backupReserveSoc</code> がアプリ表示と一致しているか、別フィールドでセルフパワー/バックアップ設定を持っていないかを次の調査対象にする。</li>
+    </ul>
+  </section>
+</body>
+</html>

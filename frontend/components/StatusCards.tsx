@@ -148,11 +148,10 @@ export function Delta3StatusCard({
                           <Detail label="モード" value={modeSummary} />
                         </div>
                         <div className="detail-strip planner-secondary" aria-label={`${device.name} configuration status`}>
-                          <Detail label="最大充電SOC" value={nullablePercent(device.status.maxChargeSoc)} />
-                          <Detail label="最低放電SOC" value={nullablePercent(device.status.minDischargeSoc)} />
+                          <Detail label="最大充電残量" value={nullablePercent(device.status.maxChargeSoc)} />
+                          <Detail label="最低放電残量" value={nullablePercent(device.reserveSoc)} />
                           <Detail label="本体リザーブ" value={nullableOnOff(device.status.backupReserveEnabled)} />
-                          <Detail label="本体リザーブSOC" value={nullablePercent(device.status.backupReserveSoc)} />
-                          <Detail label="制御下限SOC" value={nullablePercent(device.reserveSoc)} />
+                          <Detail label="本体リザーブ残量" value={nullablePercent(device.status.backupReserveSoc)} />
                           <Detail label="Grid bypass" value={nullableOnOff(device.status.gridBypassDisabled)} />
                           <Detail label="AC出力" value={nullableOnOff(device.status.acOutputEnabled)} />
                           <Detail label="Device type" value={device.status.deviceType || device.deviceType || "-"} />
@@ -176,8 +175,8 @@ export function Delta3StatusCard({
               <Detail label="現在AC上限" value={nullableWatt(auxiliaryPlan?.currentAcChargeLimitW)} />
               <Detail label="AC出力考慮上限" value={nullableWatt(auxiliaryPlan?.safeAcChargeLimitW)} />
               <Detail label="DELTA 3 Plus出力" value={nullableWatt(auxiliaryPlan?.delta3AcOutputW)} />
-              <Detail label="推奨リザーブ" value={nullablePercent(auxiliaryPlan?.recommendedBackupReserveSoc)} />
-              <Detail label="現在リザーブ" value={nullablePercent(auxiliaryPlan?.currentBackupReserveSoc)} />
+              <Detail label="推奨リザーブ残量" value={nullablePercent(auxiliaryPlan?.recommendedBackupReserveSoc)} />
+              <Detail label="現在リザーブ残量" value={nullablePercent(auxiliaryPlan?.currentBackupReserveSoc)} />
               <Detail label="残余売電" value={nullableWatt(auxiliaryPlan?.residualExportW ?? sourceStatus.exportW)} />
               <Detail label="安全余力" value={nullableWatt(auxiliaryPlan?.safetyMarginW)} />
               <Detail label="リザーブ解除" value={writeCandidateLabel(auxiliaryPlan?.shouldDisableBackupReserve)} />
@@ -189,7 +188,7 @@ export function Delta3StatusCard({
         ) : available && status ? (
           <>
             <div className="detail-strip" aria-label="DELTA 3 Plus read-only status">
-              <Detail label="SOC" value={nullablePercent(status.soc)} />
+              <Detail label="残量" value={nullablePercent(status.soc)} />
               <Detail label="AC入力" value={nullableWatt(status.acInW)} />
               <Detail label="AC出力" value={nullablePositiveWatt(status.acOutW)} />
               <Detail label="AC充電上限" value={nullableWatt(status.acChargeLimitW)} />
@@ -197,10 +196,10 @@ export function Delta3StatusCard({
               <Detail label="AC output" value={nullableOnOff(status.acOutputEnabled)} />
             </div>
             <div className="detail-strip planner-secondary" aria-label="DELTA 3 Plus configuration status">
-              <Detail label="最大充電SOC" value={nullablePercent(status.maxChargeSoc)} />
-              <Detail label="最低放電SOC" value={nullablePercent(status.minDischargeSoc)} />
+              <Detail label="最大充電残量" value={nullablePercent(status.maxChargeSoc)} />
+              <Detail label="最低放電残量" value={nullablePercent(status.minDischargeSoc)} />
               <Detail label="本体リザーブ" value={nullableOnOff(status.backupReserveEnabled)} />
-              <Detail label="本体リザーブSOC" value={nullablePercent(status.backupReserveSoc)} />
+              <Detail label="本体リザーブ残量" value={nullablePercent(status.backupReserveSoc)} />
               <Detail label="Device type" value={status.deviceType || "-"} />
               <Detail label="Updated" value={formatDateTime(status.updatedAt || "")} />
             </div>
@@ -210,8 +209,8 @@ export function Delta3StatusCard({
               <Detail label="現在AC上限" value={nullableWatt(auxiliaryPlan?.currentAcChargeLimitW)} />
               <Detail label="AC出力考慮上限" value={nullableWatt(auxiliaryPlan?.safeAcChargeLimitW)} />
               <Detail label="DELTA 3 Plus出力" value={nullableWatt(auxiliaryPlan?.delta3AcOutputW)} />
-              <Detail label="推奨リザーブ" value={nullablePercent(auxiliaryPlan?.recommendedBackupReserveSoc)} />
-              <Detail label="現在リザーブ" value={nullablePercent(auxiliaryPlan?.currentBackupReserveSoc)} />
+              <Detail label="推奨リザーブ残量" value={nullablePercent(auxiliaryPlan?.recommendedBackupReserveSoc)} />
+              <Detail label="現在リザーブ残量" value={nullablePercent(auxiliaryPlan?.currentBackupReserveSoc)} />
               <Detail label="残余売電" value={nullableWatt(auxiliaryPlan?.residualExportW ?? sourceStatus.exportW)} />
               <Detail label="安全余力" value={nullableWatt(auxiliaryPlan?.safetyMarginW)} />
               <Detail label="リザーブ解除" value={writeCandidateLabel(auxiliaryPlan?.shouldDisableBackupReserve)} />
@@ -306,7 +305,7 @@ export function StatusDecisionSection({
           <Detail label="Battery output" value={`${status.batteryOutputW} W`} />
           <Detail label="AC charge limit" value={`${status.acChargeLimitW} W`} />
           <Detail label="本体リザーブ" value={nullableOnOff(status.energyBackupEnabled)} />
-          <Detail label="本体リザーブSOC" value={nullablePercent(status.backupReserveSoc)} />
+          <Detail label="本体リザーブ残量" value={nullablePercent(status.backupReserveSoc)} />
           <Detail label="TOU mode" value={nullableOnOff(status.touModeEnabled)} />
           <Detail label="Battery capacity" value={formatBatteryCapacity(status.batteryFullEnergyWh)} />
           <Detail label="Updated" value={formatDateTime(status.updatedAt)} />
@@ -368,8 +367,8 @@ export function NightChargePlanSection({
             <Detail label="状態" value={strategyStateLabel(plan.strategyState)} />
             <Detail label="PV期待度" value={`${plan.solarForecastScore}/100`} />
             <Detail label="推奨mode" value={modeLabel(plan.recommendedMode)} />
-            <Detail label="推奨深夜SOC" value={`${plan.recommendedNightTargetSoc}%`} />
-            <Detail label="最低確保SOC" value={`${plan.minimumReserveSoc}%`} />
+            <Detail label="推奨深夜残量" value={`${plan.recommendedNightTargetSoc}%`} />
+            <Detail label="最低確保残量" value={`${plan.minimumReserveSoc}%`} />
             <Detail label="今夜充電" value={yesNo(plan.shouldChargeTonight)} />
             <Detail label="対象日" value={plan.targetForecast?.date || "-"} />
             <Detail label="日射量" value={plan.targetForecast ? `${formatDecimal(plan.targetForecast.shortwaveRadiationMjPerM2)} MJ/m2` : "-"} />
@@ -485,7 +484,7 @@ function surplusPlanSummary(plan: SurplusPlan) {
 }
 
 function nightPlanSummary(plan: NightChargePlan) {
-  return `${strategyStateLabel(plan.strategyState)} / 推奨深夜SOC ${plan.recommendedNightTargetSoc}% / PV ${formatDecimal(plan.dailyEstimatedPvKwh || plan.estimatedPvKwh)} kWh`;
+  return `${strategyStateLabel(plan.strategyState)} / 推奨深夜残量 ${plan.recommendedNightTargetSoc}% / PV ${formatDecimal(plan.dailyEstimatedPvKwh || plan.estimatedPvKwh)} kWh`;
 }
 
 function MetricCard({ metric }: { metric: Metric }) {
@@ -581,7 +580,7 @@ function surplusActionLabel(plan: SurplusPlan) {
     surplusActions.push(`リザーブを${reserveLabel}へ引き上げ`);
   }
   if (plan.shouldAlignBackupReserve && reserveLabel) {
-    surplusActions.push(`リザーブを現在SOCの${reserveLabel}へ合わせる`);
+    surplusActions.push(`リザーブを現在残量の${reserveLabel}へ合わせる`);
   }
   if (plan.shouldAdjustAcChargeLimit && plan.recommendedAcChargeLimitW > 0) {
     surplusActions.push(`AC充電を${plan.recommendedAcChargeLimitW}Wへ調整`);
@@ -684,11 +683,10 @@ function deviceModeSummary(device: DeviceStatus) {
   const parts = [
     `AC出力 ${nullableOnOff(device.status.acOutputEnabled)}`,
     `本体リザーブ ${nullableOnOff(device.status.backupReserveEnabled)}`,
-    `本体リザーブSOC ${nullablePercent(device.status.backupReserveSoc)}`,
-    `制御下限SOC ${nullablePercent(device.reserveSoc)}`,
+    `本体リザーブ残量 ${nullablePercent(device.status.backupReserveSoc)}`,
     `Grid bypass ${nullableOnOff(device.status.gridBypassDisabled)}`,
-    `最大SOC ${nullablePercent(device.status.maxChargeSoc)}`,
-    `最低SOC ${nullablePercent(device.status.minDischargeSoc)}`
+    `最大充電残量 ${nullablePercent(device.status.maxChargeSoc)}`,
+    `最低放電残量 ${nullablePercent(device.reserveSoc)}`
   ];
   return parts.join(" / ");
 }

@@ -51,7 +51,7 @@ const exactGuardReasonLabels: Record<string, string> = {
   "night charge command suppressed": "深夜充電コマンドを抑制しています",
   "night charge plan owns control": "夜間充電計画が制御中です",
   "night charge settings already match plan": "夜間充電設定は計画と一致しています",
-  "current SOC is already above the recommended night target": "現在の残量が推奨深夜SOCを上回っています",
+  "current SOC is already above the recommended night target": "現在の残量が推奨深夜残量を上回っています",
   "duplicate night charge command candidate": "同じ深夜充電コマンド候補のため抑制しています",
   "night charge command suppressed by minimum interval": "深夜充電コマンドは最小送信間隔内のため抑制しています",
   "TOU mode is already enabled": "TOUモードはすでに有効です",
@@ -73,13 +73,14 @@ const exactReasonLabels: Record<string, string> = {
   "night charge plan owns control": "夜間充電計画が制御中です",
   "night charge settings already match plan": "夜間充電設定は計画と一致しています",
   "target daytime solar forecast is strong; keep night charging modest": "日中の太陽光予測が強いため深夜充電は控えめにします",
-  "current SOC is already above the recommended night target": "現在の残量が推奨深夜SOCを上回っています",
+  "current SOC is already above the recommended night target": "現在の残量が推奨深夜残量を上回っています",
   "duplicate night charge command candidate": "同じ深夜充電コマンド候補のため抑制しています",
   "night charge command suppressed by minimum interval": "深夜充電コマンドは最小送信間隔内のため抑制しています",
   "DELTA3_AUX_ENABLED=false": "DELTA 3 Plus補助制御が無効です",
   "DELTA 3 Plus status unavailable": "DELTA 3 Plus状態を取得できません",
-  "DELTA 3 Plus SOC or AC charge limit is unavailable": "DELTA 3 PlusのSOCまたはAC充電上限が取得できません",
+  "DELTA 3 Plus SOC or AC charge limit is unavailable": "DELTA 3 Plusの残量またはAC充電上限が取得できません",
   "importing from grid; reduce DELTA 3 Plus auxiliary charge toward safe minimum": "買電中のためDELTA 3 Plus補助充電を安全な最小値へ下げます",
+  "importing from grid; lower DELTA 3 Plus backup reserve to the master minimum so it can discharge": "買電中のためDELTA 3 Plusを制御下限残量まで放電できるようにリザーブを下げます",
   "waiting for recent DELTA Pro 3 command to settle": "直近のDELTA Pro 3制御の反映待ちです",
   "DELTA Pro 3 still has priority surplus absorption candidate": "DELTA Pro 3でまだ余剰吸収できるため待機します",
   "residual export is below DELTA 3 Plus auxiliary adjustment threshold": "残余売電がDELTA 3 Plus補助調整のしきい値未満です",
@@ -87,7 +88,7 @@ const exactReasonLabels: Record<string, string> = {
   "DELTA 3 Plus auxiliary target is within command diff threshold": "DELTA 3 Plus補助目標が変更しきい値内です",
   "DELTA Pro 3 priority is satisfied; use DELTA 3 Plus to absorb residual export": "DELTA Pro 3優先後の残余売電をDELTA 3 Plusで吸収します",
   "DELTA Pro 3 priority is satisfied; set DELTA 3 Plus AC charge and backup reserve to absorb export": "DELTA 3 PlusのAC充電上限とバックアップを上げて売電を吸収します",
-  "DELTA 3 Plus AC charge is maxed but passthrough; raise backup reserve above current SOC": "DELTA 3 Plusがパススルーのためバックアップを現在SOCより上げます"
+  "DELTA 3 Plus AC charge is maxed but passthrough; raise backup reserve above current SOC": "DELTA 3 Plusがパススルーのためリザーブを現在残量より上げます"
 };
 
 const partialReasonLabels: Array<[string, string]> = [
@@ -100,14 +101,14 @@ const partialReasonLabels: Array<[string, string]> = [
   ["energy modes already disabled", "動作モードはすでに無効です"],
   ["small surplus is below normal charge start requirement", "売電量が通常充電の開始条件未満のためパススルー調整候補です"],
   ["export power is below conservative start requirement", "売電量が保守的な開始条件未満です"],
-  ["is near max charge SOC", "DELTA 3 Plusが最大充電SOC付近です"],
+  ["is near max charge SOC", "DELTA 3 Plusが最大充電残量付近です"],
   ["AC charge limit exceeds output-aware safe limit", "DELTA 3 PlusのAC出力を考慮した安全上限を超えています"],
   ["write client is unavailable", "書き込みクライアントが利用できません"],
   ["set DELTA 3 Plus AC charge power", "DELTA 3 Plus AC充電上限の送信に失敗しました"],
   ["set AC charge power", "AC充電上限の送信に失敗しました"],
   ["disable energy strategy modes", "動作モードOFFの送信に失敗しました"],
   ["enable TOU mode", "TOUモードONの送信に失敗しました"],
-  ["set backup reserve SOC", "バックアップリザーブSOCの送信に失敗しました"]
+  ["set backup reserve SOC", "バックアップリザーブ残量の送信に失敗しました"]
 ];
 
 export function strategyStateLabel(value: string | null | undefined) {
