@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Phase 7 バックアップリザーブ表示整理 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; margin: 40px; color: #1f2937; }
+    h1, h2, h3 { color: #111827; }
+    code { background: #f3f4f6; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    section { margin-bottom: 28px; }
+    ul, ol { padding-left: 1.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Phase 7 バックアップリザーブ表示整理 実装計画</h1>
+
+  <section>
+    <h2>目的</h2>
+    <p>充電機器ステータスと制御判断で表示している <code>バックアップ</code> / <code>Backup reserve</code> を、EcoFlow 本体の状態と Energy Controller の制御設定が混ざらない表記に整理する。</p>
+    <p>現状の <code>OFF / 30%</code> のような表示は、バックアップリザーブ機能が OFF なのか、30% が本体設定値なのか、制御下限なのかが分かりにくい。これを明示的に分ける。</p>
+  </section>
+
+  <section>
+    <h2>非目的</h2>
+    <ul>
+      <li>DELTA Pro 3 / DELTA 3 Plus の制御ロジックは変更しない。</li>
+      <li>EcoFlow への write API 呼び出しは追加しない。</li>
+      <li>機器マスタの保存形式や API 契約は変更しない。</li>
+      <li>実機のバックアップリザーブ値を推測・補正しない。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>現状</h2>
+    <ul>
+      <li><code>frontend/components/StatusCards.tsx</code> の充電機器ステータスでは、<code>backupReserveEnabled</code> と <code>backupReserveSoc</code> / <code>reserveSoc</code> が同じ detail に混ざっている。</li>
+      <li>DELTA Pro 3 の制御判断でも英語の <code>Backup reserve</code> 表記が残っている。</li>
+      <li>DELTA 3 Plus の旧 fallback 表示でも <code>推奨バックアップ</code> / <code>現在バックアップ</code> が残っている。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>表示方針</h2>
+    <h3>充電機器ごとの表示</h3>
+    <ul>
+      <li><strong>本体リザーブ</strong>: <code>backupReserveEnabled</code> の ON/OFF。</li>
+      <li><strong>本体リザーブSOC</strong>: 実機から取得した <code>backupReserveSoc</code>。</li>
+      <li><strong>制御下限SOC</strong>: 機器マスタの <code>reserveSoc</code>。DELTA 3 Plus 補助制御では「自動制御が一時的に下げてよい最低バックアップリザーブ SOC」として使う。</li>
+    </ul>
+
+    <h3>モード要約</h3>
+    <ul>
+      <li><code>リザーブ OFF / 30%</code> のような混在表記はやめる。</li>
+      <li><code>本体リザーブ OFF</code> と <code>制御下限SOC 30%</code> を別項目として並べる。</li>
+    </ul>
+
+    <h3>補助計画</h3>
+    <ul>
+      <li>英語の <code>Backup reserve</code> は日本語化する。</li>
+      <li><code>バックアップ</code> だけの表記は <code>リザーブSOC</code> または <code>本体リザーブSOC</code> に寄せる。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>変更ファイル</h2>
+    <ul>
+      <li><code>frontend/components/StatusCards.tsx</code>: 表示ラベルを整理し、ON/OFF と SOC を別 detail に分ける。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>安全境界</h2>
+    <ul>
+      <li>read-only dashboard の表示だけを変更する。</li>
+      <li>backend API、DB、制御 planner、executor、実機 write path は変更しない。</li>
+      <li><code>.env</code> や認証情報、シリアル番号は触らない。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>実装手順</h2>
+    <ol>
+      <li>充電機器一覧の detail strip を <code>本体リザーブ</code>、<code>本体リザーブSOC</code>、<code>制御下限SOC</code> に分割する。</li>
+      <li><code>deviceModeSummary</code> も同じ語彙に揃える。</li>
+      <li>DELTA 3 Plus 旧表示 fallback と制御判断の <code>Backup reserve</code> を日本語にする。</li>
+      <li>不要になった混在表示 helper を削除する。</li>
+      <li>frontend build で型と static export を確認する。</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>レビュー観点</h2>
+    <ul>
+      <li><code>OFF / 30%</code> のように ON/OFF と別由来の SOC が混ざる表示が残っていないこと。</li>
+      <li>DELTA Pro 3 と DELTA 3 Plus のどちらでも意味が通るラベルであること。</li>
+      <li>表示のみの変更で、制御や API の挙動を変えていないこと。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>確認コマンド</h2>
+    <ul>
+      <li><code>cd frontend &amp;&amp; rtk npm run build</code></li>
+      <li><code>rtk codex review --uncommitted</code></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>運用メモ</h2>
+    <p>表示上の <code>制御下限SOC</code> は、実機本体のバックアップリザーブ状態ではなく Energy Controller の機器マスタ設定である。ユーザーが実機アプリ上の値と比較する時に混同しないよう、今後も本体状態と制御設定は分けて表示する。</p>
+  </section>
+</body>
+</html>
