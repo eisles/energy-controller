@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phase 7 PV充電補正係数 実装計画</title>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; max-width: 960px; margin: 32px auto; padding: 0 20px; color: #172033; background: #f8fafc; }
+    h1, h2, h3 { line-height: 1.3; color: #0f172a; }
+    h1 { border-bottom: 3px solid #2563eb; padding-bottom: 12px; }
+    h2 { margin-top: 32px; border-left: 4px solid #2563eb; padding-left: 12px; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    pre { background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; background: white; }
+    th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: #e2e8f0; }
+    .note { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 12px 16px; }
+  </style>
+</head>
+<body>
+  <h1>Phase 7 PV充電補正係数 実装計画</h1>
+  <h2>目的</h2>
+  <p>天気予報の日射量から算出したPV発電予測を、そのまま深夜充電計画へ使わない。毎日の予測値と実際にEcoFlowへ充電できた量を比較し、PV発電予測に掛ける補正係数を提案できるようにする。</p>
+  <p>あわせて、DELTA Pro 3 だけでなく DELTA 3 Plus も機器ごとの日中負荷を持つ前提にし、全機器の必要量、利用可能量、PV割当、深夜充電目標SOCを計算できるようにする。</p>
+  <p>最初は補正係数の手動適用を基本とし、十分なログが取れてから自動適用できる余地を残す。初期実装では自動適用トグルは出さず、明示操作で保存された補正係数だけを制御計算に使う。</p>
+
+  <h2>背景</h2>
+  <p>現在の深夜充電プランは、Open-Meteoの日射量から推定PV発電量を計算し、EcoFlowの過去出力ログから日中使用量を差し引いて、翌日の深夜充電目標を決めている。</p>
+  <p>ただし、予測PV発電量の全量がEcoFlow充電へ回るとは限らない。</p>
+  <ul>
+    <li>家全体の消費に先に使われる。</li>
+    <li>EcoFlowのAC入力上限、最低充電W、満充電、バックアップリザーブに制約される。</li>
+    <li>DELTA Pro 3とDELTA 3 Plusの受け入れ可能量が時間帯で変わる。</li>
+    <li>売電していても、制御条件により充電へ取り込めない時間がある。</li>
+    <li>天気予報の日射量と実際の発電量にはズレがある。</li>
+    <li>DELTA 3 Plus が日中に約400W程度を担当する前提が、深夜充電プランの不足量に十分反映されていない。</li>
+  </ul>
+  <pre>補正後PV充電見込みkWh = 予測PV発電kWh * PV充電補正係数</pre>
+  <p>補正後PV充電見込みは「全機器向けのPV充電余力」として扱い、優先順位順に各機器へ配分する。</p>
+
+  <h2>非目的</h2>
+  <ul>
+    <li>EcoFlowの安全ゲートを緩めない。</li>
+    <li>実機writeを無条件に増やさない。</li>
+    <li>Nature RemoやEcoFlowの認証情報を保存しない。</li>
+    <li>自動適用を初期状態で有効化しない。</li>
+    <li>機器別の充電制御を根本的に作り直さない。</li>
+    <li>機器マスターを使わずに .env の固定台数で制御しない。</li>
+  </ul>
+
+  <h2>データ設計</h2>
+  <h3>settings</h3>
+  <table>
+    <tr><th>項目</th><th>型</th><th>既定値</th><th>説明</th></tr>
+    <tr><td>pv_charge_correction_factor</td><td>REAL</td><td>0.7</td><td>PV発電予測に掛ける手動補正係数</td></tr>
+    <tr><td>pv_charge_correction_manual</td><td>INTEGER</td><td>0</td><td>ユーザーが明示保存した補正係数かどうか</td></tr>
+    <tr><td>pv_charge_correction_updated_at</td><td>TEXT</td><td>NULL</td><td>補正係数を最後に手動保存した時刻</td></tr>
+    <tr><td>pv_charge_correction_min_sample_days</td><td>INTEGER</td><td>7</td><td>推奨値算出に必要な最小日数</td></tr>
+    <tr><td>pv_charge_correction_min_factor</td><td>REAL</td><td>0.2</td><td>補正係数の下限</td></tr>
+    <tr><td>pv_charge_correction_max_factor</td><td>REAL</td><td>0.9</td><td>補正係数の上限</td></tr>
+  </table>
+  <p>自動適用設定は今回追加しない。将来、自動適用の仕様、上限変化幅、監査ログ、停止条件を別途レビューした後に追加する。</p>
+  <p><code>settings</code> には <code>pv_charge_correction_factor</code> に加えて、<code>pv_charge_correction_manual</code> と <code>pv_charge_correction_updated_at</code> を保存する。移行直後の0.7は既定値として <code>pvChargeCorrectionSource=default</code> を返し、UIで明示保存された場合だけ <code>manual</code> として扱う。</p>
+  <h3>night_charge_plan_logs</h3>
+  <p>補正係数は <code>requiredNightChargeKwh</code> の算出結果を変えるため、夜間制御判断ログにも、判断時点の補正係数、補正元、補正後PV発電見込み、補正後PV充電見込み、全機器の日中必要量、利用可能量、不足量を保存する。これにより、後からなぜその深夜充電目標になったかを再現できるようにする。</p>
+
+  <h3>充電機器マスター</h3>
+  <p>既存の機器マスターを深夜計画の入力として使う。既存カラムの <code>priority</code>、<code>capacity_wh</code>、<code>backup_reserve_min_soc</code>、<code>backup_reserve_max_soc</code>、<code>max_charge_w</code>、<code>control_enabled</code> を使い、機器別の必要量と目標SOCを計算する。</p>
+  <p><code>expected_daytime_load_w</code> は新規に <code>charging_devices</code> へ追加する。既存DBでは既定0Wのまま追加し、DELTA 3 Plus の400W想定はマスター編集画面から設定する。自動で全機器へ400Wを入れない。</p>
+
+  <h3>日次評価ログ</h3>
+  <p>新規テーブル <code>pv_charge_correction_daily_logs</code> を追加し、予測PV、PV有効時間帯の実充電量、売電実績、算出係数、品質を保存する。評価対象日の <code>date</code> は <code>UNIQUE</code> とし、再生成時は upsert で同じ日を上書きする。これにより <code>okSampleDays</code> や平均係数が同じ日で重複しないようにする。</p>
+  <p><code>power_logs.battery_input_w</code> は主機側の入力であり、DELTA 3 Plus のAC入力は現在の機器ステータスには出ているが永続化されていない。そのため、全機器のPV捕捉量を評価するために <code>charging_device_power_logs</code> を追加し、機器別のSOC、AC入力、AC出力、AC充電上限、バックアップリザーブ、取得可否を保存する。</p>
+  <p><code>actual_battery_input_kwh</code> は、原則として機器別の実質充電量を使う。DELTA 3 Plus のようにAC入力とAC出力が同時に出る機器では、<code>charging_device_power_logs.ac_input_w</code> をそのまま加算しない。基本式は <code>max(0, ac_input_w - abs(ac_output_w))</code> とし、SOC増分からより確実に蓄電量を推定できる場合はSOC増分を優先する。<code>ac_input_w</code> と <code>abs(ac_output_w)</code> が近いパススルー状態は、バッテリー充電実績ではなく負荷供給として扱い、PV捕捉量から除外する。</p>
+  <p>移行直後など補助機器履歴が不足する日、またはパススルーが多く実質充電量を判定できない日は <code>sample_quality=insufficient-data</code> にし、主機だけの値や生のAC入力値で全機器向け係数を出さない。</p>
+  <p>実充電量の集計では、深夜充電や買電によるAC充電をPV捕捉量に混ぜない。対象はPV有効時間帯に限定し、<code>export_w &gt; 0</code>、または <code>import_w == 0</code> かつ制御コマンド影響外のサンプルだけを採用する。夜間充電、買電中の充電、直近に充電制御コマンドが実行された区間は不足または除外として扱う。</p>
+
+  <h2>補正係数の算出</h2>
+  <ol>
+    <li>直近N日から <code>sample_quality=ok</code> の日を抽出する。</li>
+    <li>PV有効時間帯かつ非買電/売電寄りのサンプルから <code>actual_capture_factor</code> を計算する。</li>
+    <li>夜間充電、買電充電、制御コマンド直後の区間を除外する。</li>
+    <li>0未満、1超過、予測PVが極端に少ない日を除外する。</li>
+    <li><code>sample_quality=ok</code> の日数が <code>pv_charge_correction_min_sample_days</code> 未満なら、推奨値は <code>insufficient-samples</code> として適用不可にする。</li>
+    <li>閾値を満たした場合だけ、初期実装では直近OK日の平均を推奨値にする。</li>
+    <li>下限から上限の範囲に丸める。</li>
+  </ol>
+
+  <h2>機器別日中負荷とPV配分</h2>
+  <p>DELTA Pro 3 は既存どおり <code>power_logs.battery_output_w</code> の履歴から日中必要量を推定する。DELTA 3 Plus は初期実装では機器マスターの <code>expected_daytime_load_w</code> とPV有効時間から推定する。例として 400W が7時間続く場合は 2.8kWh とする。</p>
+  <pre>利用可能kWh = (capacity_wh / 1000) * max(0, (current_soc - backup_reserve_min_soc) / 100)</pre>
+  <p><code>backup_reserve_min_soc</code> は機器本体の最低放電残量ではなく、このシステムが放電方向に制御してよい下限として扱う。<code>backup_reserve_max_soc</code> は深夜充電で引き上げてもよい上限として扱う。</p>
+  <p>補正後PV充電見込みは全機器用の充電余力として扱う。推定余剰が 1.2kWh の場合も、DELTA Pro 3 だけでなく全機器で共有する値として扱い、優先順位順に不足機器へ割り当てる。</p>
+  <p>ただし、既存の <code>morningToPvStartLoadKwh</code> はPV有効時間が始まる前に必要な電力量として、PV割当前に深夜充電必要量へ確保する。朝7時以降からPV開始までの負荷は、日中のPVでは後から補えないため、補正後PV充電見込みから差し引かない。</p>
+  <p>さらに、既存plannerが確保している <code>estimatedMorningLoadKwh</code> と <code>safetyMarginKwh</code> も、深夜中から7時までの残り負荷と安全マージンとしてPV割当前に必ず確保する。</p>
+  <pre>深夜残り確保kWh = estimatedMorningLoadKwh + safetyMarginKwh
+朝PV開始前不足kWh = max(0, morningToPvStartLoadKwh - 現在利用可能量kWh)
+PVで相殺可能な不足kWh = max(0, 日中不足kWh - 朝PV開始前不足kWh)
+深夜で必ず確保するkWh = 深夜残り確保kWh + 朝PV開始前不足kWh</pre>
+  <p>最終的には、深夜残り確保、朝PV開始前不足、PV割当後も残る不足を深夜充電必要量にし、機器ごとの目標SOCへ変換する。</p>
+
+  <h2>深夜充電プランへの反映</h2>
+  <p><code>nightChargePlan</code> に補正係数、補正後PV見込み、補正元、推奨値、全体の日中必要量、利用可能量、不足量を追加する。推奨値には <code>recommendedFactor</code>、<code>okSampleDays</code>、<code>minSampleDays</code>、<code>applicable</code>、<code>status</code> を含める。JSON名は既存の <code>Kwh</code> 表記に合わせ、全体値は <code>totalDaytimeRequiredKwh</code>、<code>totalAvailableKwh</code>、<code>totalDeficitKwh</code> とする。補正後の深夜必要充電量は既存の <code>requiredNightChargeKwh</code> を更新し、別名フィールドは追加しない。機器別情報は既存の <code>devicePlans</code> を拡張し、<code>daytimeRequiredKwh</code>、<code>availableKwh</code>、<code>pvAllocatedKwh</code>、不足理由を持たせる。機器別の深夜必要量は既存の <code>requiredChargeKwh</code> を更新し、別名フィールドは追加しない。補正後の機器別目標は既存の <code>recommendedTargetSoc</code> / <code>recommendedTargetKwh</code> を更新し、<code>targetSoc</code> は機器マスター設定値として残す。制御判断では補正後のPV見込みを使い、補正前の予測値は表示用に残す。</p>
+
+  <h2>API</h2>
+  <ul>
+    <li><code>GET /api/status</code>: <code>nightChargePlan</code> に補正情報を追加する。</li>
+    <li><code>GET /api/pv-charge-correction</code>: 現在設定、推奨値、日次評価ログ、機器別の日中必要量、PV割当、既存 <code>requiredChargeKwh</code> に反映された深夜必要量を返す。</li>
+    <li><code>POST /api/pv-charge-correction</code>: UIから明示保存された補正値だけを更新する。係数は <code>pv_charge_correction_min_factor</code> から <code>pv_charge_correction_max_factor</code> の範囲で検証し、範囲外、NaN、無限大、数値でない入力は <code>400 Bad Request</code> とする。</li>
+  </ul>
+
+  <h2>UI</h2>
+  <p>設定ブロックに「PV充電補正」を追加し、現在値、推奨値、サンプル日数、補正前PV予測、補正後PV充電見込み、実充電量平均、推奨値適用ボタンを表示する。自動適用トグルは今回表示しない。</p>
+  <p>深夜充電プランには、全体の日中総必要量、全機器の利用可能量、全機器不足量、既存 <code>requiredNightChargeKwh</code> に反映された深夜必要充電量を表示する。機器別には、現在SOC、日中必要量、利用可能量、PV割当、既存 <code>requiredChargeKwh</code> に反映された深夜必要量、推奨目標SOC、不足理由を表示する。</p>
+
+  <h2>安全境界</h2>
+  <div class="note">
+    <ul>
+      <li>実機write条件は変更しない。</li>
+      <li>補正係数は深夜充電の目標計算にのみ影響する。</li>
+      <li>補正係数の変更履歴をログに残す。</li>
+      <li>初期値は保守的に0.7とし、予測PV全量を充電可能とは扱わない。</li>
+      <li>サンプル不足時は推奨値を適用不可にし、UIから適用できないようにする。</li>
+      <li>自動適用は今回追加しない。</li>
+      <li>機器別目標を計算したあとも、既存の制御ゲート、コマンド間隔、405/AC出力OFF抑止条件を維持する。</li>
+    </ul>
+  </div>
+
+  <h2>実装ステップ</h2>
+  <ol>
+    <li>domainにPV充電補正設定、推奨値、日次ログ型を追加する。</li>
+    <li>SQLiteマイグレーションで設定項目と日次ログテーブルを追加する。</li>
+    <li><code>charging_device_power_logs</code> を追加し、DELTA Pro 3 / DELTA 3 Plus の機器別SOC、AC入力、AC出力、AC充電上限を保存する。</li>
+    <li><code>night_charge_plan_logs</code> に補正係数、補正元、補正後PV見込み、全機器必要量/利用可能量/不足量を保存する。</li>
+    <li><code>power_logs</code>、<code>charging_device_power_logs</code>、既存の夜間充電プランログから日次評価ログを生成する repository/service を追加する。</li>
+    <li><code>charging_devices</code> に <code>expected_daytime_load_w</code> を追加し、domain/repository/API/UIで編集・表示できるようにする。</li>
+    <li>機器マスターから優先順位、<code>capacity_wh</code>、<code>backup_reserve_min_soc</code>、<code>backup_reserve_max_soc</code>、想定日中負荷Wを読み込み、機器別日中必要量を計算する。</li>
+    <li>DELTA Pro 3 は既存履歴、DELTA 3 Plus は初期実装では想定日中負荷Wを使う。</li>
+    <li>深夜残り負荷、安全マージン、朝PV開始前不足をPV割当前に深夜充電必要量として確保する。</li>
+    <li>補正後PV充電見込みを全機器に優先順位順で配分し、既存の <code>devicePlans</code> にPV割当、既存 <code>requiredChargeKwh</code> で表す深夜必要量、目標SOCを追加する。</li>
+    <li>深夜充電プランに補正係数と機器別計画を入力し、制御用PV見込みを補正後に差し替える。</li>
+    <li><code>/api/pv-charge-correction</code> のGET/POSTを追加する。</li>
+    <li>frontendの型、API、設定UI、深夜充電プラン表示を更新する。</li>
+    <li>単体テストを追加する。</li>
+    <li>build/test/reviewを実施する。</li>
+  </ol>
+
+  <h2>確認コマンド</h2>
+  <pre>cd backend &amp;&amp; rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build
+rtk git diff --check
+rtk codex review --uncommitted</pre>
+
+  <h2>レビューポイント</h2>
+  <ul>
+    <li>予測PV全量を充電可能として扱っていないか。</li>
+    <li>サンプル不足時に誤った推奨値を出していないか。</li>
+    <li>深夜充電や買電充電がPV捕捉量として混ざっていないか。</li>
+    <li>DELTA 3 Plus の実質充電量が補正係数の実績値から抜けていないか。</li>
+    <li>DELTA 3 Plus のパススルーAC入力をバッテリー充電実績として加算していないか。</li>
+    <li>自動適用が初期実装に紛れ込んでいないか。</li>
+    <li>実機writeゲートが緩んでいないか。</li>
+    <li>UIの「推奨値」と「現在設定値」が混ざって見えないか。</li>
+    <li>DELTA Pro 3 / DELTA 3 Plus の制御対象が機器マスター前提から逸脱していないか。</li>
+    <li>推定PV余剰をDELTA Pro 3専用として扱っていないか。</li>
+    <li>DELTA 3 Plus の400W級日中負荷が不足量に反映されているか。</li>
+    <li>深夜残り負荷、安全マージン、朝PV開始前不足がPV割当前に確保されているか。</li>
+    <li>目標SOCが <code>backup_reserve_min_soc</code> と <code>backup_reserve_max_soc</code> の範囲内に丸められているか。</li>
+    <li>既存の <code>devicePlans</code> を拡張しており、別名フィールドでUI表示が分裂していないか。</li>
+    <li>夜間制御ログに補正係数、補正元、補正後PV見込みが保存され、後から再現できるか。</li>
+  </ul>
+
+  <h2>運用メモ</h2>
+  <p>補正係数は、最初は手動で様子を見る。最低7日分のログが取れ、推奨値が安定してから自動適用を検討する。自動適用を追加する場合は、急激な変動を避けるため1日あたりの変更幅を制限し、別途レビューを通す。</p>
+  <p>DELTA 3 Plus の想定日中負荷は、初期値400Wを目安にする。ただし実際の接続機器や稼働状態で変わるため、機器マスターで変更できるようにし、将来は機器別AC出力ログの実績を優先できるようにする。</p>
+</body>
+</html>

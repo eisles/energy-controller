@@ -644,6 +644,327 @@ func TestApplyNightChargeDevicePlansBlocksDelta3DuringAuxMinimumCommandInterval(
 	}
 }
 
+func TestApplyNightChargeDevicePlansUsesForecastPVWindowForExpectedLoad(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:                    "NIGHT_CHARGE_WINDOW",
+		PVEffectiveStartAt:               "2026-05-20T10:00",
+		PVEffectiveEndAt:                 "2026-05-20T12:00",
+		CorrectedEstimatedPVToBatteryKWh: 0.3,
+		MinimumReserveSoc:                20,
+	}
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:              1,
+		Name:                  "DELTA 3 Plus",
+		Kind:                  "ecoflow_delta3_plus",
+		Enabled:               true,
+		ControlEnabled:        true,
+		CapacityWh:            2048,
+		CurrentSoc:            intPtr(20),
+		BackupReserveMinSoc:   20,
+		BackupReserveMaxSoc:   90,
+		ExpectedDaytimeLoadW:  400,
+		MaxChargeW:            1200,
+		SupportsACChargeLimit: true,
+		StatusAvailable:       true,
+	}}, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+
+	got := plan.DevicePlans[0]
+	if got.DaytimeRequiredKWh != 0.8 {
+		t.Fatalf("DaytimeRequiredKWh = %f, want 0.8 from 400W * 2h", got.DaytimeRequiredKWh)
+	}
+	if got.PVAllocatedKWh != 0.3 {
+		t.Fatalf("PVAllocatedKWh = %f, want 0.3", got.PVAllocatedKWh)
+	}
+}
+
+func TestApplyNightChargeDevicePlansIncludesHourlyRadiationEndSample(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:                    "NIGHT_CHARGE_WINDOW",
+		PVEffectiveStartAt:               "2026-05-20T10:00",
+		PVEffectiveEndAt:                 "2026-05-20T12:00",
+		PVEffectiveWindowSource:          "hourly-radiation",
+		CorrectedEstimatedPVToBatteryKWh: 1.2,
+		MinimumReserveSoc:                20,
+	}
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:              1,
+		Name:                  "DELTA 3 Plus",
+		Kind:                  "ecoflow_delta3_plus",
+		Enabled:               true,
+		ControlEnabled:        true,
+		CapacityWh:            2048,
+		CurrentSoc:            intPtr(20),
+		BackupReserveMinSoc:   20,
+		BackupReserveMaxSoc:   90,
+		ExpectedDaytimeLoadW:  400,
+		MaxChargeW:            1200,
+		SupportsACChargeLimit: true,
+		StatusAvailable:       true,
+	}}, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+
+	got := plan.DevicePlans[0]
+	if got.DaytimeRequiredKWh != 1.2 {
+		t.Fatalf("DaytimeRequiredKWh = %f, want 1.2 from three hourly radiation samples", got.DaytimeRequiredKWh)
+	}
+}
+
+func TestApplyNightChargeDevicePlansIsIdempotentForAggregateTotals(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:                    "NIGHT_CHARGE_WINDOW",
+		PVEffectiveStartAt:               "2026-05-20T09:00",
+		PVEffectiveEndAt:                 "2026-05-20T16:00",
+		CorrectedEstimatedPVToBatteryKWh: 0.4,
+		MinimumReserveSoc:                20,
+	}
+	devices := []NightChargeDeviceInput{{
+		DeviceID:              1,
+		Name:                  "DELTA 3 Plus",
+		Kind:                  "ecoflow_delta3_plus",
+		Enabled:               true,
+		ControlEnabled:        true,
+		CapacityWh:            2048,
+		CurrentSoc:            intPtr(40),
+		BackupReserveMinSoc:   20,
+		BackupReserveMaxSoc:   90,
+		ExpectedDaytimeLoadW:  200,
+		MaxChargeW:            1200,
+		SupportsACChargeLimit: true,
+		StatusAvailable:       true,
+	}}
+
+	ApplyNightChargeDevicePlans(plan, devices, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+	firstRequired := plan.TotalDaytimeRequiredKWh
+	firstAvailable := plan.TotalAvailableKWh
+	firstDeficit := plan.TotalDeficitKWh
+	ApplyNightChargeDevicePlans(plan, devices, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+
+	if plan.TotalDaytimeRequiredKWh != firstRequired || plan.TotalAvailableKWh != firstAvailable || plan.TotalDeficitKWh != firstDeficit {
+		t.Fatalf("aggregate totals changed on second apply: first %.3f/%.3f/%.3f, second %.3f/%.3f/%.3f",
+			firstRequired, firstAvailable, firstDeficit,
+			plan.TotalDaytimeRequiredKWh, plan.TotalAvailableKWh, plan.TotalDeficitKWh)
+	}
+}
+
+func TestApplyNightChargeDevicePlansDoesNotDoubleAllocateAfterPVDistribution(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:                    "NIGHT_CHARGE_WINDOW",
+		PVEffectiveStartAt:               "2026-05-20T09:00",
+		PVEffectiveEndAt:                 "2026-05-20T16:00",
+		EstimatedMorningLoadKWh:          0.1,
+		SafetyMarginKWh:                  0.1,
+		CorrectedEstimatedPVToBatteryKWh: 0.0,
+		RecommendedNightTargetKWh:        0.4,
+		MinimumReserveSoc:                20,
+	}
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:              1,
+		Name:                  "DELTA 3 Plus",
+		Kind:                  "ecoflow_delta3_plus",
+		Enabled:               true,
+		ControlEnabled:        true,
+		CapacityWh:            2048,
+		CurrentSoc:            intPtr(20),
+		BackupReserveMinSoc:   20,
+		BackupReserveMaxSoc:   90,
+		ExpectedDaytimeLoadW:  100,
+		MaxChargeW:            1200,
+		SupportsACChargeLimit: true,
+		StatusAvailable:       true,
+	}}, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+
+	got := plan.DevicePlans[0]
+	if got.RecommendedTargetSoc >= 90 {
+		t.Fatalf("RecommendedTargetSoc = %d, want below max; PV distribution should not be added twice", got.RecommendedTargetSoc)
+	}
+}
+
+func TestApplyNightChargeDevicePlansDoesNotAllocatePVToBlockedDevice(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:                    "NIGHT_CHARGE_WINDOW",
+		PVEffectiveStartAt:               "2026-05-20T09:00",
+		PVEffectiveEndAt:                 "2026-05-20T16:00",
+		CorrectedEstimatedPVToBatteryKWh: 2.0,
+		MinimumReserveSoc:                20,
+	}
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{
+		{
+			DeviceID:              1,
+			Name:                  "blocked DELTA 3 Plus",
+			Kind:                  "ecoflow_delta3_plus",
+			Priority:              1,
+			Enabled:               true,
+			ControlEnabled:        false,
+			CapacityWh:            2048,
+			CurrentSoc:            intPtr(20),
+			BackupReserveMinSoc:   20,
+			BackupReserveMaxSoc:   90,
+			ExpectedDaytimeLoadW:  400,
+			MaxChargeW:            1200,
+			SupportsACChargeLimit: true,
+			StatusAvailable:       true,
+		},
+		{
+			DeviceID:              2,
+			Name:                  "controllable DELTA 3 Plus",
+			Kind:                  "ecoflow_delta3_plus",
+			Priority:              2,
+			Enabled:               true,
+			ControlEnabled:        true,
+			CapacityWh:            2048,
+			CurrentSoc:            intPtr(20),
+			BackupReserveMinSoc:   20,
+			BackupReserveMaxSoc:   90,
+			ExpectedDaytimeLoadW:  400,
+			MaxChargeW:            1200,
+			SupportsACChargeLimit: true,
+			StatusAvailable:       true,
+		},
+	}, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+
+	if len(plan.DevicePlans) != 2 {
+		t.Fatalf("DevicePlans len = %d, want 2", len(plan.DevicePlans))
+	}
+	if plan.DevicePlans[0].PVAllocatedKWh != 0 {
+		t.Fatalf("blocked PVAllocatedKWh = %f, want 0", plan.DevicePlans[0].PVAllocatedKWh)
+	}
+	if plan.DevicePlans[1].PVAllocatedKWh <= 0 {
+		t.Fatalf("controllable PVAllocatedKWh = %f, want > 0", plan.DevicePlans[1].PVAllocatedKWh)
+	}
+}
+
+func TestApplyNightChargeDevicePlansUsesExistingAvailableEnergyBeforeRaisingTarget(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:           "NIGHT_CHARGE_WINDOW",
+		PVEffectiveStartAt:      "2026-05-20T09:00",
+		PVEffectiveEndAt:        "2026-05-20T16:00",
+		MinimumReserveSoc:       20,
+		SafetyMarginKWh:         0.1,
+		EstimatedMorningLoadKWh: 0.1,
+	}
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:              1,
+		Name:                  "DELTA 3 Plus",
+		Kind:                  "ecoflow_delta3_plus",
+		Enabled:               true,
+		ControlEnabled:        true,
+		CapacityWh:            2048,
+		CurrentSoc:            intPtr(50),
+		BackupReserveMinSoc:   20,
+		BackupReserveMaxSoc:   90,
+		ExpectedDaytimeLoadW:  50,
+		MaxChargeW:            1200,
+		SupportsACChargeLimit: true,
+		StatusAvailable:       true,
+	}}, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+
+	got := plan.DevicePlans[0]
+	if got.RecommendedTargetSoc != 50 {
+		t.Fatalf("RecommendedTargetSoc = %d, want current SOC 50 because available energy covers need", got.RecommendedTargetSoc)
+	}
+	if got.ShouldCharge {
+		t.Fatalf("ShouldCharge = true, want false: %+v", got)
+	}
+}
+
+func TestApplyNightChargeDevicePlansAddsResidualNeedToCurrentEnergy(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:      "NIGHT_CHARGE_WINDOW",
+		PVEffectiveStartAt: "2026-05-20T09:00",
+		PVEffectiveEndAt:   "2026-05-20T16:00",
+		MinimumReserveSoc:  20,
+	}
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:              1,
+		Name:                  "DELTA 3 Plus",
+		Kind:                  "ecoflow_delta3_plus",
+		Enabled:               true,
+		ControlEnabled:        true,
+		CapacityWh:            2048,
+		CurrentSoc:            intPtr(50),
+		BackupReserveMinSoc:   20,
+		BackupReserveMaxSoc:   90,
+		ExpectedDaytimeLoadW:  200,
+		MaxChargeW:            1200,
+		SupportsACChargeLimit: true,
+		StatusAvailable:       true,
+	}}, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+
+	got := plan.DevicePlans[0]
+	if got.RecommendedTargetSoc < 88 {
+		t.Fatalf("RecommendedTargetSoc = %d, want around 89; residual load must be added to current energy", got.RecommendedTargetSoc)
+	}
+}
+
+func TestApplyNightChargeDevicePlansUsesAvailableEnergyForPrePVLoad(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:           "NIGHT_CHARGE_WINDOW",
+		PVEffectiveStartAt:      "2026-05-20T10:00",
+		PVEffectiveEndAt:        "2026-05-20T11:00",
+		MorningToPVStartLoadKWh: 0.3,
+		MinimumReserveSoc:       20,
+	}
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:              1,
+		Name:                  "DELTA 3 Plus",
+		Kind:                  "ecoflow_delta3_plus",
+		Enabled:               true,
+		ControlEnabled:        true,
+		CapacityWh:            2048,
+		CurrentSoc:            intPtr(50),
+		BackupReserveMinSoc:   20,
+		BackupReserveMaxSoc:   90,
+		ExpectedDaytimeLoadW:  100,
+		MaxChargeW:            1200,
+		SupportsACChargeLimit: true,
+		StatusAvailable:       true,
+	}}, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+
+	got := plan.DevicePlans[0]
+	if got.MorningPrePVRequiredKWh != 0.1 {
+		t.Fatalf("MorningPrePVRequiredKWh = %f, want 0.1 capped by daytime need", got.MorningPrePVRequiredKWh)
+	}
+	if got.RecommendedTargetSoc != 50 {
+		t.Fatalf("RecommendedTargetSoc = %d, want current SOC because available energy covers pre-PV load", got.RecommendedTargetSoc)
+	}
+}
+
+func TestApplyNightChargeDevicePlansTreatsSingleHourPVWindowAsOneHour(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:      "NIGHT_CHARGE_WINDOW",
+		PVEffectiveStartAt: "2026-05-20T10:00",
+		PVEffectiveEndAt:   "2026-05-20T10:00",
+		MinimumReserveSoc:  20,
+	}
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:              1,
+		Name:                  "DELTA 3 Plus",
+		Kind:                  "ecoflow_delta3_plus",
+		Enabled:               true,
+		ControlEnabled:        true,
+		CapacityWh:            2048,
+		CurrentSoc:            intPtr(20),
+		BackupReserveMinSoc:   20,
+		BackupReserveMaxSoc:   90,
+		ExpectedDaytimeLoadW:  400,
+		MaxChargeW:            1200,
+		SupportsACChargeLimit: true,
+		StatusAvailable:       true,
+	}}, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+
+	got := plan.DevicePlans[0]
+	if got.DaytimeRequiredKWh != 0.4 {
+		t.Fatalf("DaytimeRequiredKWh = %f, want 0.4 from one-hour PV window", got.DaytimeRequiredKWh)
+	}
+}
+
 func allowedNightChargeDeviceWriteGuard() NightChargeDeviceWriteGuard {
 	return NightChargeDeviceWriteGuard{
 		EnableRealControl:       true,

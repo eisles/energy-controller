@@ -17,7 +17,12 @@ const fallbackLocation: WeatherLocation = {
   pvPerformanceRatio: 0.75,
   dailyBaseLoadKwh: 0,
   batteryCapacityKwh: 4.096,
-  minimumReserveSoc: 30
+  minimumReserveSoc: 30,
+  pvChargeCorrectionFactor: 0.7,
+  pvChargeCorrectionManual: false,
+  pvChargeCorrectionMinSampleDays: 7,
+  pvChargeCorrectionMinFactor: 0.2,
+  pvChargeCorrectionMaxFactor: 0.9
 };
 
 export function WeatherLocationPanel() {
@@ -108,7 +113,7 @@ export function WeatherLocationPanel() {
             {location.enabled ? `${formatCoord(location.latitude)}, ${formatCoord(location.longitude)}` : "未設定"}
           </p>
           <p className="readonly-note">
-            PV {formatKwh(location.pvCapacityKw)} kW / 補正 {formatRatio(location.pvPerformanceRatio)} / Battery {formatKwh(location.batteryCapacityKwh)} kWh
+            PV {formatKwh(location.pvCapacityKw)} kW / 損失補正 {formatRatio(location.pvPerformanceRatio)} / 充電補正 {formatRatio(location.pvChargeCorrectionFactor)} / Battery {formatKwh(location.batteryCapacityKwh)} kWh
           </p>
           <p className="readonly-note">状態: {status}</p>
           <Button type="button" variant="outline" onClick={() => setOpen(true)}>
@@ -199,6 +204,28 @@ export function WeatherLocationPanel() {
                 </FormControl>
                 <FormDescription>方角、傾斜、温度、パワコン損失などの概算係数です。</FormDescription>
               </FormItem>
+              <FormItem>
+                <FormLabel htmlFor="pv-charge-correction-factor">PV充電補正</FormLabel>
+                <FormControl>
+                  <input
+                    id="pv-charge-correction-factor"
+                    className="text-input"
+                    type="number"
+                    min={String(location.pvChargeCorrectionMinFactor || 0.2)}
+                    max={String(location.pvChargeCorrectionMaxFactor || 0.9)}
+                    step="0.01"
+                    value={String(location.pvChargeCorrectionFactor)}
+                    onChange={(event) => setLocation((current) => ({ ...current, pvChargeCorrectionFactor: Number(event.target.value), pvChargeCorrectionManual: true }))}
+                  />
+                </FormControl>
+                <FormDescription>予測PV発電のうち、実際に充電へ回せる割合です。まずは手動適用のみで保存します。</FormDescription>
+              </FormItem>
+              <div className="estimate-grid" aria-label="pv charge correction settings">
+                <DetailText label="補正方式" value={location.pvChargeCorrectionManual ? "手動" : "既定"} />
+                <DetailText label="下限" value={formatRatio(location.pvChargeCorrectionMinFactor)} />
+                <DetailText label="上限" value={formatRatio(location.pvChargeCorrectionMaxFactor)} />
+                <DetailText label="推奨必要日数" value={`${location.pvChargeCorrectionMinSampleDays} 日`} />
+              </div>
               <FormItem>
                 <FormLabel htmlFor="daily-base-load">日中消費 kWh</FormLabel>
                 <FormControl>
@@ -341,8 +368,22 @@ function normalizeLocation(location: WeatherLocation): WeatherLocation {
     pvPerformanceRatio: finiteOr(location.pvPerformanceRatio, fallbackLocation.pvPerformanceRatio),
     dailyBaseLoadKwh: finiteOr(location.dailyBaseLoadKwh, fallbackLocation.dailyBaseLoadKwh),
     batteryCapacityKwh: finiteOr(location.batteryCapacityKwh, fallbackLocation.batteryCapacityKwh),
-    minimumReserveSoc: Math.round(finiteOr(location.minimumReserveSoc, fallbackLocation.minimumReserveSoc))
+    minimumReserveSoc: Math.round(finiteOr(location.minimumReserveSoc, fallbackLocation.minimumReserveSoc)),
+    pvChargeCorrectionFactor: clamp(
+      finiteOr(location.pvChargeCorrectionFactor, fallbackLocation.pvChargeCorrectionFactor),
+      finiteOr(location.pvChargeCorrectionMinFactor, fallbackLocation.pvChargeCorrectionMinFactor),
+      finiteOr(location.pvChargeCorrectionMaxFactor, fallbackLocation.pvChargeCorrectionMaxFactor)
+    ),
+    pvChargeCorrectionManual: Boolean(location.pvChargeCorrectionManual),
+    pvChargeCorrectionUpdatedAt: location.pvChargeCorrectionUpdatedAt,
+    pvChargeCorrectionMinSampleDays: Math.max(1, Math.round(finiteOr(location.pvChargeCorrectionMinSampleDays, fallbackLocation.pvChargeCorrectionMinSampleDays))),
+    pvChargeCorrectionMinFactor: clamp(finiteOr(location.pvChargeCorrectionMinFactor, fallbackLocation.pvChargeCorrectionMinFactor), 0.01, 1),
+    pvChargeCorrectionMaxFactor: clamp(finiteOr(location.pvChargeCorrectionMaxFactor, fallbackLocation.pvChargeCorrectionMaxFactor), 0.01, 1)
   };
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function mapTiles(latitude: number, longitude: number, zoom: number) {

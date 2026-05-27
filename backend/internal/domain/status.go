@@ -145,15 +145,21 @@ type SolarForecastSummary struct {
 }
 
 type WeatherLocation struct {
-	Enabled            bool    `json:"enabled"`
-	Latitude           float64 `json:"latitude"`
-	Longitude          float64 `json:"longitude"`
-	Timezone           string  `json:"timezone"`
-	PVCapacityKW       float64 `json:"pvCapacityKw"`
-	PVPerformanceRatio float64 `json:"pvPerformanceRatio"`
-	DailyBaseLoadKWh   float64 `json:"dailyBaseLoadKwh"`
-	BatteryCapacityKWh float64 `json:"batteryCapacityKwh"`
-	MinimumReserveSoc  int     `json:"minimumReserveSoc"`
+	Enabled                         bool    `json:"enabled"`
+	Latitude                        float64 `json:"latitude"`
+	Longitude                       float64 `json:"longitude"`
+	Timezone                        string  `json:"timezone"`
+	PVCapacityKW                    float64 `json:"pvCapacityKw"`
+	PVPerformanceRatio              float64 `json:"pvPerformanceRatio"`
+	DailyBaseLoadKWh                float64 `json:"dailyBaseLoadKwh"`
+	BatteryCapacityKWh              float64 `json:"batteryCapacityKwh"`
+	MinimumReserveSoc               int     `json:"minimumReserveSoc"`
+	PVChargeCorrectionFactor        float64 `json:"pvChargeCorrectionFactor"`
+	PVChargeCorrectionManual        bool    `json:"pvChargeCorrectionManual"`
+	PVChargeCorrectionUpdatedAt     string  `json:"pvChargeCorrectionUpdatedAt,omitempty"`
+	PVChargeCorrectionMinSampleDays int     `json:"pvChargeCorrectionMinSampleDays"`
+	PVChargeCorrectionMinFactor     float64 `json:"pvChargeCorrectionMinFactor"`
+	PVChargeCorrectionMaxFactor     float64 `json:"pvChargeCorrectionMaxFactor"`
 }
 
 type DaytimeConsumptionEstimate struct {
@@ -214,58 +220,74 @@ type DailyDaytimeConsumptionEstimate struct {
 }
 
 type NightChargePlan struct {
-	Mode                         string                  `json:"mode"`
-	StrategyState                string                  `json:"strategyState"`
-	SolarForecastScore           int                     `json:"solarForecastScore"`
-	SolarRadiationKWhPerM2       float64                 `json:"solarRadiationKwhPerM2"`
-	EstimatedPVKWh               float64                 `json:"estimatedPvKwh"`
-	DailyEstimatedPVKWh          float64                 `json:"dailyEstimatedPvKwh"`
-	PVEffectiveStartAt           string                  `json:"pvEffectiveStartAt,omitempty"`
-	PVEffectiveEndAt             string                  `json:"pvEffectiveEndAt,omitempty"`
-	PVEffectiveWindowSource      string                  `json:"pvEffectiveWindowSource,omitempty"`
-	PVEffectiveRadiationWPerM2   float64                 `json:"pvEffectiveRadiationWPerM2,omitempty"`
-	MorningToPVStartLoadKWh      float64                 `json:"morningToPvStartLoadKwh"`
-	PVUsableForEcoFlowKWh        float64                 `json:"pvUsableForEcoFlowKwh"`
-	ForecastDaytimeDeficitKWh    float64                 `json:"forecastDaytimeDeficitKwh"`
-	EstimatedDaytimeLoadKWh      float64                 `json:"estimatedDaytimeLoadKwh"`
-	EstimatedMorningLoadKWh      float64                 `json:"estimatedMorningLoadKwh"`
-	EstimatedSurplusKWh          float64                 `json:"estimatedSurplusKwh"`
-	EstimatedDeficitKWh          float64                 `json:"estimatedDeficitKwh"`
-	EstimatedPVToBatteryKWh      float64                 `json:"estimatedPvToBatteryKwh"`
-	SafetyMarginKWh              float64                 `json:"safetyMarginKwh"`
-	BatteryCapacityKWh           float64                 `json:"batteryCapacityKwh"`
-	CurrentBatteryEnergyKWh      float64                 `json:"currentBatteryEnergyKwh"`
-	BatteryChargeHeadroomKWh     float64                 `json:"batteryChargeHeadroomKwh"`
-	TotalDeviceCapacityKWh       float64                 `json:"totalDeviceCapacityKwh"`
-	TotalCurrentDeviceEnergyKWh  float64                 `json:"totalCurrentDeviceEnergyKwh"`
-	TotalRecommendedTargetKWh    float64                 `json:"totalRecommendedTargetKwh"`
-	TotalRequiredDeviceChargeKWh float64                 `json:"totalRequiredDeviceChargeKwh"`
-	RecommendedNightTargetKWh    float64                 `json:"recommendedNightTargetKwh"`
-	MinimumReserveKWh            float64                 `json:"minimumReserveKwh"`
-	RequiredNightChargeKWh       float64                 `json:"requiredNightChargeKwh"`
-	BatteryCapacitySource        string                  `json:"batteryCapacitySource"`
-	ConsumptionSource            string                  `json:"consumptionSource"`
-	RecommendedMode              string                  `json:"recommendedMode"`
-	RecommendedACChargeLimitW    int                     `json:"recommendedAcChargeLimitW"`
-	RecommendedBackupReserveSoc  *int                    `json:"recommendedBackupReserveSoc,omitempty"`
-	RecommendedNightTargetSoc    int                     `json:"recommendedNightTargetSoc"`
-	MinimumReserveSoc            int                     `json:"minimumReserveSoc"`
-	ShouldChargeTonight          bool                    `json:"shouldChargeTonight"`
-	ShouldSetACChargeLimit       bool                    `json:"shouldSetAcChargeLimit"`
-	ShouldSetBackupReserve       bool                    `json:"shouldSetBackupReserve"`
-	ShouldDisableEnergyModes     bool                    `json:"shouldDisableEnergyModes"`
-	ShouldEnableTOUMode          bool                    `json:"shouldEnableTouMode"`
-	ShouldEnableSelfPoweredMode  bool                    `json:"shouldEnableSelfPoweredMode"`
-	CommandSuppressed            bool                    `json:"commandSuppressed"`
-	CommandFingerprint           string                  `json:"commandFingerprint"`
-	CommandBlockReason           string                  `json:"commandBlockReason"`
-	CommandSent                  bool                    `json:"commandSent"`
-	CommandError                 *string                 `json:"commandError,omitempty"`
-	WouldWrite                   bool                    `json:"wouldWrite"`
-	ActionSummary                string                  `json:"actionSummary"`
-	Reason                       string                  `json:"reason"`
-	TargetForecast               *WeatherForecast        `json:"targetForecast,omitempty"`
-	DevicePlans                  []NightChargeDevicePlan `json:"devicePlans,omitempty"`
+	Mode                             string                            `json:"mode"`
+	StrategyState                    string                            `json:"strategyState"`
+	SolarForecastScore               int                               `json:"solarForecastScore"`
+	SolarRadiationKWhPerM2           float64                           `json:"solarRadiationKwhPerM2"`
+	EstimatedPVKWh                   float64                           `json:"estimatedPvKwh"`
+	DailyEstimatedPVKWh              float64                           `json:"dailyEstimatedPvKwh"`
+	PVChargeCorrectionFactor         float64                           `json:"pvChargeCorrectionFactor"`
+	PVChargeCorrectionSource         string                            `json:"pvChargeCorrectionSource"`
+	CorrectedEstimatedPVKWh          float64                           `json:"correctedEstimatedPvKwh"`
+	CorrectedEstimatedPVToBatteryKWh float64                           `json:"correctedEstimatedPvToBatteryKwh"`
+	PVChargeCorrectionRecommendation *PVChargeCorrectionRecommendation `json:"pvChargeCorrectionRecommendation,omitempty"`
+	PVEffectiveStartAt               string                            `json:"pvEffectiveStartAt,omitempty"`
+	PVEffectiveEndAt                 string                            `json:"pvEffectiveEndAt,omitempty"`
+	PVEffectiveWindowSource          string                            `json:"pvEffectiveWindowSource,omitempty"`
+	PVEffectiveRadiationWPerM2       float64                           `json:"pvEffectiveRadiationWPerM2,omitempty"`
+	MorningToPVStartLoadKWh          float64                           `json:"morningToPvStartLoadKwh"`
+	PVUsableForEcoFlowKWh            float64                           `json:"pvUsableForEcoFlowKwh"`
+	ForecastDaytimeDeficitKWh        float64                           `json:"forecastDaytimeDeficitKwh"`
+	EstimatedDaytimeLoadKWh          float64                           `json:"estimatedDaytimeLoadKwh"`
+	EstimatedMorningLoadKWh          float64                           `json:"estimatedMorningLoadKwh"`
+	EstimatedSurplusKWh              float64                           `json:"estimatedSurplusKwh"`
+	EstimatedDeficitKWh              float64                           `json:"estimatedDeficitKwh"`
+	EstimatedPVToBatteryKWh          float64                           `json:"estimatedPvToBatteryKwh"`
+	SafetyMarginKWh                  float64                           `json:"safetyMarginKwh"`
+	BatteryCapacityKWh               float64                           `json:"batteryCapacityKwh"`
+	CurrentBatteryEnergyKWh          float64                           `json:"currentBatteryEnergyKwh"`
+	BatteryChargeHeadroomKWh         float64                           `json:"batteryChargeHeadroomKwh"`
+	TotalDeviceCapacityKWh           float64                           `json:"totalDeviceCapacityKwh"`
+	TotalCurrentDeviceEnergyKWh      float64                           `json:"totalCurrentDeviceEnergyKwh"`
+	TotalRecommendedTargetKWh        float64                           `json:"totalRecommendedTargetKwh"`
+	TotalRequiredDeviceChargeKWh     float64                           `json:"totalRequiredDeviceChargeKwh"`
+	TotalDaytimeRequiredKWh          float64                           `json:"totalDaytimeRequiredKwh"`
+	TotalAvailableKWh                float64                           `json:"totalAvailableKwh"`
+	TotalDeficitKWh                  float64                           `json:"totalDeficitKwh"`
+	RecommendedNightTargetKWh        float64                           `json:"recommendedNightTargetKwh"`
+	MinimumReserveKWh                float64                           `json:"minimumReserveKwh"`
+	RequiredNightChargeKWh           float64                           `json:"requiredNightChargeKwh"`
+	BatteryCapacitySource            string                            `json:"batteryCapacitySource"`
+	ConsumptionSource                string                            `json:"consumptionSource"`
+	RecommendedMode                  string                            `json:"recommendedMode"`
+	RecommendedACChargeLimitW        int                               `json:"recommendedAcChargeLimitW"`
+	RecommendedBackupReserveSoc      *int                              `json:"recommendedBackupReserveSoc,omitempty"`
+	RecommendedNightTargetSoc        int                               `json:"recommendedNightTargetSoc"`
+	MinimumReserveSoc                int                               `json:"minimumReserveSoc"`
+	ShouldChargeTonight              bool                              `json:"shouldChargeTonight"`
+	ShouldSetACChargeLimit           bool                              `json:"shouldSetAcChargeLimit"`
+	ShouldSetBackupReserve           bool                              `json:"shouldSetBackupReserve"`
+	ShouldDisableEnergyModes         bool                              `json:"shouldDisableEnergyModes"`
+	ShouldEnableTOUMode              bool                              `json:"shouldEnableTouMode"`
+	ShouldEnableSelfPoweredMode      bool                              `json:"shouldEnableSelfPoweredMode"`
+	CommandSuppressed                bool                              `json:"commandSuppressed"`
+	CommandFingerprint               string                            `json:"commandFingerprint"`
+	CommandBlockReason               string                            `json:"commandBlockReason"`
+	CommandSent                      bool                              `json:"commandSent"`
+	CommandError                     *string                           `json:"commandError,omitempty"`
+	WouldWrite                       bool                              `json:"wouldWrite"`
+	ActionSummary                    string                            `json:"actionSummary"`
+	Reason                           string                            `json:"reason"`
+	TargetForecast                   *WeatherForecast                  `json:"targetForecast,omitempty"`
+	DevicePlans                      []NightChargeDevicePlan           `json:"devicePlans,omitempty"`
+}
+
+type PVChargeCorrectionRecommendation struct {
+	RecommendedFactor float64 `json:"recommendedFactor"`
+	OKSampleDays      int     `json:"okSampleDays"`
+	MinSampleDays     int     `json:"minSampleDays"`
+	Applicable        bool    `json:"applicable"`
+	Status            string  `json:"status"`
 }
 
 type NightChargeDevicePlan struct {
@@ -277,6 +299,10 @@ type NightChargeDevicePlan struct {
 	CapacityKWh               float64 `json:"capacityKwh"`
 	CurrentSoc                *int    `json:"currentSoc,omitempty"`
 	CurrentEnergyKWh          float64 `json:"currentEnergyKwh"`
+	DaytimeRequiredKWh        float64 `json:"daytimeRequiredKwh"`
+	AvailableKWh              float64 `json:"availableKwh"`
+	PVAllocatedKWh            float64 `json:"pvAllocatedKwh"`
+	MorningPrePVRequiredKWh   float64 `json:"morningPrePvRequiredKwh"`
 	ReserveSoc                int     `json:"reserveSoc"`
 	TargetSoc                 int     `json:"targetSoc"`
 	MinTargetSoc              int     `json:"minTargetSoc"`
@@ -289,39 +315,47 @@ type NightChargeDevicePlan struct {
 	WouldWrite                bool    `json:"wouldWrite"`
 	BlockReason               string  `json:"blockReason"`
 	DataSource                string  `json:"dataSource"`
+	Reason                    string  `json:"reason"`
 }
 
 type NightChargePlanLog struct {
-	ID                        int64     `json:"id"`
-	MeasuredAt                time.Time `json:"measuredAt"`
-	StrategyState             string    `json:"strategyState"`
-	RecommendedMode           string    `json:"recommendedMode"`
-	RecommendedNightTargetSoc int       `json:"recommendedNightTargetSoc"`
-	RecommendedNightTargetKWh float64   `json:"recommendedNightTargetKwh"`
-	CurrentBatteryEnergyKWh   float64   `json:"currentBatteryEnergyKwh"`
-	RequiredNightChargeKWh    float64   `json:"requiredNightChargeKwh"`
-	DailyEstimatedPVKWh       float64   `json:"dailyEstimatedPvKwh"`
-	PVEffectiveStartAt        string    `json:"pvEffectiveStartAt"`
-	PVEffectiveEndAt          string    `json:"pvEffectiveEndAt"`
-	PVEffectiveWindowSource   string    `json:"pvEffectiveWindowSource"`
-	MorningToPVStartLoadKWh   float64   `json:"morningToPvStartLoadKwh"`
-	ForecastDaytimeDeficitKWh float64   `json:"forecastDaytimeDeficitKwh"`
-	BatterySoc                int       `json:"batterySoc"`
-	BatteryInputW             int       `json:"batteryInputW"`
-	BatteryOutputW            int       `json:"batteryOutputW"`
-	GridW                     int       `json:"gridW"`
-	ImportW                   int       `json:"importW"`
-	ExportW                   int       `json:"exportW"`
-	ShouldChargeTonight       bool      `json:"shouldChargeTonight"`
-	WouldWrite                bool      `json:"wouldWrite"`
-	CommandFingerprint        string    `json:"commandFingerprint"`
-	CommandSent               bool      `json:"commandSent"`
-	CommandError              *string   `json:"commandError,omitempty"`
-	CommandBlockReason        string    `json:"commandBlockReason"`
-	ActionSummary             string    `json:"actionSummary"`
-	Reason                    string    `json:"reason"`
-	TargetForecastDate        *string   `json:"targetForecastDate,omitempty"`
-	CreatedAt                 time.Time `json:"createdAt"`
+	ID                               int64     `json:"id"`
+	MeasuredAt                       time.Time `json:"measuredAt"`
+	StrategyState                    string    `json:"strategyState"`
+	RecommendedMode                  string    `json:"recommendedMode"`
+	RecommendedNightTargetSoc        int       `json:"recommendedNightTargetSoc"`
+	RecommendedNightTargetKWh        float64   `json:"recommendedNightTargetKwh"`
+	CurrentBatteryEnergyKWh          float64   `json:"currentBatteryEnergyKwh"`
+	RequiredNightChargeKWh           float64   `json:"requiredNightChargeKwh"`
+	DailyEstimatedPVKWh              float64   `json:"dailyEstimatedPvKwh"`
+	PVChargeCorrectionFactor         float64   `json:"pvChargeCorrectionFactor"`
+	PVChargeCorrectionSource         string    `json:"pvChargeCorrectionSource"`
+	CorrectedEstimatedPVKWh          float64   `json:"correctedEstimatedPvKwh"`
+	CorrectedEstimatedPVToBatteryKWh float64   `json:"correctedEstimatedPvToBatteryKwh"`
+	TotalDaytimeRequiredKWh          float64   `json:"totalDaytimeRequiredKwh"`
+	TotalAvailableKWh                float64   `json:"totalAvailableKwh"`
+	TotalDeficitKWh                  float64   `json:"totalDeficitKwh"`
+	PVEffectiveStartAt               string    `json:"pvEffectiveStartAt"`
+	PVEffectiveEndAt                 string    `json:"pvEffectiveEndAt"`
+	PVEffectiveWindowSource          string    `json:"pvEffectiveWindowSource"`
+	MorningToPVStartLoadKWh          float64   `json:"morningToPvStartLoadKwh"`
+	ForecastDaytimeDeficitKWh        float64   `json:"forecastDaytimeDeficitKwh"`
+	BatterySoc                       int       `json:"batterySoc"`
+	BatteryInputW                    int       `json:"batteryInputW"`
+	BatteryOutputW                   int       `json:"batteryOutputW"`
+	GridW                            int       `json:"gridW"`
+	ImportW                          int       `json:"importW"`
+	ExportW                          int       `json:"exportW"`
+	ShouldChargeTonight              bool      `json:"shouldChargeTonight"`
+	WouldWrite                       bool      `json:"wouldWrite"`
+	CommandFingerprint               string    `json:"commandFingerprint"`
+	CommandSent                      bool      `json:"commandSent"`
+	CommandError                     *string   `json:"commandError,omitempty"`
+	CommandBlockReason               string    `json:"commandBlockReason"`
+	ActionSummary                    string    `json:"actionSummary"`
+	Reason                           string    `json:"reason"`
+	TargetForecastDate               *string   `json:"targetForecastDate,omitempty"`
+	CreatedAt                        time.Time `json:"createdAt"`
 }
 
 type NightChargeDailySummary struct {

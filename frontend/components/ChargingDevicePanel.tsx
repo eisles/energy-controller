@@ -29,6 +29,7 @@ const emptyDevice: ChargingDevice = {
   reserveSoc: 20,
   backupReserveMinSoc: 20,
   backupReserveMaxSoc: 90,
+  expectedDaytimeLoadW: 400,
   supportsSocRead: true,
   supportsAcChargeLimit: true,
   supportsOnOff: true,
@@ -180,6 +181,7 @@ export function ChargingDevicePanel() {
                     <TableHead>優先</TableHead>
                     <TableHead>機器</TableHead>
                     <TableHead>充電範囲</TableHead>
+                    <TableHead>想定負荷</TableHead>
                     <TableHead>状態</TableHead>
                     <TableHead>識別</TableHead>
                     <TableHead>取得方式</TableHead>
@@ -190,7 +192,7 @@ export function ChargingDevicePanel() {
                 <TableBody>
                   {devices.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} className="empty-cell">
+                      <TableCell colSpan={9} className="empty-cell">
                         充電機器マスタがありません。
                       </TableCell>
                     </TableRow>
@@ -207,6 +209,11 @@ export function ChargingDevicePanel() {
                           {device.minChargeW}-{device.maxChargeW} W
                           <br />
                           <span className="readonly-note">{device.chargeStepW} W刻み / {formatCapacity(device.capacityWh)}</span>
+                        </TableCell>
+                        <TableCell>
+                          {device.expectedDaytimeLoadW > 0 ? `${device.expectedDaytimeLoadW} W` : "-"}
+                          <br />
+                          <span className="readonly-note">日中必要量の推定に使用</span>
                         </TableCell>
                         <TableCell>
                           <Badge variant={device.enabled ? "success" : "secondary"}>{device.enabled ? "有効" : "無効"}</Badge>
@@ -302,6 +309,12 @@ export function ChargingDevicePanel() {
                     <NumberField id="charging-device-max-w" label="最大充電W" value={editing.maxChargeW} onChange={(value) => setEditing({ ...editing, maxChargeW: value })} />
                     <NumberField id="charging-device-step-w" label="刻みW" value={editing.chargeStepW} onChange={(value) => setEditing({ ...editing, chargeStepW: value })} />
                     <NumberField id="charging-device-capacity" label="容量Wh" value={editing.capacityWh} onChange={(value) => setEditing({ ...editing, capacityWh: value })} />
+                    <NumberField
+                      id="charging-device-expected-daytime-load-w"
+                      label="日中想定負荷W"
+                      value={editing.expectedDaytimeLoadW}
+                      onChange={(value) => setEditing({ ...editing, expectedDaytimeLoadW: value })}
+                    />
                     <NumberField id="charging-device-backup-reserve-min-soc" label="バックアップリザーブ最小%" value={editing.backupReserveMinSoc} onChange={(value) => setEditing({ ...editing, backupReserveMinSoc: value })} />
                     <NumberField id="charging-device-backup-reserve-max-soc" label="バックアップリザーブ最大%" value={editing.backupReserveMaxSoc} onChange={(value) => setEditing({ ...editing, backupReserveMaxSoc: value })} />
                   </div>
@@ -385,6 +398,7 @@ function normalizeDeviceForSave(device: ChargingDevice): ChargingDevice {
     reserveSoc: backupReserveMinSoc,
     backupReserveMinSoc,
     backupReserveMaxSoc,
+    expectedDaytimeLoadW: Math.max(0, Math.round(device.expectedDaytimeLoadW || 0)),
     notes: device.notes.trim()
   };
 }
@@ -395,6 +409,9 @@ function validateDevice(device: ChargingDevice) {
   }
   if (device.priority < 1 || device.minChargeW < 0 || device.maxChargeW < device.minChargeW || device.chargeStepW < 1 || device.capacityWh < 0) {
     throw new Error("優先順位または充電W範囲が不正です。");
+  }
+  if (device.expectedDaytimeLoadW < 0) {
+    throw new Error("日中想定負荷Wは0以上で入力してください。");
   }
   if (device.targetSoc < 0 || device.targetSoc > 100 || device.reserveSoc < 0 || device.reserveSoc > 100) {
     throw new Error("SOCは0-100の範囲で入力してください。");

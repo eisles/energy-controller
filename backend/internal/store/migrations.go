@@ -31,6 +31,12 @@ func migrate(db *sql.DB) error {
 			daily_base_load_kwh REAL NOT NULL DEFAULT 0,
 			battery_capacity_kwh REAL NOT NULL DEFAULT 4.096,
 			minimum_reserve_soc INTEGER NOT NULL DEFAULT 30,
+			pv_charge_correction_factor REAL NOT NULL DEFAULT 0.7,
+			pv_charge_correction_manual INTEGER NOT NULL DEFAULT 0,
+			pv_charge_correction_updated_at TEXT,
+			pv_charge_correction_min_sample_days INTEGER NOT NULL DEFAULT 7,
+			pv_charge_correction_min_factor REAL NOT NULL DEFAULT 0.2,
+			pv_charge_correction_max_factor REAL NOT NULL DEFAULT 0.9,
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS power_logs (
@@ -78,6 +84,13 @@ func migrate(db *sql.DB) error {
 			current_battery_energy_kwh REAL NOT NULL,
 			required_night_charge_kwh REAL NOT NULL,
 			daily_estimated_pv_kwh REAL NOT NULL DEFAULT 0,
+			pv_charge_correction_factor REAL NOT NULL DEFAULT 0.7,
+			pv_charge_correction_source TEXT NOT NULL DEFAULT 'default',
+			corrected_estimated_pv_kwh REAL NOT NULL DEFAULT 0,
+			corrected_estimated_pv_to_battery_kwh REAL NOT NULL DEFAULT 0,
+			total_daytime_required_kwh REAL NOT NULL DEFAULT 0,
+			total_available_kwh REAL NOT NULL DEFAULT 0,
+			total_deficit_kwh REAL NOT NULL DEFAULT 0,
 			pv_effective_start_at TEXT NOT NULL DEFAULT '',
 			pv_effective_end_at TEXT NOT NULL DEFAULT '',
 			pv_effective_window_source TEXT NOT NULL DEFAULT '',
@@ -231,6 +244,7 @@ func migrate(db *sql.DB) error {
 			reserve_soc INTEGER NOT NULL DEFAULT 30,
 			backup_reserve_min_soc INTEGER NOT NULL DEFAULT 0,
 			backup_reserve_max_soc INTEGER NOT NULL DEFAULT 0,
+			expected_daytime_load_w INTEGER NOT NULL DEFAULT 0,
 			supports_soc_read INTEGER NOT NULL DEFAULT 0,
 			supports_ac_charge_limit INTEGER NOT NULL DEFAULT 0,
 			supports_on_off INTEGER NOT NULL DEFAULT 0,
@@ -239,13 +253,42 @@ func migrate(db *sql.DB) error {
 			updated_at TEXT NOT NULL,
 			UNIQUE(credential_ref)
 		)`,
+		`CREATE TABLE IF NOT EXISTS charging_device_power_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			device_id INTEGER NOT NULL,
+			measured_at TEXT NOT NULL,
+			soc INTEGER,
+			ac_input_w INTEGER,
+			ac_output_w INTEGER,
+			ac_charge_limit_w INTEGER,
+			backup_reserve_soc INTEGER,
+			status_source TEXT NOT NULL DEFAULT '',
+			available INTEGER NOT NULL DEFAULT 0,
+			error_message TEXT,
+			created_at TEXT NOT NULL,
+			FOREIGN KEY(device_id) REFERENCES charging_devices(id) ON DELETE CASCADE
+		)`,
+		`CREATE TABLE IF NOT EXISTS pv_charge_correction_daily_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			date TEXT NOT NULL UNIQUE,
+			forecast_pv_kwh REAL NOT NULL DEFAULT 0,
+			forecast_pv_to_battery_kwh REAL NOT NULL DEFAULT 0,
+			actual_battery_input_kwh REAL NOT NULL DEFAULT 0,
+			actual_export_kwh REAL NOT NULL DEFAULT 0,
+			actual_capture_factor REAL NOT NULL DEFAULT 0,
+			weather_code INTEGER NOT NULL DEFAULT 0,
+			cloud_cover_mean_percent INTEGER NOT NULL DEFAULT 0,
+			sample_quality TEXT NOT NULL DEFAULT 'insufficient-data',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
 			return err
 		}
 	}
-	for _, column := range []string{"device_sn", "device_type", "status_source", "backup_reserve_min_soc", "backup_reserve_max_soc"} {
+	for _, column := range []string{"device_sn", "device_type", "status_source", "backup_reserve_min_soc", "backup_reserve_max_soc", "expected_daytime_load_w"} {
 		if err := addKnownColumnIfMissing(db, "charging_devices", column); err != nil {
 			return err
 		}
@@ -305,6 +348,12 @@ func migrate(db *sql.DB) error {
 		"daily_base_load_kwh",
 		"battery_capacity_kwh",
 		"minimum_reserve_soc",
+		"pv_charge_correction_factor",
+		"pv_charge_correction_manual",
+		"pv_charge_correction_updated_at",
+		"pv_charge_correction_min_sample_days",
+		"pv_charge_correction_min_factor",
+		"pv_charge_correction_max_factor",
 	} {
 		if err := addKnownColumnIfMissing(db, "settings", column); err != nil {
 			return err
@@ -337,6 +386,13 @@ func migrate(db *sql.DB) error {
 		"pv_effective_window_source",
 		"morning_to_pv_start_load_kwh",
 		"forecast_daytime_deficit_kwh",
+		"pv_charge_correction_factor",
+		"pv_charge_correction_source",
+		"corrected_estimated_pv_kwh",
+		"corrected_estimated_pv_to_battery_kwh",
+		"total_daytime_required_kwh",
+		"total_available_kwh",
+		"total_deficit_kwh",
 		"command_fingerprint",
 		"command_sent",
 		"command_error",
@@ -404,15 +460,21 @@ func addKnownColumnIfMissing(db *sql.DB, table string, column string) error {
 
 var knownMigrationColumns = map[string]map[string]string{
 	"settings": {
-		"weather_forecast_enabled": "INTEGER NOT NULL DEFAULT 0",
-		"weather_latitude":         "REAL",
-		"weather_longitude":        "REAL",
-		"weather_timezone":         "TEXT NOT NULL DEFAULT 'Asia/Tokyo'",
-		"pv_capacity_kw":           "REAL NOT NULL DEFAULT 0",
-		"pv_performance_ratio":     "REAL NOT NULL DEFAULT 0.75",
-		"daily_base_load_kwh":      "REAL NOT NULL DEFAULT 0",
-		"battery_capacity_kwh":     "REAL NOT NULL DEFAULT 4.096",
-		"minimum_reserve_soc":      "INTEGER NOT NULL DEFAULT 30",
+		"weather_forecast_enabled":             "INTEGER NOT NULL DEFAULT 0",
+		"weather_latitude":                     "REAL",
+		"weather_longitude":                    "REAL",
+		"weather_timezone":                     "TEXT NOT NULL DEFAULT 'Asia/Tokyo'",
+		"pv_capacity_kw":                       "REAL NOT NULL DEFAULT 0",
+		"pv_performance_ratio":                 "REAL NOT NULL DEFAULT 0.75",
+		"daily_base_load_kwh":                  "REAL NOT NULL DEFAULT 0",
+		"battery_capacity_kwh":                 "REAL NOT NULL DEFAULT 4.096",
+		"minimum_reserve_soc":                  "INTEGER NOT NULL DEFAULT 30",
+		"pv_charge_correction_factor":          "REAL NOT NULL DEFAULT 0.7",
+		"pv_charge_correction_manual":          "INTEGER NOT NULL DEFAULT 0",
+		"pv_charge_correction_updated_at":      "TEXT",
+		"pv_charge_correction_min_sample_days": "INTEGER NOT NULL DEFAULT 7",
+		"pv_charge_correction_min_factor":      "REAL NOT NULL DEFAULT 0.2",
+		"pv_charge_correction_max_factor":      "REAL NOT NULL DEFAULT 0.9",
 	},
 	"power_logs": {
 		"ac_charge_limit_w":        "INTEGER",
@@ -436,15 +498,22 @@ var knownMigrationColumns = map[string]map[string]string{
 		"export_rate_yen": "REAL NOT NULL DEFAULT 7.0",
 	},
 	"night_charge_plan_logs": {
-		"daily_estimated_pv_kwh":       "REAL NOT NULL DEFAULT 0",
-		"pv_effective_start_at":        "TEXT NOT NULL DEFAULT ''",
-		"pv_effective_end_at":          "TEXT NOT NULL DEFAULT ''",
-		"pv_effective_window_source":   "TEXT NOT NULL DEFAULT ''",
-		"morning_to_pv_start_load_kwh": "REAL NOT NULL DEFAULT 0",
-		"forecast_daytime_deficit_kwh": "REAL NOT NULL DEFAULT 0",
-		"command_fingerprint":          "TEXT NOT NULL DEFAULT 'none'",
-		"command_sent":                 "INTEGER NOT NULL DEFAULT 0",
-		"command_error":                "TEXT",
+		"daily_estimated_pv_kwh":                "REAL NOT NULL DEFAULT 0",
+		"pv_effective_start_at":                 "TEXT NOT NULL DEFAULT ''",
+		"pv_effective_end_at":                   "TEXT NOT NULL DEFAULT ''",
+		"pv_effective_window_source":            "TEXT NOT NULL DEFAULT ''",
+		"morning_to_pv_start_load_kwh":          "REAL NOT NULL DEFAULT 0",
+		"forecast_daytime_deficit_kwh":          "REAL NOT NULL DEFAULT 0",
+		"pv_charge_correction_factor":           "REAL NOT NULL DEFAULT 0.7",
+		"pv_charge_correction_source":           "TEXT NOT NULL DEFAULT 'default'",
+		"corrected_estimated_pv_kwh":            "REAL NOT NULL DEFAULT 0",
+		"corrected_estimated_pv_to_battery_kwh": "REAL NOT NULL DEFAULT 0",
+		"total_daytime_required_kwh":            "REAL NOT NULL DEFAULT 0",
+		"total_available_kwh":                   "REAL NOT NULL DEFAULT 0",
+		"total_deficit_kwh":                     "REAL NOT NULL DEFAULT 0",
+		"command_fingerprint":                   "TEXT NOT NULL DEFAULT 'none'",
+		"command_sent":                          "INTEGER NOT NULL DEFAULT 0",
+		"command_error":                         "TEXT",
 	},
 	"surplus_control_command_logs": {
 		"command_kind":                  "TEXT NOT NULL DEFAULT 'none'",
@@ -456,11 +525,12 @@ var knownMigrationColumns = map[string]map[string]string{
 		"mode_guard_reason":             "TEXT NOT NULL DEFAULT ''",
 	},
 	"charging_devices": {
-		"device_sn":              "TEXT NOT NULL DEFAULT ''",
-		"device_type":            "TEXT NOT NULL DEFAULT ''",
-		"status_source":          "TEXT NOT NULL DEFAULT ''",
-		"backup_reserve_min_soc": "INTEGER NOT NULL DEFAULT 0",
-		"backup_reserve_max_soc": "INTEGER NOT NULL DEFAULT 0",
+		"device_sn":               "TEXT NOT NULL DEFAULT ''",
+		"device_type":             "TEXT NOT NULL DEFAULT ''",
+		"status_source":           "TEXT NOT NULL DEFAULT ''",
+		"backup_reserve_min_soc":  "INTEGER NOT NULL DEFAULT 0",
+		"backup_reserve_max_soc":  "INTEGER NOT NULL DEFAULT 0",
+		"expected_daytime_load_w": "INTEGER NOT NULL DEFAULT 0",
 	},
 	"delta3_aux_control_command_logs": {
 		"previous_backup_reserve_soc":   "INTEGER",
@@ -529,30 +599,31 @@ func seedChargingDevices(db *sql.DB, now time.Time) error {
 		`INSERT INTO charging_devices (
 			name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
 			min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
-			supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
+			expected_daytime_load_w, supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
 		)
 		SELECT name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
 			min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
-			supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, ?, ?
+			expected_daytime_load_w, supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, ?, ?
 		FROM (
 			SELECT 'DELTA Pro 3' AS name, 'ecoflow_delta_pro3' AS kind, 'ecoflow' AS provider, 'primary' AS role,
 				'ecoflow_pro3_primary' AS credential_ref, '' AS device_sn, 'DELTA_PRO3' AS device_type, 'ecoflow_cloud' AS status_source,
 				1 AS enabled, 0 AS control_enabled, 10 AS priority,
 				400 AS min_charge_w, 1500 AS max_charge_w, 100 AS charge_step_w, 12288 AS capacity_wh,
 				90 AS target_soc, 30 AS reserve_soc, 30 AS backup_reserve_min_soc, 90 AS backup_reserve_max_soc,
+				0 AS expected_daytime_load_w,
 				1 AS supports_soc_read, 1 AS supports_ac_charge_limit,
 				0 AS supports_on_off, '既存の DELTA Pro 3 制御用。SN や認証情報は環境変数側で管理します。' AS notes
 			UNION ALL
 			SELECT 'DELTA 3 Plus', 'ecoflow_delta3_plus', 'ecoflow', 'auxiliary',
 				'ecoflow_delta3_primary', '', 'DELTA_3', 'ecoflow_private_mqtt', 1, 0, 20,
 				100, 1500, 100, 2048,
-				90, 20, 20, 90, 1, 1,
+				90, 20, 20, 90, 400, 1, 1,
 				1, 'DELTA 3 Plus 補助充電候補。追加台はこのマスタで増やします。'
 			UNION ALL
 			SELECT '手動補助バッテリー', 'manual', 'manual', 'manual_auxiliary',
 				'manual_auxiliary', '', '', 'manual', 1, 0, 90,
 				0, 0, 1, 0,
-				90, 20, 20, 90, 0, 0,
+				90, 20, 20, 90, 0, 0, 0,
 				0, 'API制御できない補助充電の運用メモ用です。'
 		)
 		WHERE NOT EXISTS (SELECT 1 FROM charging_devices)`,

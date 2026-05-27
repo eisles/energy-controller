@@ -62,7 +62,16 @@ func validWeatherLocation(location domain.WeatherLocation) bool {
 		location.BatteryCapacityKWh > 0 &&
 		location.BatteryCapacityKWh <= 200 &&
 		location.MinimumReserveSoc >= 0 &&
-		location.MinimumReserveSoc <= 100
+		location.MinimumReserveSoc <= 100 &&
+		location.PVChargeCorrectionFactor > 0 &&
+		location.PVChargeCorrectionFactor <= 1 &&
+		location.PVChargeCorrectionMinSampleDays >= 1 &&
+		location.PVChargeCorrectionMinSampleDays <= 365 &&
+		location.PVChargeCorrectionMinFactor > 0 &&
+		location.PVChargeCorrectionMinFactor <= 1 &&
+		location.PVChargeCorrectionMaxFactor > 0 &&
+		location.PVChargeCorrectionMaxFactor <= 1 &&
+		location.PVChargeCorrectionMaxFactor >= location.PVChargeCorrectionMinFactor
 }
 
 func normalizeWeatherTimezone(value string) string {
@@ -81,6 +90,27 @@ func normalizeWeatherSettings(location domain.WeatherLocation) domain.WeatherLoc
 	}
 	if location.MinimumReserveSoc <= 0 {
 		location.MinimumReserveSoc = 30
+	}
+	if location.PVChargeCorrectionMinSampleDays <= 0 {
+		location.PVChargeCorrectionMinSampleDays = 7
+	}
+	if location.PVChargeCorrectionMinFactor <= 0 {
+		location.PVChargeCorrectionMinFactor = 0.2
+	}
+	if location.PVChargeCorrectionMaxFactor <= 0 {
+		location.PVChargeCorrectionMaxFactor = 0.9
+	}
+	if location.PVChargeCorrectionMaxFactor < location.PVChargeCorrectionMinFactor {
+		location.PVChargeCorrectionMaxFactor = location.PVChargeCorrectionMinFactor
+	}
+	if location.PVChargeCorrectionFactor <= 0 {
+		location.PVChargeCorrectionFactor = 0.7
+	}
+	if location.PVChargeCorrectionFactor < location.PVChargeCorrectionMinFactor {
+		location.PVChargeCorrectionFactor = location.PVChargeCorrectionMinFactor
+	}
+	if location.PVChargeCorrectionFactor > location.PVChargeCorrectionMaxFactor {
+		location.PVChargeCorrectionFactor = location.PVChargeCorrectionMaxFactor
 	}
 	return location
 }

@@ -60,27 +60,28 @@ type Delta3StatusResponse struct {
 }
 
 type DeviceStatusResponse struct {
-	ID                  int64                `json:"id"`
-	Name                string               `json:"name"`
-	Kind                string               `json:"kind"`
-	Provider            string               `json:"provider"`
-	Role                string               `json:"role"`
-	CredentialRef       string               `json:"credentialRef"`
-	DeviceSN            string               `json:"deviceSn"`
-	DeviceType          string               `json:"deviceType"`
-	StatusSource        string               `json:"statusSource"`
-	Enabled             bool                 `json:"enabled"`
-	Priority            int                  `json:"priority"`
-	MinChargeW          int                  `json:"minChargeW"`
-	MaxChargeW          int                  `json:"maxChargeW"`
-	ChargeStepW         int                  `json:"chargeStepW"`
-	CapacityWh          int                  `json:"capacityWh"`
-	TargetSoc           int                  `json:"targetSoc"`
-	ReserveSoc          int                  `json:"reserveSoc"`
-	BackupReserveMinSoc int                  `json:"backupReserveMinSoc"`
-	BackupReserveMaxSoc int                  `json:"backupReserveMaxSoc"`
-	ControlEnabled      bool                 `json:"controlEnabled"`
-	Status              Delta3StatusResponse `json:"status"`
+	ID                   int64                `json:"id"`
+	Name                 string               `json:"name"`
+	Kind                 string               `json:"kind"`
+	Provider             string               `json:"provider"`
+	Role                 string               `json:"role"`
+	CredentialRef        string               `json:"credentialRef"`
+	DeviceSN             string               `json:"deviceSn"`
+	DeviceType           string               `json:"deviceType"`
+	StatusSource         string               `json:"statusSource"`
+	Enabled              bool                 `json:"enabled"`
+	Priority             int                  `json:"priority"`
+	MinChargeW           int                  `json:"minChargeW"`
+	MaxChargeW           int                  `json:"maxChargeW"`
+	ChargeStepW          int                  `json:"chargeStepW"`
+	CapacityWh           int                  `json:"capacityWh"`
+	TargetSoc            int                  `json:"targetSoc"`
+	ReserveSoc           int                  `json:"reserveSoc"`
+	BackupReserveMinSoc  int                  `json:"backupReserveMinSoc"`
+	BackupReserveMaxSoc  int                  `json:"backupReserveMaxSoc"`
+	ExpectedDaytimeLoadW int                  `json:"expectedDaytimeLoadW"`
+	ControlEnabled       bool                 `json:"controlEnabled"`
+	Status               Delta3StatusResponse `json:"status"`
 }
 
 func delta3StatusHandler(cfg config.Config, logger *slog.Logger, targetProvider Delta3StatusTargetProvider) http.HandlerFunc {
@@ -179,27 +180,28 @@ func (r *Delta3StatusReader) CurrentDeviceStatuses(ctx context.Context, devices 
 			status = r.currentEcoFlowCloudStatusForConfig(ctx, cfg, device.DeviceType)
 		}
 		responses = append(responses, DeviceStatusResponse{
-			ID:                  device.ID,
-			Name:                device.Name,
-			Kind:                device.Kind,
-			Provider:            device.Provider,
-			Role:                device.Role,
-			CredentialRef:       device.CredentialRef,
-			DeviceSN:            device.DeviceSN,
-			DeviceType:          device.DeviceType,
-			StatusSource:        device.StatusSource,
-			Enabled:             device.Enabled,
-			Priority:            device.Priority,
-			MinChargeW:          device.MinChargeW,
-			MaxChargeW:          device.MaxChargeW,
-			ChargeStepW:         device.ChargeStepW,
-			CapacityWh:          device.CapacityWh,
-			TargetSoc:           device.TargetSoc,
-			ReserveSoc:          device.ReserveSoc,
-			BackupReserveMinSoc: device.BackupReserveMinSoc,
-			BackupReserveMaxSoc: device.BackupReserveMaxSoc,
-			ControlEnabled:      device.ControlEnabled,
-			Status:              status,
+			ID:                   device.ID,
+			Name:                 device.Name,
+			Kind:                 device.Kind,
+			Provider:             device.Provider,
+			Role:                 device.Role,
+			CredentialRef:        device.CredentialRef,
+			DeviceSN:             device.DeviceSN,
+			DeviceType:           device.DeviceType,
+			StatusSource:         device.StatusSource,
+			Enabled:              device.Enabled,
+			Priority:             device.Priority,
+			MinChargeW:           device.MinChargeW,
+			MaxChargeW:           device.MaxChargeW,
+			ChargeStepW:          device.ChargeStepW,
+			CapacityWh:           device.CapacityWh,
+			TargetSoc:            device.TargetSoc,
+			ReserveSoc:           device.ReserveSoc,
+			BackupReserveMinSoc:  device.BackupReserveMinSoc,
+			BackupReserveMaxSoc:  device.BackupReserveMaxSoc,
+			ExpectedDaytimeLoadW: device.ExpectedDaytimeLoadW,
+			ControlEnabled:       device.ControlEnabled,
+			Status:               status,
 		})
 	}
 	return responses

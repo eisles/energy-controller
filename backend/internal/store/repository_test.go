@@ -1216,15 +1216,19 @@ func TestWeatherSettingsRepositoryUpdatesAndReadsLocation(t *testing.T) {
 	db := openTestDB(t)
 	repo := NewWeatherSettingsRepository(db)
 	want := domain.WeatherLocation{
-		Enabled:            true,
-		Latitude:           35.362502,
-		Longitude:          136.9253633,
-		Timezone:           "Asia/Tokyo",
-		PVCapacityKW:       5.5,
-		PVPerformanceRatio: 0.78,
-		DailyBaseLoadKWh:   8.2,
-		BatteryCapacityKWh: 4.096,
-		MinimumReserveSoc:  35,
+		Enabled:                         true,
+		Latitude:                        35.362502,
+		Longitude:                       136.9253633,
+		Timezone:                        "Asia/Tokyo",
+		PVCapacityKW:                    5.5,
+		PVPerformanceRatio:              0.78,
+		DailyBaseLoadKWh:                8.2,
+		BatteryCapacityKWh:              4.096,
+		MinimumReserveSoc:               35,
+		PVChargeCorrectionFactor:        0.7,
+		PVChargeCorrectionMinSampleDays: 7,
+		PVChargeCorrectionMinFactor:     0.2,
+		PVChargeCorrectionMaxFactor:     0.9,
 	}
 
 	if err := repo.UpdateWeatherLocation(context.Background(), want); err != nil {
@@ -1236,6 +1240,28 @@ func TestWeatherSettingsRepositoryUpdatesAndReadsLocation(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("WeatherLocation = %+v, want %+v", got, want)
+	}
+}
+
+func TestWeatherSettingsRepositoryRecordsManualPVCorrectionUpdatedAt(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewWeatherSettingsRepository(db)
+	location, err := repo.CurrentWeatherLocation(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentWeatherLocation failed: %v", err)
+	}
+	location.PVChargeCorrectionFactor = 0.6
+	location.PVChargeCorrectionManual = true
+
+	if err := repo.UpdateWeatherLocation(context.Background(), location); err != nil {
+		t.Fatalf("UpdateWeatherLocation failed: %v", err)
+	}
+	got, err := repo.CurrentWeatherLocation(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentWeatherLocation failed: %v", err)
+	}
+	if got.PVChargeCorrectionUpdatedAt == "" {
+		t.Fatal("PVChargeCorrectionUpdatedAt is empty, want timestamp for manual correction")
 	}
 }
 

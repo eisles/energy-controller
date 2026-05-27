@@ -133,13 +133,14 @@ func applySolarEstimate(plan *domain.NightChargePlan, input NightChargePlanInput
 	plan.SolarRadiationKWhPerM2 = pvEstimate.SolarRadiationKWhPerM2
 	plan.EstimatedPVKWh = pvEstimate.DailyEstimatedPVKWh
 	plan.DailyEstimatedPVKWh = pvEstimate.DailyEstimatedPVKWh
+	applyPVChargeCorrection(plan, *input.SolarSettings)
 	plan.PVEffectiveStartAt = pvEstimate.PVEffectiveStartAt
 	plan.PVEffectiveEndAt = pvEstimate.PVEffectiveEndAt
 	plan.PVEffectiveWindowSource = pvEstimate.PVEffectiveWindowSource
 	plan.PVEffectiveRadiationWPerM2 = pvEstimate.PVEffectiveRadiationWPerM2
 	applyConsumptionEstimate(plan, input)
-	plan.PVUsableForEcoFlowKWh = plan.EstimatedPVKWh
-	plan.EstimatedSurplusKWh = plan.EstimatedPVKWh - plan.EstimatedDaytimeLoadKWh
+	plan.PVUsableForEcoFlowKWh = plan.CorrectedEstimatedPVKWh
+	plan.EstimatedSurplusKWh = plan.CorrectedEstimatedPVKWh - plan.EstimatedDaytimeLoadKWh
 	if plan.EstimatedSurplusKWh < 0 {
 		plan.EstimatedDeficitKWh = -plan.EstimatedSurplusKWh
 		plan.EstimatedSurplusKWh = 0
@@ -148,6 +149,38 @@ func applySolarEstimate(plan *domain.NightChargePlan, input NightChargePlanInput
 	applyBatteryEnergyEstimate(plan, input)
 	if plan.BatteryChargeHeadroomKWh > 0 && plan.EstimatedSurplusKWh > 0 {
 		plan.EstimatedPVToBatteryKWh = minFloat(plan.EstimatedSurplusKWh, plan.BatteryChargeHeadroomKWh)
+	}
+	plan.CorrectedEstimatedPVToBatteryKWh = plan.CorrectedEstimatedPVKWh
+}
+
+func applyPVChargeCorrection(plan *domain.NightChargePlan, settings domain.WeatherLocation) {
+	factor := settings.PVChargeCorrectionFactor
+	if factor <= 0 {
+		factor = 0.7
+	}
+	if settings.PVChargeCorrectionMinFactor > 0 && factor < settings.PVChargeCorrectionMinFactor {
+		factor = settings.PVChargeCorrectionMinFactor
+	}
+	if settings.PVChargeCorrectionMaxFactor > 0 && factor > settings.PVChargeCorrectionMaxFactor {
+		factor = settings.PVChargeCorrectionMaxFactor
+	}
+	source := "default"
+	if settings.PVChargeCorrectionManual {
+		source = "manual"
+	}
+	plan.PVChargeCorrectionFactor = factor
+	plan.PVChargeCorrectionSource = source
+	plan.CorrectedEstimatedPVKWh = plan.EstimatedPVKWh * factor
+	minSampleDays := settings.PVChargeCorrectionMinSampleDays
+	if minSampleDays <= 0 {
+		minSampleDays = 7
+	}
+	plan.PVChargeCorrectionRecommendation = &domain.PVChargeCorrectionRecommendation{
+		RecommendedFactor: factor,
+		OKSampleDays:      0,
+		MinSampleDays:     minSampleDays,
+		Applicable:        false,
+		Status:            "insufficient-samples",
 	}
 }
 

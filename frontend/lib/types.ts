@@ -68,6 +68,7 @@ export type DeviceStatus = {
   reserveSoc: number;
   backupReserveMinSoc: number;
   backupReserveMaxSoc: number;
+  expectedDaytimeLoadW: number;
   controlEnabled: boolean;
   status: Delta3Status;
 };
@@ -137,6 +138,12 @@ export type WeatherLocation = {
   dailyBaseLoadKwh: number;
   batteryCapacityKwh: number;
   minimumReserveSoc: number;
+  pvChargeCorrectionFactor: number;
+  pvChargeCorrectionManual: boolean;
+  pvChargeCorrectionUpdatedAt?: string;
+  pvChargeCorrectionMinSampleDays: number;
+  pvChargeCorrectionMinFactor: number;
+  pvChargeCorrectionMaxFactor: number;
 };
 
 export type DaytimeConsumptionEstimate = {
@@ -211,6 +218,11 @@ export type NightChargePlan = {
   estimatedSurplusKwh: number;
   estimatedDeficitKwh: number;
   estimatedPvToBatteryKwh: number;
+  pvChargeCorrectionFactor: number;
+  pvChargeCorrectionSource: string;
+  correctedEstimatedPvKwh: number;
+  correctedEstimatedPvToBatteryKwh: number;
+  pvChargeCorrectionRecommendation?: PVChargeCorrectionRecommendation | null;
   safetyMarginKwh: number;
   batteryCapacityKwh: number;
   currentBatteryEnergyKwh: number;
@@ -219,6 +231,9 @@ export type NightChargePlan = {
   totalCurrentDeviceEnergyKwh: number;
   totalRecommendedTargetKwh: number;
   totalRequiredDeviceChargeKwh: number;
+  totalDaytimeRequiredKwh: number;
+  totalAvailableKwh: number;
+  totalDeficitKwh: number;
   recommendedNightTargetKwh: number;
   minimumReserveKwh: number;
   requiredNightChargeKwh: number;
@@ -244,6 +259,14 @@ export type NightChargePlan = {
   devicePlans?: NightChargeDevicePlan[];
 };
 
+export type PVChargeCorrectionRecommendation = {
+  recommendedFactor: number;
+  okSampleDays: number;
+  minSampleDays: number;
+  applicable: boolean;
+  status: string;
+};
+
 export type NightChargeDevicePlan = {
   deviceId: number;
   name: string;
@@ -253,6 +276,10 @@ export type NightChargeDevicePlan = {
   capacityKwh: number;
   currentSoc?: number | null;
   currentEnergyKwh: number;
+  daytimeRequiredKwh: number;
+  availableKwh: number;
+  pvAllocatedKwh: number;
+  morningPrePvRequiredKwh: number;
   reserveSoc: number;
   targetSoc: number;
   minTargetSoc: number;
@@ -264,6 +291,7 @@ export type NightChargeDevicePlan = {
   shouldCharge: boolean;
   wouldWrite: boolean;
   blockReason: string;
+  reason: string;
   dataSource: string;
 };
 
@@ -328,6 +356,13 @@ export type NightChargePlanLog = {
   currentBatteryEnergyKwh: number;
   requiredNightChargeKwh: number;
   dailyEstimatedPvKwh: number;
+  pvChargeCorrectionFactor: number;
+  pvChargeCorrectionSource: string;
+  correctedEstimatedPvKwh: number;
+  correctedEstimatedPvToBatteryKwh: number;
+  totalDaytimeRequiredKwh: number;
+  totalAvailableKwh: number;
+  totalDeficitKwh: number;
   pvEffectiveStartAt: string;
   pvEffectiveEndAt: string;
   pvEffectiveWindowSource: string;
@@ -446,6 +481,7 @@ export type ChargingDevice = {
   reserveSoc: number;
   backupReserveMinSoc: number;
   backupReserveMaxSoc: number;
+  expectedDaytimeLoadW: number;
   supportsSocRead: boolean;
   supportsAcChargeLimit: boolean;
   supportsOnOff: boolean;

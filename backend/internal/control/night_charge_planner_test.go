@@ -101,8 +101,8 @@ func TestPlanNightChargingEstimatesPVGeneration(t *testing.T) {
 	if !floatEqual(plan.EstimatedPVKWh, 20) {
 		t.Fatalf("EstimatedPVKWh = %f, want 20", plan.EstimatedPVKWh)
 	}
-	if !floatEqual(plan.EstimatedSurplusKWh, 14) {
-		t.Fatalf("EstimatedSurplusKWh = %f, want 14", plan.EstimatedSurplusKWh)
+	if !floatEqual(plan.EstimatedSurplusKWh, 8) {
+		t.Fatalf("EstimatedSurplusKWh = %f, want 8", plan.EstimatedSurplusKWh)
 	}
 	if !floatEqual(plan.BatteryChargeHeadroomKWh, 3.072) {
 		t.Fatalf("BatteryChargeHeadroomKWh = %f, want 3.072", plan.BatteryChargeHeadroomKWh)
@@ -122,11 +122,42 @@ func TestPlanNightChargingEstimatesPVGeneration(t *testing.T) {
 	if !floatEqual(plan.EstimatedPVToBatteryKWh, 3.072) {
 		t.Fatalf("EstimatedPVToBatteryKWh = %f, want 3.072", plan.EstimatedPVToBatteryKWh)
 	}
+	if !floatEqual(plan.CorrectedEstimatedPVToBatteryKWh, 14) {
+		t.Fatalf("CorrectedEstimatedPVToBatteryKWh = %f, want shared corrected PV allocation pool 14", plan.CorrectedEstimatedPVToBatteryKWh)
+	}
 	if plan.BatteryCapacitySource != "device" {
 		t.Fatalf("BatteryCapacitySource = %q, want device", plan.BatteryCapacitySource)
 	}
 	if plan.MinimumReserveSoc != 35 {
 		t.Fatalf("MinimumReserveSoc = %d, want 35", plan.MinimumReserveSoc)
+	}
+}
+
+func TestPlanNightChargingKeepsCorrectedPVAllocationPoolOnDeficitDay(t *testing.T) {
+	plan := PlanNightCharging(NightChargePlanInput{
+		BatterySoc: 50,
+		Forecast: &domain.WeatherForecast{
+			ShortwaveRadiationMJPerM2: 18,
+			SunshineDurationHours:     8,
+			CloudCoverMeanPercent:     20,
+		},
+		SolarSettings: &domain.WeatherLocation{
+			PVCapacityKW:       2,
+			PVPerformanceRatio: 0.8,
+			DailyBaseLoadKWh:   6,
+			MinimumReserveSoc:  30,
+		},
+		SimulationMode: true,
+	}, DefaultSettings())
+
+	if !floatEqual(plan.EstimatedSurplusKWh, 0) {
+		t.Fatalf("EstimatedSurplusKWh = %f, want 0 on deficit day", plan.EstimatedSurplusKWh)
+	}
+	if !floatEqual(plan.EstimatedDeficitKWh, 0.4) {
+		t.Fatalf("EstimatedDeficitKWh = %f, want 0.4", plan.EstimatedDeficitKWh)
+	}
+	if !floatEqual(plan.CorrectedEstimatedPVToBatteryKWh, 5.6) {
+		t.Fatalf("CorrectedEstimatedPVToBatteryKWh = %f, want corrected PV allocation pool 5.6", plan.CorrectedEstimatedPVToBatteryKWh)
 	}
 }
 
@@ -172,11 +203,11 @@ func TestPlanNightChargingUsesHourlyRadiationForPVWindowAndMorningLoad(t *testin
 	if !floatEqual(plan.MorningToPVStartLoadKWh, 0.5) {
 		t.Fatalf("MorningToPVStartLoadKWh = %f, want 0.5", plan.MorningToPVStartLoadKWh)
 	}
-	if !floatEqual(plan.ForecastDaytimeDeficitKWh, 1) {
-		t.Fatalf("ForecastDaytimeDeficitKWh = %f, want 1", plan.ForecastDaytimeDeficitKWh)
+	if !floatEqual(plan.ForecastDaytimeDeficitKWh, 1.9) {
+		t.Fatalf("ForecastDaytimeDeficitKWh = %f, want 1.9", plan.ForecastDaytimeDeficitKWh)
 	}
-	if plan.RecommendedNightTargetSoc != 50 {
-		t.Fatalf("RecommendedNightTargetSoc = %d, want 50", plan.RecommendedNightTargetSoc)
+	if plan.RecommendedNightTargetSoc != 60 {
+		t.Fatalf("RecommendedNightTargetSoc = %d, want 60", plan.RecommendedNightTargetSoc)
 	}
 }
 
@@ -262,16 +293,16 @@ func TestPlanNightChargingShowsRequiredNightChargeEnergyForWeakForecast(t *testi
 		SimulationMode: true,
 	}, DefaultSettings())
 
-	if plan.RecommendedNightTargetSoc != 63 {
-		t.Fatalf("RecommendedNightTargetSoc = %d, want 63", plan.RecommendedNightTargetSoc)
+	if plan.RecommendedNightTargetSoc != 69 {
+		t.Fatalf("RecommendedNightTargetSoc = %d, want 69", plan.RecommendedNightTargetSoc)
 	}
-	if !floatEqual(plan.RequiredNightChargeKWh, 0.98304) {
-		t.Fatalf("RequiredNightChargeKWh = %f, want 0.98304", plan.RequiredNightChargeKWh)
+	if !floatEqual(plan.RequiredNightChargeKWh, 1.72032) {
+		t.Fatalf("RequiredNightChargeKWh = %f, want 1.72032", plan.RequiredNightChargeKWh)
 	}
 	if plan.EstimatedDeficitKWh <= 0 {
 		t.Fatalf("EstimatedDeficitKWh = %f, want positive", plan.EstimatedDeficitKWh)
 	}
-	if !strings.Contains(plan.ActionSummary, "深夜目標SOCを63%へ設定") {
+	if !strings.Contains(plan.ActionSummary, "深夜目標SOCを69%へ設定") {
 		t.Fatalf("ActionSummary = %q, want target SOC action", plan.ActionSummary)
 	}
 }

@@ -20,7 +20,7 @@ func NewChargingDeviceRepository(db *sql.DB) *ChargingDeviceRepository {
 func (r *ChargingDeviceRepository) ListChargingDevices(ctx context.Context) ([]domain.ChargingDevice, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT
 		id, name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
-		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
+		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc, expected_daytime_load_w,
 		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
 		FROM charging_devices
 		ORDER BY priority ASC, id ASC`)
@@ -42,7 +42,7 @@ func (r *ChargingDeviceRepository) UpsertChargingDevice(ctx context.Context, dev
 		result, err := r.db.ExecContext(ctx, `UPDATE charging_devices SET
 			name = ?, kind = ?, provider = ?, role = ?, credential_ref = ?, enabled = ?,
 			device_sn = ?, device_type = ?, status_source = ?, control_enabled = ?, priority = ?, min_charge_w = ?, max_charge_w = ?, charge_step_w = ?,
-			capacity_wh = ?, target_soc = ?, reserve_soc = ?, backup_reserve_min_soc = ?, backup_reserve_max_soc = ?, supports_soc_read = ?,
+			capacity_wh = ?, target_soc = ?, reserve_soc = ?, backup_reserve_min_soc = ?, backup_reserve_max_soc = ?, expected_daytime_load_w = ?, supports_soc_read = ?,
 			supports_ac_charge_limit = ?, supports_on_off = ?, notes = ?, updated_at = ?
 			WHERE id = ?`,
 			device.Name,
@@ -64,6 +64,7 @@ func (r *ChargingDeviceRepository) UpsertChargingDevice(ctx context.Context, dev
 			device.ReserveSoc,
 			device.BackupReserveMinSoc,
 			device.BackupReserveMaxSoc,
+			device.ExpectedDaytimeLoadW,
 			boolToInt(device.SupportsSocRead),
 			boolToInt(device.SupportsACChargeLimit),
 			boolToInt(device.SupportsOnOff),
@@ -86,9 +87,9 @@ func (r *ChargingDeviceRepository) UpsertChargingDevice(ctx context.Context, dev
 
 	result, err := r.db.ExecContext(ctx, `INSERT INTO charging_devices (
 		name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
-		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
+		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc, expected_daytime_load_w,
 		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		device.Name,
 		device.Kind,
 		device.Provider,
@@ -108,6 +109,7 @@ func (r *ChargingDeviceRepository) UpsertChargingDevice(ctx context.Context, dev
 		device.ReserveSoc,
 		device.BackupReserveMinSoc,
 		device.BackupReserveMaxSoc,
+		device.ExpectedDaytimeLoadW,
 		boolToInt(device.SupportsSocRead),
 		boolToInt(device.SupportsACChargeLimit),
 		boolToInt(device.SupportsOnOff),
@@ -143,7 +145,7 @@ func (r *ChargingDeviceRepository) DeleteChargingDevice(ctx context.Context, id 
 func (r *ChargingDeviceRepository) chargingDeviceByID(ctx context.Context, id int64) (domain.ChargingDevice, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT
 		id, name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
-		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
+		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc, expected_daytime_load_w,
 		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
 		FROM charging_devices
 		WHERE id = ?`, id)
@@ -187,7 +189,7 @@ func (r *ChargingDeviceRepository) EcoFlowCloudWriteTarget(ctx context.Context) 
 func (r *ChargingDeviceRepository) ecoFlowCloudTarget(ctx context.Context, requireWriteSupport bool) (domain.ChargingDevice, bool, error) {
 	query := `SELECT
 		id, name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
-		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
+		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc, expected_daytime_load_w,
 		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
 		FROM charging_devices
 		WHERE enabled = 1
@@ -218,7 +220,7 @@ func (r *ChargingDeviceRepository) ecoFlowCloudTarget(ctx context.Context, requi
 func (r *ChargingDeviceRepository) delta3Target(ctx context.Context, requireWriteSupport bool) (domain.ChargingDevice, bool, error) {
 	query := `SELECT
 		id, name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
-		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
+		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc, expected_daytime_load_w,
 		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
 		FROM charging_devices
 		WHERE enabled = 1
@@ -248,7 +250,7 @@ func (r *ChargingDeviceRepository) delta3Target(ctx context.Context, requireWrit
 func (r *ChargingDeviceRepository) delta3Targets(ctx context.Context, requireWriteSupport bool) ([]domain.ChargingDevice, error) {
 	query := `SELECT
 		id, name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
-		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
+		min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc, expected_daytime_load_w,
 		supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
 		FROM charging_devices
 		WHERE enabled = 1
@@ -295,6 +297,7 @@ func scanChargingDevices(rows *sql.Rows) ([]domain.ChargingDevice, error) {
 			&device.ReserveSoc,
 			&device.BackupReserveMinSoc,
 			&device.BackupReserveMaxSoc,
+			&device.ExpectedDaytimeLoadW,
 			&supportsSocRead,
 			&supportsACChargeLimit,
 			&supportsOnOff,
@@ -349,6 +352,9 @@ func normalizeChargingDeviceReserveBounds(device domain.ChargingDevice) (domain.
 			return device, nil
 		}
 		return domain.ChargingDevice{}, errors.New("backup reserve max soc is below min soc")
+	}
+	if device.ExpectedDaytimeLoadW < 0 {
+		return domain.ChargingDevice{}, errors.New("expected daytime load is out of range")
 	}
 	device.ReserveSoc = device.BackupReserveMinSoc
 	return device, nil

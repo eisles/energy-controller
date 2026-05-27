@@ -23,6 +23,7 @@ type NightChargeDeviceInput struct {
 	TargetSoc               int
 	BackupReserveMinSoc     int
 	BackupReserveMaxSoc     int
+	ExpectedDaytimeLoadW    int
 	MinChargeW              int
 	MaxChargeW              int
 	SupportsACChargeLimit   bool
@@ -60,11 +61,17 @@ func ApplyNightChargeDevicePlans(plan *domain.NightChargePlan, devices []NightCh
 	plan.TotalCurrentDeviceEnergyKWh = 0
 	plan.TotalRecommendedTargetKWh = 0
 	plan.TotalRequiredDeviceChargeKWh = 0
+	plan.TotalDaytimeRequiredKWh = 0
+	plan.TotalAvailableKWh = 0
+	plan.TotalDeficitKWh = 0
 	for _, devicePlan := range devicePlans {
 		plan.TotalDeviceCapacityKWh += devicePlan.CapacityKWh
 		plan.TotalCurrentDeviceEnergyKWh += devicePlan.CurrentEnergyKWh
 		plan.TotalRecommendedTargetKWh += devicePlan.RecommendedTargetKWh
 		plan.TotalRequiredDeviceChargeKWh += devicePlan.RequiredChargeKWh
+		plan.TotalDaytimeRequiredKWh += devicePlan.DaytimeRequiredKWh
+		plan.TotalAvailableKWh += devicePlan.AvailableKWh
+		plan.TotalDeficitKWh += maxFloat(0, devicePlan.DaytimeRequiredKWh-devicePlan.AvailableKWh-devicePlan.PVAllocatedKWh)
 	}
 	syncPrimaryPro3NightChargePlan(plan, devicePlans, devices, settings, guard)
 }
@@ -84,7 +91,6 @@ func buildNightChargeDevicePlans(plan domain.NightChargePlan, devices []NightCha
 	})
 
 	devicePlans := make([]domain.NightChargeDevicePlan, 0, len(active))
-	currentTargetKWh := 0.0
 	minimumTargetKWh := 0.0
 	maxTargetKWh := 0.0
 	for _, device := range active {
@@ -92,14 +98,21 @@ func buildNightChargeDevicePlans(plan domain.NightChargePlan, devices []NightCha
 		if blockReason := nightChargeDeviceAllocationBlockReason(devicePlan, device, guard); blockReason != "" {
 			devicePlan.BlockReason = blockReason
 		}
+		applyDeviceDaytimeNeed(&devicePlan, device, plan)
 		if nightChargeDeviceAllocationEligible(devicePlan) {
-			currentTargetKWh += devicePlan.RecommendedTargetKWh
 			minimumTargetKWh += devicePlan.CapacityKWh * float64(devicePlan.MinTargetSoc) / 100
 			maxTargetKWh += devicePlan.CapacityKWh * float64(devicePlan.MaxTargetSoc) / 100
 		}
 		devicePlans = append(devicePlans, devicePlan)
 	}
 
+	applyPVAllocationToDevicePlans(devicePlans, plan)
+	currentTargetKWh := 0.0
+	for _, devicePlan := range devicePlans {
+		if nightChargeDeviceAllocationEligible(devicePlan) {
+			currentTargetKWh += devicePlan.RecommendedTargetKWh
+		}
+	}
 	totalTargetKWh := targetNightDeviceEnergyKWh(plan, minimumTargetKWh, maxTargetKWh)
 	remainingKWh := totalTargetKWh - currentTargetKWh
 	if remainingKWh < 0 {
@@ -194,6 +207,9 @@ func initialNightChargeDevicePlan(plan domain.NightChargePlan, device NightCharg
 	currentSoc := clamp(*device.CurrentSoc, 0, 100)
 	devicePlan.CurrentSoc = intPtr(currentSoc)
 	devicePlan.CurrentEnergyKWh = devicePlan.CapacityKWh * float64(currentSoc) / 100
+	if currentSoc > minTargetSoc {
+		devicePlan.AvailableKWh = devicePlan.CapacityKWh * float64(currentSoc-minTargetSoc) / 100
+	}
 
 	baseTargetSoc := max(currentSoc, minTargetSoc)
 	devicePlan.RecommendedTargetSoc = clamp(baseTargetSoc, minTargetSoc, maxTargetSoc)
@@ -202,6 +218,100 @@ func initialNightChargeDevicePlan(plan domain.NightChargePlan, device NightCharg
 		devicePlan.BlockReason = firstNonEmpty(device.StatusUnavailableReason, "device status is unavailable")
 	}
 	return devicePlan
+}
+
+func applyDeviceDaytimeNeed(devicePlan *domain.NightChargeDevicePlan, device NightChargeDeviceInput, plan domain.NightChargePlan) {
+	if devicePlan == nil {
+		return
+	}
+	switch {
+	case device.Kind == "ecoflow_delta_pro3":
+		devicePlan.DaytimeRequiredKWh = plan.EstimatedDaytimeLoadKWh
+	case device.ExpectedDaytimeLoadW > 0:
+		devicePlan.DaytimeRequiredKWh = float64(device.ExpectedDaytimeLoadW) * pvEffectiveHours(plan) / 1000
+	}
+	if devicePlan.DaytimeRequiredKWh < 0 {
+		devicePlan.DaytimeRequiredKWh = 0
+	}
+}
+
+func applyPVAllocationToDevicePlans(devicePlans []domain.NightChargeDevicePlan, plan domain.NightChargePlan) {
+	totalRequired := 0.0
+	totalPrePVReserve := plan.EstimatedMorningLoadKWh + plan.SafetyMarginKWh
+	for i := range devicePlans {
+		if nightChargeDeviceAllocationEligible(devicePlans[i]) {
+			totalRequired += devicePlans[i].DaytimeRequiredKWh
+		}
+	}
+	morningToPVRemaining := plan.MorningToPVStartLoadKWh
+	pvRemaining := plan.CorrectedEstimatedPVToBatteryKWh
+	if pvRemaining <= 0 {
+		pvRemaining = plan.EstimatedPVToBatteryKWh
+	}
+	for i := range devicePlans {
+		if !nightChargeDeviceAllocationEligible(devicePlans[i]) {
+			continue
+		}
+		if totalRequired > 0 && morningToPVRemaining > 0 {
+			devicePlans[i].MorningPrePVRequiredKWh = minFloat(morningToPVRemaining*devicePlans[i].DaytimeRequiredKWh/totalRequired, devicePlans[i].DaytimeRequiredKWh)
+		}
+		prePVReserveKWh := 0.0
+		if totalRequired > 0 {
+			prePVReserveKWh = totalPrePVReserve * devicePlans[i].DaytimeRequiredKWh / totalRequired
+		}
+		prePVRequiredKWh := prePVReserveKWh + devicePlans[i].MorningPrePVRequiredKWh
+		unmetPrePVRequiredKWh := maxFloat(0, prePVRequiredKWh-devicePlans[i].AvailableKWh)
+		availableAfterPrePV := maxFloat(0, devicePlans[i].AvailableKWh-prePVRequiredKWh)
+		pvOffsettable := devicePlans[i].DaytimeRequiredKWh - availableAfterPrePV
+		if pvOffsettable < 0 {
+			pvOffsettable = 0
+		}
+		devicePlans[i].PVAllocatedKWh = minFloat(pvRemaining, pvOffsettable)
+		pvRemaining -= devicePlans[i].PVAllocatedKWh
+		requiredNightKWh := unmetPrePVRequiredKWh + maxFloat(0, pvOffsettable-devicePlans[i].PVAllocatedKWh)
+		maxKWh := devicePlans[i].CapacityKWh * float64(devicePlans[i].MaxTargetSoc) / 100
+		minKWh := devicePlans[i].CapacityKWh * float64(devicePlans[i].MinTargetSoc) / 100
+		baseKWh := maxFloat(devicePlans[i].CurrentEnergyKWh, minKWh)
+		targetKWh := minFloat(maxKWh, baseKWh+requiredNightKWh)
+		if targetKWh > devicePlans[i].RecommendedTargetKWh {
+			devicePlans[i].RecommendedTargetKWh = targetKWh
+			devicePlans[i].RecommendedTargetSoc = clamp(ceilToInt(targetKWh/devicePlans[i].CapacityKWh*100), devicePlans[i].MinTargetSoc, devicePlans[i].MaxTargetSoc)
+		}
+	}
+}
+
+func pvEffectiveHours(plan domain.NightChargePlan) float64 {
+	start, errStart := parsePVEffectiveTime(plan.PVEffectiveStartAt)
+	end, errEnd := parsePVEffectiveTime(plan.PVEffectiveEndAt)
+	if errStart == nil && errEnd == nil && end.After(start) {
+		if plan.PVEffectiveWindowSource == "hourly-radiation" {
+			return end.Sub(start).Hours() + 1
+		}
+		return end.Sub(start).Hours()
+	}
+	if errStart == nil && errEnd == nil && end.Equal(start) {
+		return 1
+	}
+	return 7
+}
+
+func parsePVEffectiveTime(value string) (time.Time, error) {
+	var lastErr error
+	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04", "2006-01-02T15:04:05"} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			return parsed, nil
+		}
+		lastErr = err
+	}
+	return time.Time{}, lastErr
+}
+
+func maxFloat(a, b float64) float64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func targetNightDeviceEnergyKWh(plan domain.NightChargePlan, minimumTargetKWh float64, maxTargetKWh float64) float64 {

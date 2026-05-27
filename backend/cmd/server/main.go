@@ -848,6 +848,7 @@ func nightChargeDeviceInputs(ctx context.Context, targetProvider delta3WriteTarg
 			TargetSoc:               deviceStatus.TargetSoc,
 			BackupReserveMinSoc:     deviceStatus.BackupReserveMinSoc,
 			BackupReserveMaxSoc:     deviceStatus.BackupReserveMaxSoc,
+			ExpectedDaytimeLoadW:    deviceStatus.ExpectedDaytimeLoadW,
 			MinChargeW:              deviceStatus.MinChargeW,
 			MaxChargeW:              deviceStatus.MaxChargeW,
 			SupportsACChargeLimit:   device.SupportsACChargeLimit,

@@ -401,6 +401,9 @@ export function NightChargePlanSection({
             <Detail label="推定余剰" value={`${formatDecimal(plan.estimatedSurplusKwh)} kWh`} />
             <Detail label="推定不足" value={`${formatDecimal(plan.estimatedDeficitKwh)} kWh`} />
             <Detail label="PV充電見込" value={`${formatDecimal(plan.estimatedPvToBatteryKwh)} kWh`} />
+            <Detail label="補正後PV" value={`${formatDecimal(plan.correctedEstimatedPvKwh || plan.estimatedPvKwh)} kWh`} />
+            <Detail label="補正後PV充電" value={`${formatDecimal(plan.correctedEstimatedPvToBatteryKwh || plan.estimatedPvToBatteryKwh)} kWh`} />
+            <Detail label="PV充電補正" value={`${formatDecimal(plan.pvChargeCorrectionFactor || 0)} / ${pvCorrectionSourceLabel(plan.pvChargeCorrectionSource)}`} />
             <Detail label="安全余力" value={`${formatDecimal(plan.safetyMarginKwh)} kWh`} />
             <Detail label="充電余地" value={`${formatDecimal(plan.batteryChargeHeadroomKwh)} kWh`} />
             <Detail label="容量ソース" value={capacitySourceLabel(plan.batteryCapacitySource)} />
@@ -419,6 +422,9 @@ export function NightChargePlanSection({
             <Detail label="機器現在残量" value={`${formatDecimal(plan.totalCurrentDeviceEnergyKwh || 0)} kWh`} />
             <Detail label="機器推奨残量" value={`${formatDecimal(plan.totalRecommendedTargetKwh || 0)} kWh`} />
             <Detail label="機器必要充電" value={`${formatDecimal(plan.totalRequiredDeviceChargeKwh || 0)} kWh`} />
+            <Detail label="日中総必要量" value={`${formatDecimal(plan.totalDaytimeRequiredKwh || 0)} kWh`} />
+            <Detail label="全機器利用可能" value={`${formatDecimal(plan.totalAvailableKwh || 0)} kWh`} />
+            <Detail label="全機器不足量" value={`${formatDecimal(plan.totalDeficitKwh || 0)} kWh`} />
           </div>
           {plan.devicePlans?.length ? (
             <div className="delta3-device-status-list" aria-label="night charge device plans">
@@ -521,6 +527,10 @@ function NightChargeDevicePlanItem({ devicePlan }: { devicePlan: NightChargeDevi
         <Detail label="優先" value={devicePlan.priority} />
         <Detail label="現在残量" value={nullablePercent(devicePlan.currentSoc)} />
         <Detail label="現在kWh" value={`${formatDecimal(devicePlan.currentEnergyKwh)} kWh`} />
+        <Detail label="日中必要" value={`${formatDecimal(devicePlan.daytimeRequiredKwh || 0)} kWh`} />
+        <Detail label="利用可能" value={`${formatDecimal(devicePlan.availableKwh || 0)} kWh`} />
+        <Detail label="PV割当" value={`${formatDecimal(devicePlan.pvAllocatedKwh || 0)} kWh`} />
+        <Detail label="7時-PV開始" value={`${formatDecimal(devicePlan.morningPrePvRequiredKwh || 0)} kWh`} />
         <Detail label="推奨目標" value={`${devicePlan.recommendedTargetSoc}%`} />
         <Detail label="推奨kWh" value={`${formatDecimal(devicePlan.recommendedTargetKwh)} kWh`} />
         <Detail label="必要充電" value={`${formatDecimal(devicePlan.requiredChargeKwh)} kWh`} />
@@ -529,6 +539,7 @@ function NightChargeDevicePlanItem({ devicePlan }: { devicePlan: NightChargeDevi
         <Detail label="制御候補" value={devicePlan.controlEnabled ? "有効" : "無効"} />
         <Detail label="取得元" value={statusSourceLabel(devicePlan.dataSource)} />
       </div>
+      {devicePlan.reason ? <p className="planner-reason">{decisionSummaryLabel(devicePlan.reason)}</p> : null}
       {devicePlan.blockReason ? <p className="planner-reason">抑制: {nightChargeDeviceBlockReasonLabel(devicePlan.blockReason)}</p> : null}
     </div>
   );
@@ -930,6 +941,19 @@ function consumptionSourceLabel(value: string) {
     return "保守";
   }
   return "-";
+}
+
+function pvCorrectionSourceLabel(value: string) {
+  if (value === "manual") {
+    return "手動";
+  }
+  if (value === "default") {
+    return "既定";
+  }
+  if (value === "recommended") {
+    return "推奨";
+  }
+  return value || "-";
 }
 
 function modeLabel(value: string) {
