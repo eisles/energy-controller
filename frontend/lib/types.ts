@@ -40,6 +40,10 @@ export type Delta3Status = {
   minDischargeSoc?: number | null;
   backupReserveSoc?: number | null;
   backupReserveEnabled?: boolean | null;
+  touModeEnabled?: boolean | null;
+  selfPoweredEnabled?: boolean | null;
+  scheduledEnabled?: boolean | null;
+  intelligentEnabled?: boolean | null;
   updatedAt?: string;
   lastError?: string | null;
 };

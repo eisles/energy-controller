@@ -30,6 +30,16 @@ type DeviceFlowState = {
   summary: string;
 };
 
+type DeviceModeStatus = Pick<
+  Delta3Status,
+  | "touModeEnabled"
+  | "selfPoweredEnabled"
+  | "scheduledEnabled"
+  | "intelligentEnabled"
+  | "backupReserveSoc"
+  | "backupReserveEnabled"
+>;
+
 export type StatusCardSectionKey = "charts" | "decision" | "surplusPlan" | "nightPlan";
 
 type StatusCardsProps = {
@@ -148,12 +158,14 @@ export function Delta3StatusCard({
                           <Detail label="モード" value={modeSummary} />
                         </div>
                         <div className="detail-strip planner-secondary" aria-label={`${device.name} configuration status`}>
+                          <Detail label="運転モード" value={operationModeLabel(device.status)} />
+                          <Detail label="リザーブ関連モード" value={reserveRelatedModeLabel(device.status)} />
                           <Detail label="最大充電残量" value={nullablePercent(device.status.maxChargeSoc)} />
                           <Detail label="最低放電残量" value={nullablePercent(device.status.minDischargeSoc)} />
                           <Detail label="リザーブ制御範囲" value={formatReserveRange(device.backupReserveMinSoc, device.backupReserveMaxSoc)} />
-                          <Detail label="本体リザーブ" value={nullableOnOff(device.status.backupReserveEnabled)} />
-                          <Detail label="本体リザーブ残量" value={nullablePercent(device.status.backupReserveSoc)} />
-                          <Detail label="Grid bypass" value={nullableOnOff(device.status.gridBypassDisabled)} />
+                          <Detail label="バックアップリザーブ残量" value={nullablePercent(device.status.backupReserveSoc)} />
+                          <Detail label="Energy Backup" value={nullableOnOff(device.status.backupReserveEnabled)} />
+                          <Detail label="グリッドバイパス無効化" value={nullableOnOff(device.status.gridBypassDisabled)} />
                           <Detail label="AC出力" value={nullableOnOff(device.status.acOutputEnabled)} />
                           <Detail label="Device type" value={device.status.deviceType || device.deviceType || "-"} />
                           <Detail label="Updated" value={formatDateTime(device.status.updatedAt || "")} />
@@ -193,14 +205,16 @@ export function Delta3StatusCard({
               <Detail label="AC入力" value={nullableWatt(status.acInW)} />
               <Detail label="AC出力" value={nullablePositiveWatt(status.acOutW)} />
               <Detail label="AC充電上限" value={nullableWatt(status.acChargeLimitW)} />
-              <Detail label="Grid bypass disabled" value={nullableOnOff(status.gridBypassDisabled)} />
+              <Detail label="グリッドバイパス無効化" value={nullableOnOff(status.gridBypassDisabled)} />
               <Detail label="AC output" value={nullableOnOff(status.acOutputEnabled)} />
             </div>
             <div className="detail-strip planner-secondary" aria-label="DELTA 3 Plus configuration status">
+              <Detail label="運転モード" value={operationModeLabel(status)} />
+              <Detail label="リザーブ関連モード" value={reserveRelatedModeLabel(status)} />
               <Detail label="最大充電残量" value={nullablePercent(status.maxChargeSoc)} />
               <Detail label="最低放電残量" value={nullablePercent(status.minDischargeSoc)} />
-              <Detail label="本体リザーブ" value={nullableOnOff(status.backupReserveEnabled)} />
-              <Detail label="本体リザーブ残量" value={nullablePercent(status.backupReserveSoc)} />
+              <Detail label="バックアップリザーブ残量" value={nullablePercent(status.backupReserveSoc)} />
+              <Detail label="Energy Backup" value={nullableOnOff(status.backupReserveEnabled)} />
               <Detail label="Device type" value={status.deviceType || "-"} />
               <Detail label="Updated" value={formatDateTime(status.updatedAt || "")} />
             </div>
@@ -305,9 +319,10 @@ export function StatusDecisionSection({
           <Detail label="Battery input" value={`${status.batteryInputW} W`} />
           <Detail label="Battery output" value={`${status.batteryOutputW} W`} />
           <Detail label="AC charge limit" value={`${status.acChargeLimitW} W`} />
-          <Detail label="本体リザーブ" value={nullableOnOff(status.energyBackupEnabled)} />
-          <Detail label="本体リザーブ残量" value={nullablePercent(status.backupReserveSoc)} />
-          <Detail label="TOU mode" value={nullableOnOff(status.touModeEnabled)} />
+          <Detail label="運転モード" value={operationModeLabel(status)} />
+          <Detail label="リザーブ関連モード" value={reserveRelatedModeLabel(status)} />
+          <Detail label="バックアップリザーブ残量" value={nullablePercent(status.backupReserveSoc)} />
+          <Detail label="Energy Backup" value={nullableOnOff(status.energyBackupEnabled)} />
           <Detail label="Battery capacity" value={formatBatteryCapacity(status.batteryFullEnergyWh)} />
           <Detail label="Updated" value={formatDateTime(status.updatedAt)} />
         </CardContent>
@@ -682,15 +697,57 @@ function formatDeviceNetFlow(value: number | null) {
 
 function deviceModeSummary(device: DeviceStatus) {
   const parts = [
+    `運転モード ${operationModeLabel(device.status)}`,
+    `リザーブ関連モード ${reserveRelatedModeLabel(device.status)}`,
+    `バックアップリザーブ残量 ${nullablePercent(device.status.backupReserveSoc)}`,
+    `Energy Backup ${nullableOnOff(device.status.backupReserveEnabled)}`,
     `AC出力 ${nullableOnOff(device.status.acOutputEnabled)}`,
-    `本体リザーブ ${nullableOnOff(device.status.backupReserveEnabled)}`,
-    `本体リザーブ残量 ${nullablePercent(device.status.backupReserveSoc)}`,
     `リザーブ制御範囲 ${formatReserveRange(device.backupReserveMinSoc, device.backupReserveMaxSoc)}`,
-    `Grid bypass ${nullableOnOff(device.status.gridBypassDisabled)}`,
+    `グリッドバイパス無効化 ${nullableOnOff(device.status.gridBypassDisabled)}`,
     `最大充電残量 ${nullablePercent(device.status.maxChargeSoc)}`,
     `最低放電残量 ${nullablePercent(device.status.minDischargeSoc)}`
   ];
   return parts.join(" / ");
+}
+
+function operationModeLabel(status: DeviceModeStatus) {
+  if (status.touModeEnabled === true) {
+    return "TOU";
+  }
+  if (status.selfPoweredEnabled === true) {
+    return "セルフパワー";
+  }
+  if (status.scheduledEnabled === true) {
+    return "スケジュール";
+  }
+  if (status.intelligentEnabled === true) {
+    return "インテリジェント";
+  }
+  if (
+    status.touModeEnabled === false ||
+    status.selfPoweredEnabled === false ||
+    status.scheduledEnabled === false ||
+    status.intelligentEnabled === false
+  ) {
+    return "その他";
+  }
+  return "-";
+}
+
+function reserveRelatedModeLabel(status: DeviceModeStatus) {
+  if (status.backupReserveSoc === null || status.backupReserveSoc === undefined) {
+    return "-";
+  }
+  if (status.touModeEnabled === true) {
+    return "TOU設定";
+  }
+  if (status.selfPoweredEnabled === true) {
+    return "セルフパワー設定";
+  }
+  if (status.touModeEnabled === false || status.selfPoweredEnabled === false) {
+    return "該当なし";
+  }
+  return "未確認";
 }
 
 function formatReserveRange(minSoc: number | null | undefined, maxSoc: number | null | undefined) {

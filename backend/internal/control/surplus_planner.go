@@ -10,21 +10,22 @@ import (
 const minImportRecoveryChargeW = 400
 
 type SurplusPlanInput struct {
-	GridW              int
-	MockMode           bool
-	BatterySoc         int
-	BatteryInputW      int
-	BatteryOutputW     int
-	ACChargeLimitW     int
-	BackupReserveSoc   *int
-	DefaultReserveSoc  int
-	TOUModeEnabled     *bool
-	SelfPoweredEnabled *bool
-	ScheduledEnabled   *bool
-	IntelligentEnabled *bool
-	SimulationMode     bool
-	EnableRealControl  bool
-	AutoControl        bool
+	GridW                  int
+	MockMode               bool
+	BatterySoc             int
+	BatteryInputW          int
+	BatteryOutputW         int
+	ACChargeLimitW         int
+	BackupReserveSoc       *int
+	DefaultReserveSoc      int
+	MinDischargeReserveSoc int
+	TOUModeEnabled         *bool
+	SelfPoweredEnabled     *bool
+	ScheduledEnabled       *bool
+	IntelligentEnabled     *bool
+	SimulationMode         bool
+	EnableRealControl      bool
+	AutoControl            bool
 }
 
 func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.SurplusPlan {
@@ -47,13 +48,14 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		plan.RecommendedACChargeLimitW = calculateImportRecoveryChargeW(input.ACChargeLimitW, gridPower.ImportW, settings)
 		plan.ShouldAdjustACChargeLimit = abs(input.ACChargeLimitW-plan.RecommendedACChargeLimitW) >= settings.MinCommandDiffW
 		applyRecoveryModePlan(&plan, input)
-		if input.BackupReserveSoc != nil && *input.BackupReserveSoc > defaultReserveSoc {
-			recommendedReserve := defaultReserveSoc
+		recoveryReserveSoc := importRecoveryReserveSoc(input, settings)
+		if input.BackupReserveSoc != nil && input.BatterySoc > recoveryReserveSoc && *input.BackupReserveSoc > recoveryReserveSoc {
+			recommendedReserve := recoveryReserveSoc
 			plan.RecommendedBackupReserveSoc = &recommendedReserve
 			plan.ShouldLowerBackupReserve = true
 		}
 		plan.ActionSummary = surplusActionSummary(plan)
-		plan.Reason = "importing from grid; recover by stopping surplus charge and restoring default reserve"
+		plan.Reason = "importing from grid; recover by stopping surplus charge and allowing discharge to reserve floor"
 		plan.WouldWrite = writeAllowed(input) && (plan.ShouldAdjustACChargeLimit || plan.ShouldLowerBackupReserve || plan.ShouldDisableEnergyModes || plan.ShouldEnableTOUMode)
 		return plan
 	case input.BatterySoc >= settings.TargetSoc:
@@ -268,6 +270,13 @@ func defaultReserveSoc(input SurplusPlanInput, settings Settings) int {
 		return normalizeReserveSoc(input.DefaultReserveSoc)
 	}
 	return normalizeReserveSoc(settings.DefaultReserveSoc)
+}
+
+func importRecoveryReserveSoc(input SurplusPlanInput, settings Settings) int {
+	if input.MinDischargeReserveSoc > 0 {
+		return normalizeReserveSoc(input.MinDischargeReserveSoc)
+	}
+	return defaultReserveSoc(input, settings)
 }
 
 func writeAllowed(input SurplusPlanInput) bool {

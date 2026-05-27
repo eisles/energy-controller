@@ -263,6 +263,10 @@ func TestDelta3StatusReaderReturnsEcoFlowCloudDeviceStatus(t *testing.T) {
 		backupEnabled := true
 		maxChargeSoc := 100
 		minDischargeSoc := 0
+		touEnabled := true
+		selfPoweredEnabled := false
+		scheduledEnabled := false
+		intelligentEnabled := false
 		return fakeEcoFlowCloudReader{status: domain.BatteryStatus{
 			Soc:                 88,
 			InputW:              410,
@@ -272,6 +276,10 @@ func TestDelta3StatusReaderReturnsEcoFlowCloudDeviceStatus(t *testing.T) {
 			MinDischargeSoc:     &minDischargeSoc,
 			BackupReserveSoc:    &reserveSoc,
 			EnergyBackupEnabled: &backupEnabled,
+			TOUModeEnabled:      &touEnabled,
+			SelfPoweredEnabled:  &selfPoweredEnabled,
+			ScheduledEnabled:    &scheduledEnabled,
+			IntelligentEnabled:  &intelligentEnabled,
 			IsOnline:            true,
 		}}
 	}
@@ -311,6 +319,10 @@ func TestDelta3StatusReaderReturnsEcoFlowCloudDeviceStatus(t *testing.T) {
 	assertIntPtrResponse(t, "ACChargeLimitW", statuses[0].Status.ACChargeLimitW, 900)
 	assertIntPtrResponse(t, "MaxChargeSoc", statuses[0].Status.MaxChargeSoc, 100)
 	assertIntPtrResponse(t, "MinDischargeSoc", statuses[0].Status.MinDischargeSoc, 0)
+	assertBoolPtrResponse(t, "TOUModeEnabled", statuses[0].Status.TOUModeEnabled, true)
+	assertBoolPtrResponse(t, "SelfPoweredEnabled", statuses[0].Status.SelfPoweredEnabled, false)
+	assertBoolPtrResponse(t, "ScheduledEnabled", statuses[0].Status.ScheduledEnabled, false)
+	assertBoolPtrResponse(t, "IntelligentEnabled", statuses[0].Status.IntelligentEnabled, false)
 	if statuses[0].CapacityWh != 12288 {
 		t.Fatalf("CapacityWh = %d, want 12288", statuses[0].CapacityWh)
 	}
@@ -387,5 +399,15 @@ func assertIntPtrResponse(t *testing.T, name string, got *int, want int) {
 			t.Fatalf("%s = nil, want %d", name, want)
 		}
 		t.Fatalf("%s = %d, want %d", name, *got, want)
+	}
+}
+
+func assertBoolPtrResponse(t *testing.T, name string, got *bool, want bool) {
+	t.Helper()
+	if got == nil || *got != want {
+		if got == nil {
+			t.Fatalf("%s = nil, want %t", name, want)
+		}
+		t.Fatalf("%s = %t, want %t", name, *got, want)
 	}
 }

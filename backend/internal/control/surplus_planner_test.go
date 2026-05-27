@@ -340,6 +340,83 @@ func TestPlanSurplusChargingRestoresDefaultReserveWhenImporting(t *testing.T) {
 	}
 }
 
+func TestPlanSurplusChargingLowersReserveToDischargeFloorWhenImporting(t *testing.T) {
+	reserve := 15
+	tou := true
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:                  1500,
+		BatterySoc:             16,
+		ACChargeLimitW:         minImportRecoveryChargeW,
+		BackupReserveSoc:       &reserve,
+		DefaultReserveSoc:      30,
+		MinDischargeReserveSoc: 10,
+		TOUModeEnabled:         &tou,
+		SimulationMode:         false,
+		EnableRealControl:      true,
+		AutoControl:            true,
+	}, DefaultSettings())
+
+	if plan.StrategyState != "RECOVERING" {
+		t.Fatalf("StrategyState = %q, want RECOVERING", plan.StrategyState)
+	}
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 10 {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want 10", plan.RecommendedBackupReserveSoc)
+	}
+	if !plan.ShouldLowerBackupReserve {
+		t.Fatal("ShouldLowerBackupReserve = false, want true")
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true when real-control gates are open")
+	}
+	if !strings.Contains(plan.ActionSummary, "バックアップリザーブを10%へ戻す") {
+		t.Fatalf("ActionSummary = %q, want reserve floor action", plan.ActionSummary)
+	}
+}
+
+func TestPlanSurplusChargingDoesNotLowerReserveAtDischargeFloorWhenImporting(t *testing.T) {
+	reserve := 15
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:                  1500,
+		BatterySoc:             10,
+		ACChargeLimitW:         minImportRecoveryChargeW,
+		BackupReserveSoc:       &reserve,
+		DefaultReserveSoc:      30,
+		MinDischargeReserveSoc: 10,
+		SimulationMode:         false,
+		EnableRealControl:      true,
+		AutoControl:            true,
+	}, DefaultSettings())
+
+	if plan.RecommendedBackupReserveSoc != nil {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want nil at discharge floor", plan.RecommendedBackupReserveSoc)
+	}
+	if plan.ShouldLowerBackupReserve || plan.WouldWrite {
+		t.Fatalf("lower/write flags = %t/%t, want false/false at discharge floor", plan.ShouldLowerBackupReserve, plan.WouldWrite)
+	}
+}
+
+func TestPlanSurplusChargingDoesNotRaiseReserveToDischargeFloorWhenImporting(t *testing.T) {
+	reserve := 5
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:                  1500,
+		BatterySoc:             16,
+		ACChargeLimitW:         minImportRecoveryChargeW,
+		BackupReserveSoc:       &reserve,
+		DefaultReserveSoc:      30,
+		MinDischargeReserveSoc: 10,
+		SimulationMode:         false,
+		EnableRealControl:      true,
+		AutoControl:            true,
+	}, DefaultSettings())
+
+	if plan.RecommendedBackupReserveSoc != nil {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want nil when current reserve is already below floor", plan.RecommendedBackupReserveSoc)
+	}
+	if plan.ShouldLowerBackupReserve || plan.WouldWrite {
+		t.Fatalf("lower/write flags = %t/%t, want false/false below floor", plan.ShouldLowerBackupReserve, plan.WouldWrite)
+	}
+}
+
 func TestPlanSurplusChargingStopsWhenTargetSocReached(t *testing.T) {
 	reserve := 100
 	tou := false

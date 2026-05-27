@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DELTA Pro 3 買電時リザーブ下げ制御 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; margin: 40px auto; max-width: 960px; padding: 0 20px; color: #17202a; }
+    h1, h2 { line-height: 1.3; }
+    h1 { border-bottom: 2px solid #d0d7de; padding-bottom: 12px; }
+    h2 { margin-top: 32px; border-bottom: 1px solid #d8dee4; padding-bottom: 6px; }
+    code, pre { background: #f6f8fa; border-radius: 6px; }
+    code { padding: 2px 4px; }
+    pre { padding: 12px; overflow-x: auto; }
+    ul { padding-left: 1.5rem; }
+  </style>
+</head>
+<body>
+  <h1>DELTA Pro 3 買電時リザーブ下げ制御 実装計画</h1>
+  <h2>目的</h2>
+  <p>買電中に DELTA Pro 3 の残量がシステムの制御下限より十分高い場合、バックアップリザーブを機器マスターの下限まで下げて放電を許可する。</p>
+  <p>今回の実例では、機器マスターのリザーブ制御範囲が <code>10-90%</code>、DELTA Pro 3 の現在残量が <code>16%</code>、本体バックアップリザーブが <code>15%</code> なので、買電中は <code>15% -&gt; 10%</code> のリザーブ下げ候補を出せるようにする。</p>
+  <h2>非目的</h2>
+  <ul>
+    <li>EcoFlow の新しい未検証 API を追加しない。</li>
+    <li>実機 write の安全ゲートを緩めない。</li>
+    <li>DELTA 3 Plus の補助制御方針は変更しない。</li>
+    <li>夜間充電計画や天気予測ロジックは変更しない。</li>
+  </ul>
+  <h2>現状</h2>
+  <ul>
+    <li><code>PlanSurplusCharging</code> は買電時に AC 充電上限を下げる。</li>
+    <li>バックアップリザーブは <code>DefaultReserveSoc</code> より高い場合だけ下げる。</li>
+    <li><code>DefaultReserveSoc</code> は「通常復帰値」として扱われており、機器マスターの下限とは別概念。</li>
+    <li>そのため <code>backupReserveSoc=15</code>、<code>DefaultReserveSoc=30</code> のような状態では、リザーブを <code>10%</code> へ下げる候補が出ない。</li>
+  </ul>
+  <h2>データ/API 契約</h2>
+  <ul>
+    <li><code>charging_devices.reserve_soc</code> または <code>backup_reserve_min_soc</code> を、DELTA Pro 3 の「制御下限残量」として使う。</li>
+    <li><code>charging_devices.target_soc</code> または <code>backup_reserve_max_soc</code> は本件では変更しない。</li>
+    <li><code>/api/status.surplusPlan</code> の既存フィールドを使う。</li>
+  </ul>
+  <h2>安全境界</h2>
+  <ul>
+    <li>実機 write は既存の real-control gate を維持する。</li>
+    <li>同一指令の重複抑止、最小コマンド間隔、エラー後リトライ抑止は維持する。</li>
+    <li>残量が制御下限以下の場合は、リザーブ下げを行わない。</li>
+    <li>現在の本体バックアップリザーブが制御下限以下の場合は、上げ戻しを行わない。</li>
+  </ul>
+  <h2>実装方針</h2>
+  <ol>
+    <li><code>SurplusPlanInput</code> に <code>MinDischargeReserveSoc</code> を追加する。</li>
+    <li>買電時の <code>RECOVERING</code> 分岐で、<code>MinDischargeReserveSoc</code> を制御下限として優先する。</li>
+    <li><code>BackupReserveSoc != nil</code>、<code>BatterySoc &gt; recoveryReserve</code>、<code>BackupReserveSoc &gt; recoveryReserve</code> の場合だけ下げる。</li>
+    <li>実機マスターの DELTA Pro 3 設定を入力へ渡す。</li>
+    <li>境界条件の単体テストを追加する。</li>
+  </ol>
+  <h2>変更予定ファイル</h2>
+  <ul>
+    <li><code>backend/internal/control/surplus_planner.go</code></li>
+    <li><code>backend/internal/control/surplus_planner_test.go</code></li>
+    <li><code>backend/cmd/server/main.go</code></li>
+    <li><code>backend/cmd/server/main_test.go</code></li>
+  </ul>
+  <h2>検証</h2>
+  <pre><code>cd backend &amp;&amp; rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build
+rtk codex review --uncommitted</code></pre>
+  <h2>運用メモ</h2>
+  <p>実装後、現在値が <code>SOC 16% / backupReserve 15% / control min 10% / 買電</code> に近い場合は、<code>surplus_control_command_logs</code> に <code>target_backup_reserve_soc=10</code> の候補が出る。実送信されるかは既存の安全ゲート、重複抑止、最小間隔に従う。</p>
+</body>
+</html>

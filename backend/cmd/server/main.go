@@ -499,6 +499,7 @@ func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusPro
 	}
 	nightPlanOwnsControl := applyNightChargePlanControl(ctx, cfg, &status, writeClient, previousNightPlan)
 	priorityContext := resolveChargingPriorityContext(ctx, delta3TargetProvider, logger)
+	applyPro3MasterReserveToSurplusPlan(cfg, &status, priorityContext)
 	higherPriorityDevice := higherPriorityDelta3ChargeCandidateDevice(ctx, cfg, status, priorityContext, delta3Reader, delta3Writer, delta3AuxControlCommandRepository, logger)
 	if nightChargePlanRepository != nil {
 		if err := nightChargePlanRepository.InsertNightChargePlanLog(ctx, status); err != nil {
@@ -670,6 +671,48 @@ func delta3AuxSettingsForDevice(cfg config.Config, device domain.ChargingDevice)
 		settings.BackupReserveMaxSoc = device.TargetSoc
 	}
 	return settings
+}
+
+func applyPro3MasterReserveToSurplusPlan(cfg config.Config, status *domain.Status, priorityContext chargingPriorityContext) {
+	if status == nil || !priorityContext.pro3OK || status.ImportW <= 0 {
+		return
+	}
+	minReserveSoc := pro3MasterMinReserveSoc(priorityContext.pro3)
+	if minReserveSoc <= 0 {
+		return
+	}
+	plan := control.PlanSurplusCharging(control.SurplusPlanInput{
+		GridW:                  status.GridW,
+		MockMode:               cfg.MockMode,
+		BatterySoc:             status.BatterySoc,
+		BatteryInputW:          status.BatteryInputW,
+		BatteryOutputW:         status.BatteryOutputW,
+		ACChargeLimitW:         status.ACChargeLimitW,
+		BackupReserveSoc:       status.BackupReserveSoc,
+		DefaultReserveSoc:      cfg.ControlSettings.DefaultReserveSoc,
+		MinDischargeReserveSoc: minReserveSoc,
+		TOUModeEnabled:         status.TOUModeEnabled,
+		SelfPoweredEnabled:     status.SelfPoweredEnabled,
+		ScheduledEnabled:       status.ScheduledEnabled,
+		IntelligentEnabled:     status.IntelligentEnabled,
+		SimulationMode:         cfg.SimulationMode,
+		EnableRealControl:      cfg.EnableRealControl,
+		AutoControl:            cfg.AutoControlEnabled,
+	}, cfg.ControlSettings)
+	status.SurplusPlan = &plan
+	if plan.ActionSummary != "" && !strings.Contains(status.LastDecisionReason, plan.ActionSummary) {
+		if status.LastDecisionReason != "" {
+			status.LastDecisionReason += "; "
+		}
+		status.LastDecisionReason += "surplus plan: " + plan.ActionSummary
+	}
+}
+
+func pro3MasterMinReserveSoc(device domain.ChargingDevice) int {
+	if device.BackupReserveMinSoc > 0 {
+		return device.BackupReserveMinSoc
+	}
+	return device.ReserveSoc
 }
 
 func recordManualChargeAlert(ctx context.Context, cfg config.Config, status domain.Status, repository notificationLogWriter, service manualChargeAlertEvaluator, logger *slog.Logger) {

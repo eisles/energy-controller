@@ -50,6 +50,10 @@ type Delta3StatusResponse struct {
 	MinDischargeSoc      *int   `json:"minDischargeSoc,omitempty"`
 	BackupReserveSoc     *int   `json:"backupReserveSoc,omitempty"`
 	BackupReserveEnabled *bool  `json:"backupReserveEnabled,omitempty"`
+	TOUModeEnabled       *bool  `json:"touModeEnabled,omitempty"`
+	SelfPoweredEnabled   *bool  `json:"selfPoweredEnabled,omitempty"`
+	ScheduledEnabled     *bool  `json:"scheduledEnabled,omitempty"`
+	IntelligentEnabled   *bool  `json:"intelligentEnabled,omitempty"`
 	UpdatedAt            string `json:"updatedAt,omitempty"`
 	LastError            string `json:"lastError,omitempty"`
 	Cached               bool   `json:"cached,omitempty"`
@@ -431,6 +435,10 @@ func mapEcoFlowCloudStatus(status domain.BatteryStatus, deviceType string, now t
 		MinDischargeSoc:      status.MinDischargeSoc,
 		BackupReserveSoc:     status.BackupReserveSoc,
 		BackupReserveEnabled: status.EnergyBackupEnabled,
+		TOUModeEnabled:       status.TOUModeEnabled,
+		SelfPoweredEnabled:   status.SelfPoweredEnabled,
+		ScheduledEnabled:     status.ScheduledEnabled,
+		IntelligentEnabled:   status.IntelligentEnabled,
 		UpdatedAt:            now.Format(time.RFC3339),
 	}
 }

@@ -60,7 +60,8 @@ func (p fakeEcoFlowCloudWriteTargetProvider) EcoFlowCloudWriteTarget(context.Con
 }
 
 type recordingSurplusWriteClient struct {
-	acChargePowerW *int
+	acChargePowerW   *int
+	backupReserveSoc *int
 }
 
 type recordingDelta3AuxWriteClient struct {
@@ -101,7 +102,8 @@ func (r fakeDelta3AuxCommandRepository) LatestDelta3AuxControlWriteCandidateLog(
 	return r.previous, nil
 }
 
-func (c *recordingSurplusWriteClient) SetBackupReserveSoc(context.Context, int) error {
+func (c *recordingSurplusWriteClient) SetBackupReserveSoc(_ context.Context, percent int) error {
+	c.backupReserveSoc = intPtr(percent)
 	return nil
 }
 
@@ -325,6 +327,48 @@ func TestDelta3AuxSettingsForDeviceUsesBackupReserveRange(t *testing.T) {
 	}
 	if settings.BackupReserveMaxSoc != 75 {
 		t.Fatalf("BackupReserveMaxSoc = %d, want 75", settings.BackupReserveMaxSoc)
+	}
+}
+
+func TestApplyPro3MasterReserveToSurplusPlanLowersReserveToMasterFloorWhenImporting(t *testing.T) {
+	reserve := 15
+	tou := true
+	status := domain.Status{
+		GridW:              1500,
+		ImportW:            1500,
+		ExportW:            0,
+		BatterySoc:         16,
+		ACChargeLimitW:     400,
+		BackupReserveSoc:   &reserve,
+		TOUModeEnabled:     &tou,
+		LastDecisionReason: "importing from grid, do not charge",
+	}
+
+	applyPro3MasterReserveToSurplusPlan(config.Config{
+		MockMode:           false,
+		SimulationMode:     false,
+		EnableRealControl:  true,
+		AutoControlEnabled: true,
+	}, &status, chargingPriorityContext{
+		pro3OK: true,
+		pro3: domain.ChargingDevice{
+			ReserveSoc:          30,
+			BackupReserveMinSoc: 10,
+			BackupReserveMaxSoc: 90,
+		},
+	})
+
+	if status.SurplusPlan == nil {
+		t.Fatal("SurplusPlan = nil, want recomputed plan")
+	}
+	if status.SurplusPlan.RecommendedBackupReserveSoc == nil || *status.SurplusPlan.RecommendedBackupReserveSoc != 10 {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want 10", status.SurplusPlan.RecommendedBackupReserveSoc)
+	}
+	if !status.SurplusPlan.ShouldLowerBackupReserve || !status.SurplusPlan.WouldWrite {
+		t.Fatalf("lower/write flags = %t/%t, want true/true", status.SurplusPlan.ShouldLowerBackupReserve, status.SurplusPlan.WouldWrite)
+	}
+	if !strings.Contains(status.LastDecisionReason, "バックアップリザーブを10%へ戻す") {
+		t.Fatalf("LastDecisionReason = %q, want reserve action", status.LastDecisionReason)
 	}
 }
 
