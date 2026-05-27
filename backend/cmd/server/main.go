@@ -140,6 +140,10 @@ type delta3StatusReader interface {
 	CurrentStatus(ctx context.Context) api.Delta3StatusResponse
 }
 
+type deviceStatusesReader interface {
+	CurrentDeviceStatuses(ctx context.Context, devices []domain.ChargingDevice) []api.DeviceStatusResponse
+}
+
 type delta3ConfigStatusReader interface {
 	CurrentStatusForConfig(ctx context.Context, cfg config.Config) api.Delta3StatusResponse
 }
@@ -151,6 +155,10 @@ type delta3AuxWriteClient interface {
 
 type delta3WriteTargetProvider interface {
 	Delta3WriteTarget(ctx context.Context) (domain.ChargingDevice, bool, error)
+}
+
+type chargingDeviceLister interface {
+	ListChargingDevices(ctx context.Context) ([]domain.ChargingDevice, error)
 }
 
 type chargingPriorityTargetProvider interface {
@@ -497,8 +505,17 @@ func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusPro
 			logger.Warn("failed to load latest night charge write candidate log", "error", err)
 		}
 	}
-	nightPlanOwnsControl := applyNightChargePlanControl(ctx, cfg, &status, writeClient, previousNightPlan)
+	var previousDelta3Aux *domain.Delta3AuxControlCommandLog
+	if delta3AuxControlCommandRepository != nil {
+		var err error
+		previousDelta3Aux, err = delta3AuxControlCommandRepository.LatestDelta3AuxControlWriteCandidateLog(ctx)
+		if err != nil {
+			logger.Warn("failed to load latest DELTA 3 Plus aux write candidate log", "error", err)
+		}
+	}
 	priorityContext := resolveChargingPriorityContext(ctx, delta3TargetProvider, logger)
+	applyNightChargeDevicePlans(ctx, cfg, &status, delta3TargetProvider, delta3Reader, previousNightPlan, previousDelta3Aux, logger)
+	nightPlanOwnsControl := applyNightChargePlanControl(ctx, cfg, &status, writeClient, previousNightPlan)
 	applyPro3MasterReserveToSurplusPlan(cfg, &status, priorityContext)
 	higherPriorityDevice := higherPriorityDelta3ChargeCandidateDevice(ctx, cfg, status, priorityContext, delta3Reader, delta3Writer, delta3AuxControlCommandRepository, logger)
 	if nightChargePlanRepository != nil {
@@ -758,6 +775,96 @@ func applyNightChargePlanControl(ctx context.Context, cfg config.Config, status 
 	plan = control.ExecuteNightChargeCommand(ctx, plan, writeClient)
 	status.NightChargePlan = &plan
 	return nightPlanOwnsEnergyControl(plan, status.UpdatedAt)
+}
+
+func applyNightChargeDevicePlans(ctx context.Context, cfg config.Config, status *domain.Status, targetProvider delta3WriteTargetProvider, delta3Reader delta3StatusReader, previous *domain.NightChargePlanLog, previousDelta3Aux *domain.Delta3AuxControlCommandLog, logger *slog.Logger) {
+	if status == nil || status.NightChargePlan == nil || targetProvider == nil || delta3Reader == nil {
+		return
+	}
+	deviceLister, ok := targetProvider.(chargingDeviceLister)
+	if !ok || deviceLister == nil {
+		return
+	}
+	statusReader, ok := delta3Reader.(deviceStatusesReader)
+	if !ok || statusReader == nil {
+		return
+	}
+	devices, err := deviceLister.ListChargingDevices(ctx)
+	if err != nil {
+		logger.Warn("failed to list devices for night charge plan", "error", err)
+		return
+	}
+	deviceStatuses := statusReader.CurrentDeviceStatuses(ctx, devices)
+	now := controlClockNow(cfg)
+	control.ApplyNightChargeDevicePlans(status.NightChargePlan, nightChargeDeviceInputs(ctx, targetProvider, deviceStatuses, devices, logger), cfg.ControlSettings, control.NightChargeDeviceWriteGuard{
+		MockMode:                cfg.MockMode,
+		SimulationMode:          cfg.SimulationMode,
+		EnableRealControl:       cfg.EnableRealControl,
+		AutoControl:             cfg.AutoControlEnabled,
+		ConfirmEcoFlowWrite:     cfg.ConfirmEcoFlowWrite,
+		RealControlTrialActive:  realControlTrialActive(cfg),
+		IsNightChargeTime:       nightChargeDeviceWindowActive(now),
+		Delta3AllowAutoWrite:    cfg.Delta3AllowAutoWrite,
+		Delta3ExecuteWrite:      cfg.Delta3ExecuteWrite,
+		Delta3AllowPrivateWrite: cfg.Delta3AllowPrivateWrite,
+		Delta3AuxEnabled:        cfg.Delta3Aux.Enabled,
+		Delta3AuxPrevious:       previousDelta3Aux,
+		Delta3AuxMinInterval:    cfg.Delta3Aux.MinCommandInterval,
+		Previous:                previous,
+		Now:                     now,
+	})
+}
+
+func nightChargeDeviceInputs(ctx context.Context, targetProvider delta3WriteTargetProvider, deviceStatuses []api.DeviceStatusResponse, devices []domain.ChargingDevice, logger *slog.Logger) []control.NightChargeDeviceInput {
+	deviceByID := make(map[int64]domain.ChargingDevice, len(devices))
+	for _, device := range devices {
+		deviceByID[device.ID] = device
+	}
+	var pro3WriteTargetID int64
+	if pro3TargetProvider, ok := targetProvider.(ecoFlowCloudWriteTargetProvider); ok && pro3TargetProvider != nil {
+		device, ok, err := pro3TargetProvider.EcoFlowCloudWriteTarget(ctx)
+		if err != nil {
+			logger.Warn("failed to resolve DELTA Pro 3 write target for night charge device plan", "error", err)
+		} else if ok {
+			pro3WriteTargetID = device.ID
+		}
+	}
+	inputs := make([]control.NightChargeDeviceInput, 0, len(deviceStatuses))
+	for _, deviceStatus := range deviceStatuses {
+		device := deviceByID[deviceStatus.ID]
+		inputs = append(inputs, control.NightChargeDeviceInput{
+			DeviceID:                deviceStatus.ID,
+			Name:                    deviceStatus.Name,
+			Kind:                    deviceStatus.Kind,
+			Priority:                deviceStatus.Priority,
+			Enabled:                 deviceStatus.Enabled,
+			ControlEnabled:          deviceStatus.ControlEnabled,
+			WriteTarget:             deviceStatus.ID == pro3WriteTargetID,
+			CapacityWh:              deviceStatus.CapacityWh,
+			CurrentSoc:              deviceStatus.Status.SOC,
+			CurrentACChargeLimitW:   deviceStatus.Status.ACChargeLimitW,
+			CurrentBackupReserveSoc: deviceStatus.Status.BackupReserveSoc,
+			ReserveSoc:              deviceStatus.ReserveSoc,
+			TargetSoc:               deviceStatus.TargetSoc,
+			BackupReserveMinSoc:     deviceStatus.BackupReserveMinSoc,
+			BackupReserveMaxSoc:     deviceStatus.BackupReserveMaxSoc,
+			MinChargeW:              deviceStatus.MinChargeW,
+			MaxChargeW:              deviceStatus.MaxChargeW,
+			SupportsACChargeLimit:   device.SupportsACChargeLimit,
+			StatusAvailable:         deviceStatus.Status.Available,
+			StatusUnavailableReason: deviceStatus.Status.LastError,
+			DataSource:              deviceStatus.StatusSource,
+		})
+	}
+	return inputs
+}
+
+func nightChargeDeviceWindowActive(now time.Time) bool {
+	if now.IsZero() {
+		return false
+	}
+	hour := now.Hour()
+	return hour >= 23 || hour < 7
 }
 
 func nightPlanOwnsEnergyControl(plan domain.NightChargePlan, measuredAt time.Time) bool {

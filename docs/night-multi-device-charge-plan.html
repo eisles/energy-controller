@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>深夜充電 複数デバイス配分制御 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; margin: 40px auto; max-width: 960px; padding: 0 24px; color: #17202a; }
+    h1, h2, h3 { line-height: 1.25; }
+    h1 { border-bottom: 2px solid #d0d7de; padding-bottom: 12px; }
+    h2 { margin-top: 32px; border-bottom: 1px solid #d8dee4; padding-bottom: 6px; }
+    code, pre { background: #f6f8fa; border-radius: 6px; }
+    code { padding: 2px 4px; }
+    pre { padding: 14px; overflow-x: auto; }
+    ul { padding-left: 1.4rem; }
+    .note { background: #fff8c5; border: 1px solid #eac54f; border-radius: 8px; padding: 12px 16px; }
+  </style>
+</head>
+<body>
+  <h1>深夜充電 複数デバイス配分制御 実装計画</h1>
+  <h2>Goal</h2>
+  <p>深夜料金時間帯（23:00-07:00）に、翌日の天気予報・PV発電予測・EcoFlow出力ログから必要な蓄電量を見積もり、充電機器マスターに登録された複数デバイスへ目標充電量を配分する。</p>
+  <p>現在の夜間充電計画は主に DELTA Pro 3 単体を対象にしている。これを、DELTA Pro 3 / DELTA 3 Plus / 将来の補助デバイスを含む「充電機器全体の計画」として扱えるようにする。</p>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li>SwitchBot スマートプラグ制御は実装しない。</li>
+    <li>DELTA 3 Plus 2台目を自動制御ONへ勝手に変更しない。</li>
+    <li>新しい外部APIや認証方式は追加しない。</li>
+    <li><code>.env</code> の実機制御ゲートを弱めない。</li>
+    <li>実機writeの頻度制限、重複抑止、trial window、<code>CONFIRM_ECOFLOW_WRITE</code> を回避しない。</li>
+    <li>夜間以外の余剰追従制御は今回の主対象にしない。</li>
+  </ul>
+
+  <h2>Current State</h2>
+  <ul>
+    <li><code>PlanNightCharging</code> は翌日のPV予測、日中負荷、朝までの消費を計算し、<code>NightChargePlan</code> を作る。</li>
+    <li><code>NightChargePlan</code> は DELTA Pro 3 の <code>BatterySoc</code> / <code>BatteryFullEnergyWh</code> を前提に、単一の <code>RecommendedNightTargetSoc</code> を出している。</li>
+    <li><code>charging_devices</code> には DELTA Pro 3 と DELTA 3 Plus が登録され、容量・優先順位・制御範囲を持っている。</li>
+    <li>DELTA 3 Plus 1台目は private API で読取・一部制御ができる。</li>
+    <li>DELTA 3 Plus 2台目は登録済みだが <code>control_enabled=0</code> なので自動制御対象外。</li>
+    <li><code>Delta3AuxPlan</code> は日中余剰・買電回復用で、夜間の全体充電配分とは分離されている。</li>
+  </ul>
+
+  <h2>Safety Boundaries</h2>
+  <div class="note">
+    <p>既存の実機write条件を維持する。<code>MOCK_MODE=false</code>、<code>SIMULATION_MODE=false</code>、<code>ENABLE_REAL_CONTROL=true</code>、<code>AUTO_CONTROL_ENABLED=true</code>、<code>CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND</code>、trial window active が必要。</p>
+  </div>
+  <ul>
+    <li>計画対象に含めるのは <code>enabled=1</code> の充電機器のみ。</li>
+    <li>実際にwrite候補にするのは <code>control_enabled=1</code> かつ対応能力がある機器のみ。</li>
+    <li>DELTA 3 Plus は、現時点では既存の <code>delta3_aux</code> writeゲートと duplicate/min interval を使う。</li>
+    <li><code>control_enabled=0</code> の機器は配分計画には「参考/未制御」として表示しても、write候補にはしない。</li>
+    <li>SOC/AC上限/リザーブ値が読めない機器は、write候補から外し、理由を計画に残す。</li>
+  </ul>
+
+  <h2>Data Model</h2>
+  <h3>Add domain types</h3>
+  <p><code>backend/internal/domain/status.go</code> に <code>NightChargeDevicePlan</code> を追加する。</p>
+  <ul>
+    <li><code>deviceId</code>, <code>name</code>, <code>kind</code>, <code>priority</code>, <code>controlEnabled</code></li>
+    <li><code>capacityKWh</code>, <code>currentSoc</code>, <code>currentEnergyKWh</code></li>
+    <li><code>reserveSoc</code>, <code>targetSoc</code>, <code>minTargetSoc</code>, <code>maxTargetSoc</code></li>
+    <li><code>recommendedTargetSoc</code>, <code>recommendedTargetKWh</code>, <code>requiredChargeKWh</code></li>
+    <li><code>recommendedAcChargeLimitW</code>, <code>shouldCharge</code>, <code>wouldWrite</code>, <code>blockReason</code>, <code>dataSource</code></li>
+  </ul>
+  <h3>Extend NightChargePlan</h3>
+  <ul>
+    <li><code>totalDeviceCapacityKWh</code></li>
+    <li><code>totalCurrentDeviceEnergyKWh</code></li>
+    <li><code>totalRecommendedTargetKWh</code></li>
+    <li><code>totalRequiredDeviceChargeKWh</code></li>
+    <li><code>devicePlans []NightChargeDevicePlan</code></li>
+  </ul>
+
+  <h2>Planning Algorithm</h2>
+  <ol>
+    <li>既存の <code>PlanNightCharging</code> で、翌日PV予測・日中負荷・朝まで消費・安全余力を計算する。</li>
+    <li>充電機器マスターから有効な機器を取得する。</li>
+    <li>各機器の容量・現在SOCを決定する。</li>
+    <li>総必要エネルギーを計算する。</li>
+    <li>優先順位順に充電目標を配分する。</li>
+    <li>夜間時間帯かつ必要量がある場合、各デバイスの推奨充電上限を出す。</li>
+  </ol>
+
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li><code>domain.Status</code> / <code>NightChargePlan</code> に複数デバイス計画の型とフィールドを追加する。</li>
+    <li><code>control</code> に複数デバイス配分ロジックを追加する。</li>
+    <li><code>cmd/server</code> で、夜間計画作成後に充電機器マスターとデバイス状態を使って <code>DevicePlans</code> を補完する。</li>
+    <li>Pro 3 の既存夜間writeは維持し、全体計画の Pro 3 配分と矛盾しないようにする。</li>
+    <li>DELTA 3 Plus は初期実装では計画表示を優先し、実writeは既存 <code>Delta3AuxPlan</code> の安全制御範囲を超えない。</li>
+    <li>frontend の夜間充電カードに「デバイス別 深夜充電計画」を追加する。</li>
+    <li>unit test を追加する。</li>
+    <li><code>go test</code> / frontend build / review loop を実行する。</li>
+  </ol>
+
+  <h2>Review Points</h2>
+  <ul>
+    <li>実機writeゲートが弱くなっていないこと。</li>
+    <li><code>control_enabled=0</code> の機器にwrite候補を出さないこと。</li>
+    <li>容量不明・SOC不明時に危険な推測でwriteしないこと。</li>
+    <li>既存の DELTA Pro 3 夜間充電動作を壊さないこと。</li>
+    <li>frontend 表示が「計画」と「実行済み」を混同しないこと。</li>
+  </ul>
+
+  <h2>Verification Commands</h2>
+  <pre><code>cd backend &amp;&amp; rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build
+rtk codex review --uncommitted
+rtk git diff --check</code></pre>
+
+  <h2>Operational Notes</h2>
+  <ul>
+    <li>初期導入後は、23:00-07:00 の <code>night_charge_plan_logs</code> と <code>delta3_aux_control_command_logs</code> を確認する。</li>
+    <li>DELTA 3 Plus のSOCが下限に近い場合は、日中の買電回復制御と夜間充電計画の優先関係を追加で見直す。</li>
+    <li>将来、SwitchBot プラグを使う場合は、今回の <code>NightChargeDevicePlan</code> を基礎に <code>provider=switchbot</code> の executor を追加する。</li>
+  </ul>
+</body>
+</html>

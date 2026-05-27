@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { decisionReasonLabel, decisionSummaryLabel, guardReasonLabel, strategyStateLabel, writeCandidateLabel } from "@/lib/display-labels";
-import type { Delta3Status, DeviceStatus, EnergyStatus, NightChargePlan, SurplusPlan } from "@/lib/types";
+import type { Delta3Status, DeviceStatus, EnergyStatus, NightChargeDevicePlan, NightChargePlan, SurplusPlan } from "@/lib/types";
 import type { ReactNode } from "react";
 
 type Metric = {
@@ -414,6 +414,19 @@ export function NightChargePlanSection({
             <Detail label="深夜必要量" value={`${formatDecimal(plan.requiredNightChargeKwh)} kWh`} />
             <Detail label="容量" value={`${formatDecimal(plan.batteryCapacityKwh)} kWh`} />
           </div>
+          <div className="detail-strip planner-secondary" aria-label="night charge device totals">
+            <Detail label="機器合計容量" value={`${formatDecimal(plan.totalDeviceCapacityKwh || 0)} kWh`} />
+            <Detail label="機器現在残量" value={`${formatDecimal(plan.totalCurrentDeviceEnergyKwh || 0)} kWh`} />
+            <Detail label="機器推奨残量" value={`${formatDecimal(plan.totalRecommendedTargetKwh || 0)} kWh`} />
+            <Detail label="機器必要充電" value={`${formatDecimal(plan.totalRequiredDeviceChargeKwh || 0)} kWh`} />
+          </div>
+          {plan.devicePlans?.length ? (
+            <div className="delta3-device-status-list" aria-label="night charge device plans">
+              {plan.devicePlans.map((devicePlan) => (
+                <NightChargeDevicePlanItem key={devicePlan.deviceId || `${devicePlan.name}-${devicePlan.priority}`} devicePlan={devicePlan} />
+              ))}
+            </div>
+          ) : null}
           <div className="detail-strip planner-secondary" aria-label="night charge command guard detail">
             <Detail label="候補AC上限" value={plan.recommendedAcChargeLimitW > 0 ? `${plan.recommendedAcChargeLimitW} W` : "-"} />
             <Detail label="候補リザーブ" value={nullablePercent(plan.recommendedBackupReserveSoc)} />
@@ -491,6 +504,36 @@ export function SurplusPlanSection({
   );
 }
 
+function NightChargeDevicePlanItem({ devicePlan }: { devicePlan: NightChargeDevicePlan }) {
+  return (
+    <div className="delta3-device-status-item">
+      <div className="panel-title-row">
+        <div>
+          <strong>{devicePlan.name || devicePlan.kind || `機器 ${devicePlan.deviceId}`}</strong>
+          <p className="device-flow-summary">{nightChargeDevicePlanSummary(devicePlan)}</p>
+        </div>
+        <div className="device-status-badges">
+          <Badge variant={devicePlan.shouldCharge ? "warning" : "secondary"}>{devicePlan.shouldCharge ? "充電候補" : "充電不要"}</Badge>
+          <Badge variant={devicePlan.wouldWrite ? "warning" : "secondary"}>{writeCandidateLabel(devicePlan.wouldWrite)}</Badge>
+        </div>
+      </div>
+      <div className="detail-strip planner-secondary" aria-label={`${devicePlan.name} night charge device plan`}>
+        <Detail label="優先" value={devicePlan.priority} />
+        <Detail label="現在残量" value={nullablePercent(devicePlan.currentSoc)} />
+        <Detail label="現在kWh" value={`${formatDecimal(devicePlan.currentEnergyKwh)} kWh`} />
+        <Detail label="推奨目標" value={`${devicePlan.recommendedTargetSoc}%`} />
+        <Detail label="推奨kWh" value={`${formatDecimal(devicePlan.recommendedTargetKwh)} kWh`} />
+        <Detail label="必要充電" value={`${formatDecimal(devicePlan.requiredChargeKwh)} kWh`} />
+        <Detail label="リザーブ制御範囲" value={formatReserveRange(devicePlan.minTargetSoc, devicePlan.maxTargetSoc)} />
+        <Detail label="候補AC上限" value={devicePlan.recommendedAcChargeLimitW > 0 ? `${devicePlan.recommendedAcChargeLimitW} W` : "-"} />
+        <Detail label="制御候補" value={devicePlan.controlEnabled ? "有効" : "無効"} />
+        <Detail label="取得元" value={statusSourceLabel(devicePlan.dataSource)} />
+      </div>
+      {devicePlan.blockReason ? <p className="planner-reason">抑制: {nightChargeDeviceBlockReasonLabel(devicePlan.blockReason)}</p> : null}
+    </div>
+  );
+}
+
 function logRangeSummary(status: EnergyStatus) {
   return status.updatedAt ? `更新 ${formatDateTime(status.updatedAt)}` : "更新待ち";
 }
@@ -501,6 +544,16 @@ function surplusPlanSummary(plan: SurplusPlan) {
 
 function nightPlanSummary(plan: NightChargePlan) {
   return `${strategyStateLabel(plan.strategyState)} / 推奨深夜残量 ${plan.recommendedNightTargetSoc}% / PV ${formatDecimal(plan.dailyEstimatedPvKwh || plan.estimatedPvKwh)} kWh`;
+}
+
+function nightChargeDevicePlanSummary(devicePlan: NightChargeDevicePlan) {
+  if (devicePlan.blockReason) {
+    return `抑制: ${nightChargeDeviceBlockReasonLabel(devicePlan.blockReason)}`;
+  }
+  if (devicePlan.shouldCharge) {
+    return `目標 ${devicePlan.recommendedTargetSoc}% / 必要 ${formatDecimal(devicePlan.requiredChargeKwh)} kWh`;
+  }
+  return `目標 ${devicePlan.recommendedTargetSoc}% / 充電不要`;
 }
 
 function MetricCard({ metric }: { metric: Metric }) {
@@ -755,6 +808,46 @@ function formatReserveRange(minSoc: number | null | undefined, maxSoc: number | 
     return "-";
   }
   return `${minSoc}-${maxSoc}%`;
+}
+
+function nightChargeDeviceBlockReasonLabel(value: string) {
+  if (value === "device capacity is unavailable") {
+    return "機器容量を取得できません";
+  }
+  if (value === "device SOC is unavailable") {
+    return "機器残量を取得できません";
+  }
+  if (value === "device status is unavailable") {
+    return "機器ステータスを取得できません";
+  }
+  if (value === "device control is disabled") {
+    return "機器マスタで制御対象外です";
+  }
+  if (value === "device AC charge control is unavailable") {
+    return "AC充電上限の制御に未対応です";
+  }
+  if (value === "outside night charge window") {
+    return "深夜充電時間外です";
+  }
+  if (value === "mock mode keeps device write disabled") {
+    return "mock mode のため機器への書き込みは無効です";
+  }
+  if (value === "simulation mode keeps device write disabled") {
+    return "simulation mode のため機器への書き込みは無効です";
+  }
+  if (value === "ENABLE_REAL_CONTROL=false keeps device write disabled") {
+    return "ENABLE_REAL_CONTROL=false のため機器への書き込みは無効です";
+  }
+  if (value === "auto control disabled keeps device write disabled") {
+    return "自動制御OFFのため機器への書き込みは無効です";
+  }
+  if (value === "CONFIRM_ECOFLOW_WRITE is not I_UNDERSTAND") {
+    return "実機書き込み確認が未設定です";
+  }
+  if (value === "real control trial window inactive") {
+    return "実制御の有効期限外です";
+  }
+  return value || "-";
 }
 
 function yesNo(value: boolean) {

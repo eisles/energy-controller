@@ -215,6 +215,10 @@ export type NightChargePlan = {
   batteryCapacityKwh: number;
   currentBatteryEnergyKwh: number;
   batteryChargeHeadroomKwh: number;
+  totalDeviceCapacityKwh: number;
+  totalCurrentDeviceEnergyKwh: number;
+  totalRecommendedTargetKwh: number;
+  totalRequiredDeviceChargeKwh: number;
   recommendedNightTargetKwh: number;
   minimumReserveKwh: number;
   requiredNightChargeKwh: number;
@@ -237,6 +241,30 @@ export type NightChargePlan = {
   actionSummary: string;
   reason: string;
   targetForecast?: WeatherForecast | null;
+  devicePlans?: NightChargeDevicePlan[];
+};
+
+export type NightChargeDevicePlan = {
+  deviceId: number;
+  name: string;
+  kind: string;
+  priority: number;
+  controlEnabled: boolean;
+  capacityKwh: number;
+  currentSoc?: number | null;
+  currentEnergyKwh: number;
+  reserveSoc: number;
+  targetSoc: number;
+  minTargetSoc: number;
+  maxTargetSoc: number;
+  recommendedTargetSoc: number;
+  recommendedTargetKwh: number;
+  requiredChargeKwh: number;
+  recommendedAcChargeLimitW: number;
+  shouldCharge: boolean;
+  wouldWrite: boolean;
+  blockReason: string;
+  dataSource: string;
 };
 
 export type SolarForecastEstimate = {
