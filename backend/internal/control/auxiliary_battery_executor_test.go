@@ -457,6 +457,56 @@ func TestEvaluateDelta3AuxCommandGuardSuppressesUnreflectedBackupReserveRetry(t 
 	}
 }
 
+func TestEvaluateDelta3AuxCommandGuardMarksImportRecoveryMinReserveIgnored(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 10, 0, 0, time.UTC)
+	for _, strategyState := range []string{"RECOVERING", "SAFE_LIMIT"} {
+		t.Run(strategyState, func(t *testing.T) {
+			currentLimit := 100
+			currentReserve := 0
+			targetReserve := 20
+			disabled := false
+			previous := &domain.Delta3AuxControlCommandLog{
+				MeasuredAt:             now.Add(-10 * time.Minute),
+				CommandSent:            true,
+				StrategyState:          strategyState,
+				ShouldSetBackupReserve: true,
+				TargetBackupReserveSoc: &targetReserve,
+				CommandFingerprint:     "previous",
+			}
+			status := domain.Status{
+				ImportW:   700,
+				UpdatedAt: now,
+				Delta3AuxPlan: &domain.Delta3AuxPlan{
+					StrategyState:               strategyState,
+					RecommendedACChargeLimitW:   currentLimit,
+					CurrentACChargeLimitW:       &currentLimit,
+					RecommendedBackupReserveSoc: &targetReserve,
+					CurrentBackupReserveSoc:     &currentReserve,
+					CurrentBackupReserveEnabled: &disabled,
+					Reason:                      "import recovery reserve ignored",
+				},
+			}
+
+			log := EvaluateDelta3AuxCommandGuard(delta3AuxRealWriteGuardInput(status, previous), Delta3AuxSettings{
+				Enabled:             true,
+				MinCommandDiffW:     100,
+				MinCommandInterval:  5 * time.Minute,
+				BackupReserveMinSoc: 20,
+			})
+
+			if status.Delta3AuxPlan.BackupReserveApplyState != "ignored" {
+				t.Fatalf("BackupReserveApplyState = %q, want ignored", status.Delta3AuxPlan.BackupReserveApplyState)
+			}
+			if log.SuppressedReason != "no command candidate" {
+				t.Fatalf("SuppressedReason = %q, want no command candidate", log.SuppressedReason)
+			}
+			if log.WouldWrite {
+				t.Fatal("WouldWrite = true, want false")
+			}
+		})
+	}
+}
+
 func TestEvaluateDelta3AuxCommandGuardSuppressesStaleBackupReserveRetry(t *testing.T) {
 	now := time.Date(2026, 5, 28, 13, 10, 0, 0, time.UTC)
 	currentLimit := 300

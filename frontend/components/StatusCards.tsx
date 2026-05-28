@@ -748,7 +748,8 @@ function backupReserveApplyLabel(plan: EnergyStatus["delta3AuxPlan"] | null | un
     pending: "反映待ち",
     failed: "反映失敗",
     applied: "反映済み",
-    stale: "古い履歴"
+    stale: "古い履歴",
+    ignored: "反映不要"
   };
   const state = stateLabels[plan.backupReserveApplyState] ?? plan.backupReserveApplyState;
   const target = plan.lastBackupReserveTargetSoc === null || plan.lastBackupReserveTargetSoc === undefined ? "" : ` / 目標 ${plan.lastBackupReserveTargetSoc}%`;

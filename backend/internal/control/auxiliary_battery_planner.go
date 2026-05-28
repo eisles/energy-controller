@@ -126,6 +126,10 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 			plan.Reason = "importing from grid; lower DELTA 3 Plus backup reserve to the master minimum so it can discharge"
 			return plan
 		}
+		if !plan.ShouldAdjustACChargeLimit && !backupReserveEnabled(input.Delta3.BackupReserveEnabled) {
+			plan.Reason = "importing from grid; backup reserve is already disabled; use existing discharge behavior"
+			return plan
+		}
 		plan.Reason = "importing from grid; reduce DELTA 3 Plus auxiliary charge toward safe minimum"
 		return plan
 	}
@@ -249,11 +253,14 @@ func maybeSetDelta3DischargeReserve(plan *domain.Delta3AuxPlan, status Delta3Aux
 	if plan == nil || status.SOC == nil || status.BackupReserveSoc == nil {
 		return
 	}
+	if !backupReserveEnabled(status.BackupReserveEnabled) {
+		return
+	}
 	target := settings.BackupReserveMinSoc
 	if *status.SOC <= target {
 		return
 	}
-	if *status.BackupReserveSoc == target && backupReserveEnabled(status.BackupReserveEnabled) {
+	if *status.BackupReserveSoc == target {
 		return
 	}
 	plan.RecommendedBackupReserveSoc = &target

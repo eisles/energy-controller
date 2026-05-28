@@ -248,6 +248,16 @@ func annotateDelta3AuxBackupReserveApplyState(plan *domain.Delta3AuxPlan, previo
 		return
 	}
 	if previous.ShouldSetBackupReserve && plan.CurrentBackupReserveEnabled != nil && !*plan.CurrentBackupReserveEnabled {
+		if delta3AuxImportRecoveryMinReserveCommand(previous, settings) && plan.CurrentBackupReserveSoc != nil && *plan.CurrentBackupReserveSoc == 0 {
+			if !hasElapsed || elapsed < settings.MinCommandInterval {
+				plan.BackupReserveApplyState = "pending"
+				plan.BackupReserveApplyReason = "waiting for DELTA 3 Plus backup reserve command reflection"
+				return
+			}
+			plan.BackupReserveApplyState = "ignored"
+			plan.BackupReserveApplyReason = "DELTA 3 Plus ignored the import-recovery backup reserve command or already has backup reserve disabled"
+			return
+		}
 		if !hasElapsed || elapsed < settings.MinCommandInterval {
 			plan.BackupReserveApplyState = "pending"
 			plan.BackupReserveApplyReason = "waiting for DELTA 3 Plus backup reserve command reflection"
@@ -317,6 +327,14 @@ func latestDelta3AuxReserveCommand(input Delta3AuxCommandGuardInput) *domain.Del
 		return input.Previous
 	}
 	return nil
+}
+
+func delta3AuxImportRecoveryMinReserveCommand(log *domain.Delta3AuxControlCommandLog, settings Delta3AuxSettings) bool {
+	if log == nil || !log.ShouldSetBackupReserve || log.TargetBackupReserveSoc == nil {
+		return false
+	}
+	settings = normalizeDelta3AuxSettings(settings)
+	return (log.StrategyState == "RECOVERING" || log.StrategyState == "SAFE_LIMIT") && *log.TargetBackupReserveSoc == settings.BackupReserveMinSoc
 }
 
 func stripDelta3AuxUnreflectedReserveRetry(log *domain.Delta3AuxControlCommandLog, plan *domain.Delta3AuxPlan) {

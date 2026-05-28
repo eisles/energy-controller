@@ -90,7 +90,7 @@ func TestPlanDelta3AuxChargingReducesTowardMinimumWhenImporting(t *testing.T) {
 	}
 }
 
-func TestPlanDelta3AuxChargingSetsDischargeReserveWhenImportingFromPassthrough(t *testing.T) {
+func TestPlanDelta3AuxChargingDoesNotEnableBackupReserveWhenImportingFromPassthrough(t *testing.T) {
 	currentLimit := 100
 	soc := 89
 	acIn := 478
@@ -130,14 +130,17 @@ func TestPlanDelta3AuxChargingSetsDischargeReserveWhenImportingFromPassthrough(t
 	if plan.ShouldAdjustACChargeLimit {
 		t.Fatal("ShouldAdjustACChargeLimit = true, want false when already at minimum charge limit")
 	}
-	if !plan.ShouldSetBackupReserve {
-		t.Fatal("ShouldSetBackupReserve = false, want true to enable discharge reserve")
+	if plan.ShouldSetBackupReserve {
+		t.Fatal("ShouldSetBackupReserve = true, want false when backup reserve is already disabled")
 	}
-	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 20 {
-		t.Fatalf("RecommendedBackupReserveSoc = %v, want 20", plan.RecommendedBackupReserveSoc)
+	if plan.RecommendedBackupReserveSoc != nil {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want nil", plan.RecommendedBackupReserveSoc)
 	}
-	if !plan.WouldWrite {
-		t.Fatal("WouldWrite = false, want true")
+	if plan.WouldWrite {
+		t.Fatal("WouldWrite = true, want false")
+	}
+	if plan.Reason != "importing from grid; backup reserve is already disabled; use existing discharge behavior" {
+		t.Fatalf("Reason = %q", plan.Reason)
 	}
 }
 
@@ -189,6 +192,47 @@ func TestPlanDelta3AuxChargingLowersReserveToMasterFloorWhenImporting(t *testing
 	}
 	if plan.Reason != "importing from grid; lower DELTA 3 Plus backup reserve to the master minimum so it can discharge" {
 		t.Fatalf("Reason = %q", plan.Reason)
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true")
+	}
+}
+
+func TestPlanDelta3AuxChargingRaisesEnabledReserveToMasterFloorWhenImporting(t *testing.T) {
+	currentLimit := 100
+	soc := 88
+	reserve := 5
+	enabled := true
+	plan := PlanDelta3AuxCharging(Delta3AuxPlanInput{
+		Status: domain.Status{
+			ImportW:     900,
+			SurplusPlan: &domain.SurplusPlan{StrategyState: "RECOVERING"},
+			UpdatedAt:   time.Date(2026, 5, 28, 20, 0, 0, 0, time.UTC),
+		},
+		Delta3: Delta3AuxStatus{
+			Available:            true,
+			SOC:                  &soc,
+			ACChargeLimitW:       &currentLimit,
+			BackupReserveSoc:     &reserve,
+			BackupReserveEnabled: &enabled,
+		},
+	}, Delta3AuxSettings{
+		Enabled:                true,
+		MinChargeW:             100,
+		MaxChargeW:             1400,
+		SafetyMarginW:          50,
+		MinCommandDiffW:        100,
+		MaxIncreaseStepW:       300,
+		MaxDecreaseStepW:       500,
+		StopImportThresholdW:   50,
+		MinDischargeReserveSoc: 20,
+	}, DefaultSettings())
+
+	if !plan.ShouldSetBackupReserve {
+		t.Fatal("ShouldSetBackupReserve = false, want true to restore reserve floor")
+	}
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 20 {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want 20", plan.RecommendedBackupReserveSoc)
 	}
 	if !plan.WouldWrite {
 		t.Fatal("WouldWrite = false, want true")
