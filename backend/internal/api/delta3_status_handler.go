@@ -12,7 +12,7 @@ import (
 	"github.com/eisles/energy-controller/backend/internal/config"
 	"github.com/eisles/energy-controller/backend/internal/domain"
 	"github.com/eisles/energy-controller/backend/internal/ecoflow"
-	"github.com/eisles/energy-controller/backend/internal/ecoflowdelta3"
+	"github.com/eisles/energy-controller/backend/internal/ecoflowprivate"
 )
 
 const (
@@ -22,7 +22,7 @@ const (
 )
 
 type delta3ProbeClient interface {
-	Probe(ctx context.Context) (ecoflowdelta3.Status, error)
+	Probe(ctx context.Context) (ecoflowprivate.Status, error)
 }
 
 type ecoFlowCloudBatteryReader interface {
@@ -143,14 +143,14 @@ func NewDelta3StatusReaderWithTargetProvider(cfg config.Config, logger *slog.Log
 
 func newDelta3StatusReader(cfg config.Config, logger *slog.Logger, client delta3ProbeClient) *Delta3StatusReader {
 	if client == nil && cfg.Delta3ReadEnabled {
-		client = ecoflowdelta3.NewClient(delta3ProbeConfig(cfg))
+		client = ecoflowprivate.NewClient(delta3ProbeConfig(cfg))
 	}
 	return &Delta3StatusReader{
 		cfg:    cfg,
 		logger: logger,
 		client: client,
 		clientFactory: func(cfg config.Config) delta3ProbeClient {
-			return ecoflowdelta3.NewClient(delta3ProbeConfig(cfg))
+			return ecoflowprivate.NewClient(delta3ProbeConfig(cfg))
 		},
 		ecoFlowCloudReaderFactory: func(cfg ecoflow.Config) ecoFlowCloudBatteryReader {
 			return ecoflow.NewSignedClient(cfg)
@@ -236,7 +236,7 @@ func (r *Delta3StatusReader) currentStatusForConfig(ctx context.Context, cfg con
 		} else if r.clientFactory != nil {
 			client = r.clientFactory(cfg)
 		} else {
-			client = ecoflowdelta3.NewClient(delta3ProbeConfig(cfg))
+			client = ecoflowprivate.NewClient(delta3ProbeConfig(cfg))
 		}
 	}
 	response := readDelta3Status(ctx, cfg, client, r.logger)
@@ -350,7 +350,7 @@ func readDelta3Status(ctx context.Context, cfg config.Config, client delta3Probe
 		}
 	}
 	if client == nil {
-		client = ecoflowdelta3.NewClient(probeCfg)
+		client = ecoflowprivate.NewClient(probeCfg)
 	}
 	timeout := cfg.Delta3Timeout
 	if timeout <= 0 {
@@ -447,8 +447,8 @@ func mapEcoFlowCloudStatus(status domain.BatteryStatus, deviceType string, now t
 	}
 }
 
-func delta3ProbeConfig(cfg config.Config) ecoflowdelta3.Config {
-	return ecoflowdelta3.Config{
+func delta3ProbeConfig(cfg config.Config) ecoflowprivate.Config {
+	return ecoflowprivate.Config{
 		PrivateAPIHost: cfg.Delta3PrivateAPIHost,
 		Email:          cfg.Delta3PrivateEmail,
 		Password:       cfg.Delta3PrivatePassword,
@@ -463,7 +463,7 @@ func intPtr(value int) *int {
 	return &value
 }
 
-func mapDelta3Status(status ecoflowdelta3.Status, now time.Time) Delta3StatusResponse {
+func mapDelta3Status(status ecoflowprivate.Status, now time.Time) Delta3StatusResponse {
 	return Delta3StatusResponse{
 		Available:            true,
 		DeviceType:           status.DeviceType,

@@ -1,4 +1,4 @@
-package ecoflowdelta3
+package ecoflowprivate
 
 import (
 	"net/http"
@@ -58,20 +58,4 @@ func (c Config) MissingReadCredentials() []string {
 		missing = append(missing, "ECOFLOW_DELTA3_DEVICE_TYPE")
 	}
 	return missing
-}
-
-type DeviceRange struct {
-	MinACChargeW int `json:"minAcChargeW"`
-	MaxACChargeW int `json:"maxAcChargeW"`
-}
-
-func RangeForDeviceType(deviceType string) (DeviceRange, bool) {
-	switch strings.ToUpper(strings.TrimSpace(deviceType)) {
-	case "DELTA_3", "DELTA_3_PLUS":
-		return DeviceRange{MinACChargeW: 100, MaxACChargeW: 1500}, true
-	case "DELTA_3_1500", "DELTA_3_MAX_PLUS":
-		return DeviceRange{MinACChargeW: 200, MaxACChargeW: 1500}, true
-	default:
-		return DeviceRange{}, false
-	}
 }

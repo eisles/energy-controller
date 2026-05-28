@@ -1,4 +1,4 @@
-package ecoflowdelta3
+package ecoflowprivate
 
 import (
 	"bytes"
@@ -160,10 +160,10 @@ type certificationResponse struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 	Data    struct {
-		URL                 string `json:"url"`
+		URL                 string   `json:"url"`
 		Port                mqttPort `json:"port"`
-		CertificateAccount  string `json:"certificateAccount"`
-		CertificatePassword string `json:"certificatePassword"`
+		CertificateAccount  string   `json:"certificateAccount"`
+		CertificatePassword string   `json:"certificatePassword"`
 	} `json:"data"`
 }
 

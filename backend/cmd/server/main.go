@@ -17,7 +17,7 @@ import (
 	"github.com/eisles/energy-controller/backend/internal/control"
 	"github.com/eisles/energy-controller/backend/internal/domain"
 	"github.com/eisles/energy-controller/backend/internal/ecoflow"
-	"github.com/eisles/energy-controller/backend/internal/ecoflowdelta3"
+	"github.com/eisles/energy-controller/backend/internal/ecoflowprivate"
 	"github.com/eisles/energy-controller/backend/internal/mock"
 	"github.com/eisles/energy-controller/backend/internal/nature"
 	"github.com/eisles/energy-controller/backend/internal/notify"
@@ -383,7 +383,7 @@ func (w ecoFlowDelta3AuxWriteClient) SetACChargePower(ctx context.Context, watts
 	if !ok {
 		return errors.New("DELTA 3 Plus master write target is unavailable")
 	}
-	client := ecoflowdelta3.NewClient(ecoflowdelta3.Config{
+	client := ecoflowprivate.NewClient(ecoflowprivate.Config{
 		PrivateAPIHost: cfg.Delta3PrivateAPIHost,
 		Email:          cfg.Delta3PrivateEmail,
 		Password:       cfg.Delta3PrivatePassword,
@@ -392,7 +392,7 @@ func (w ecoFlowDelta3AuxWriteClient) SetACChargePower(ctx context.Context, watts
 		MQTTClientID:   cfg.Delta3MQTTClientID,
 		Timeout:        cfg.Delta3Timeout,
 	})
-	_, err = client.ExecuteACChargePower(ctx, watts, ecoflowdelta3.WriteGuards{
+	_, err = client.ExecuteACChargePower(ctx, watts, ecoflowprivate.WriteGuards{
 		MockMode:                cfg.MockMode,
 		SimulationMode:          cfg.SimulationMode,
 		EnableRealControl:       cfg.EnableRealControl,
@@ -415,7 +415,7 @@ func (w ecoFlowDelta3AuxWriteClient) SetEnergyBackupEnabled(ctx context.Context,
 	if !ok {
 		return errors.New("DELTA 3 Plus master write target is unavailable")
 	}
-	client := ecoflowdelta3.NewClient(ecoflowdelta3.Config{
+	client := ecoflowprivate.NewClient(ecoflowprivate.Config{
 		PrivateAPIHost: cfg.Delta3PrivateAPIHost,
 		Email:          cfg.Delta3PrivateEmail,
 		Password:       cfg.Delta3PrivatePassword,
@@ -424,7 +424,7 @@ func (w ecoFlowDelta3AuxWriteClient) SetEnergyBackupEnabled(ctx context.Context,
 		MQTTClientID:   cfg.Delta3MQTTClientID,
 		Timeout:        cfg.Delta3Timeout,
 	})
-	_, err = client.ExecuteEnergyBackupEnabled(ctx, enabled, startSoc, ecoflowdelta3.WriteGuards{
+	_, err = client.ExecuteEnergyBackupEnabled(ctx, enabled, startSoc, ecoflowprivate.WriteGuards{
 		MockMode:                cfg.MockMode,
 		SimulationMode:          cfg.SimulationMode,
 		EnableRealControl:       cfg.EnableRealControl,

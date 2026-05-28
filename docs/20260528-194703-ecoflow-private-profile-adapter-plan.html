@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>EcoFlow Private MQTT 共通 adapter / 機器 profile 化 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; margin: 40px; color: #17202a; }
+    h1, h2, h3 { line-height: 1.3; }
+    code { background: #f3f5f7; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    pre { background: #f3f5f7; padding: 1rem; overflow: auto; border-radius: 6px; }
+    ul { padding-left: 1.4rem; }
+    .note { border-left: 4px solid #2563eb; padding-left: 1rem; background: #f8fbff; }
+  </style>
+</head>
+<body>
+  <h1>EcoFlow Private MQTT 共通 adapter / 機器 profile 化 実装計画</h1>
+
+  <h2>目的</h2>
+  <p>EcoFlow private MQTT 連携のファイル名と責務を、DELTA 3 Plus 固有の前提から、EcoFlow private API/MQTT 共通 adapter と機器別 profile に分ける。</p>
+  <p>これにより、新しい EcoFlow 機種を追加するときに adapter 本体を増やすのではなく、機器 profile と capability/range を追加する構成にする。</p>
+
+  <h2>非目的</h2>
+  <ul>
+    <li>実機 write の安全条件を緩めない。</li>
+    <li>新しい write command を追加しない。</li>
+    <li><code>.env</code> の認証情報名や既存 API レスポンス JSON を破壊的に変更しない。</li>
+    <li>DB テーブル名、既存 URL、既存 UI 表示名をこの作業だけで変更しない。</li>
+    <li>DELTA Pro 3 の cloud API 取得経路を private MQTT に移行しない。</li>
+  </ul>
+
+  <h2>現状</h2>
+  <ul>
+    <li><code>backend/internal/ecoflowdelta3</code> が private MQTT の認証、MQTT transport、topic、codec、write guard、コマンド payload をまとめて持っている。</li>
+    <li>メーカー共通と思われる責務と、DELTA 3 系の機器 profile/range が同じ package 名に混ざっている。</li>
+    <li>呼び出し側は <code>backend/internal/api/delta3_status_handler.go</code>、<code>backend/cmd/server/main.go</code>、検証 CLI <code>backend/cmd/ecoflow-delta3-probe</code> が中心。</li>
+    <li>API パス <code>/api/delta3/status</code> や <code>.env</code> の <code>ECOFLOW_DELTA3_*</code> は既存運用に使われているため、今回は互換維持する。</li>
+  </ul>
+
+  <h2>変更方針</h2>
+  <h3>Package 名</h3>
+  <ul>
+    <li><code>backend/internal/ecoflowdelta3</code> を <code>backend/internal/ecoflowprivate</code> に rename する。</li>
+    <li>Go package 名も <code>ecoflowprivate</code> に変更する。</li>
+    <li>import 参照を <code>ecoflowprivate</code> に更新する。</li>
+  </ul>
+
+  <h3>機器 profile</h3>
+  <p>新規に profile 層を package 内に追加する。</p>
+  <ul>
+    <li><code>DeviceProfile</code>: device type、family、AC充電範囲、対応 command、将来の topic/codec 差異を保持する。</li>
+    <li><code>ProfileForDeviceType(deviceType string) (DeviceProfile, bool)</code></li>
+    <li>既存 <code>RangeForDeviceType</code> は互換 wrapper として残すか、内部で profile を使う。</li>
+  </ul>
+  <p>対象 profile: <code>DELTA_3</code>, <code>DELTA_3_PLUS</code>, <code>DELTA_3_1500</code>, <code>DELTA_3_MAX_PLUS</code></p>
+
+  <h3>共通 adapter と profile の分離</h3>
+  <ul>
+    <li><code>auth.go</code>, <code>mqtt.go</code>, <code>topics.go</code>, <code>client.go</code> は EcoFlow private MQTT 共通層として残す。</li>
+    <li><code>config.go</code>, <code>guard.go</code>, <code>codec.go</code> の device type 分岐は profile を参照する形へ寄せる。</li>
+    <li>error message のうち「DELTA_3 private write」は「EcoFlow private write」へ変更する。</li>
+  </ul>
+
+  <h2>Data / API contract</h2>
+  <p>互換維持するもの:</p>
+  <ul>
+    <li><code>/api/delta3/status</code>, <code>/api/delta3/aux-plan</code>, <code>/api/delta3/aux-commands</code></li>
+    <li><code>Delta3StatusResponse</code>, <code>Delta3StatusReader</code></li>
+    <li><code>.env</code> の <code>ECOFLOW_DELTA3_*</code></li>
+    <li>DB テーブル <code>delta3_aux_control_command_logs</code></li>
+  </ul>
+  <p>将来 rename する候補だが今回は対象外: API パス名、DTO 名、DB テーブル名、frontend state 名。</p>
+
+  <h2>安全境界</h2>
+  <ul>
+    <li>実機 write の条件は維持する: <code>ENABLE_REAL_CONTROL=true</code>, <code>SIMULATION_MODE=false</code>, <code>MOCK_MODE=false</code>, <code>AUTO_CONTROL_ENABLED=true</code>, 実制御期限 / trial window が有効, <code>CONFIRM_ECOFLOW_WRITE</code> 一致, <code>ECOFLOW_DELTA3_READ_ENABLED=true</code>, <code>ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=true</code>, <code>ECOFLOW_DELTA3_ALLOW_PRIVATE_API_WRITE=true</code>, <code>ECOFLOW_DELTA3_EXECUTE=true</code>, 機器マスターで対象機器が <code>enabled=true</code> / <code>controlEnabled=true</code>, 既存の最小コマンド間隔、重複抑止、未反映リザーブ抑止。</li>
+    <li>未定義機種は write 不可のままにする。</li>
+    <li>認証情報、SN、token は plan / test / commit message に含めない。</li>
+    <li>実機 write は追加実行しない。テストは mock transport / dry-run を使う。</li>
+  </ul>
+
+  <h2>実装手順</h2>
+  <ol>
+    <li><code>backend/internal/ecoflowdelta3</code> を <code>backend/internal/ecoflowprivate</code> に rename。</li>
+    <li>package 宣言と import を更新。</li>
+    <li><code>profile.go</code> を追加し、機器別 AC 充電範囲と family を定義。</li>
+    <li><code>RangeForDeviceType</code> / <code>ValidateACChargePower</code> / <code>ValidateWriteGuards</code> を profile 経由に変更。</li>
+    <li>error message を EcoFlow private 汎用表現へ寄せる。</li>
+    <li>既存 tests を package rename に追従し、profile の単体テストを追加。</li>
+    <li>呼び出し側の import と型参照を更新。</li>
+    <li>Go test と frontend build で既存挙動を確認。</li>
+  </ol>
+
+  <h2>レビュー観点</h2>
+  <ul>
+    <li>既存の read/status/write guard 挙動が変わっていないか。</li>
+    <li>未対応 device type が誤って write 可能になっていないか。</li>
+    <li><code>.env</code> や API パスの互換性を壊していないか。</li>
+    <li>package rename による import 漏れがないか。</li>
+    <li>新しい profile が将来機種追加の入口として十分か。</li>
+  </ul>
+
+  <h2>検証コマンド</h2>
+  <ul>
+    <li><code>cd backend &amp;&amp; rtk go test ./...</code></li>
+    <li><code>cd frontend &amp;&amp; rtk npm run build</code></li>
+    <li><code>rtk git diff --check</code></li>
+    <li><code>rtk codex review --uncommitted</code></li>
+  </ul>
+
+  <h2>ロールバック</h2>
+  <p>package rename と profile 追加だけなので、問題があれば <code>ecoflowprivate</code> package rename 差分を戻す。DB migration や実機設定変更は含めないため、運用データの rollback は不要。</p>
+</body>
+</html>

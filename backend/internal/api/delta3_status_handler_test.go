@@ -10,7 +10,7 @@ import (
 	"github.com/eisles/energy-controller/backend/internal/config"
 	"github.com/eisles/energy-controller/backend/internal/domain"
 	"github.com/eisles/energy-controller/backend/internal/ecoflow"
-	"github.com/eisles/energy-controller/backend/internal/ecoflowdelta3"
+	"github.com/eisles/energy-controller/backend/internal/ecoflowprivate"
 )
 
 func TestReadDelta3StatusDisabledDoesNotProbe(t *testing.T) {
@@ -44,7 +44,7 @@ func TestReadDelta3StatusMapsReadOnlyFields(t *testing.T) {
 	acLimitW := 100
 	gridBypassDisabled := false
 	acOutputEnabled := true
-	response := readDelta3Status(context.Background(), validDelta3Config(), fakeDelta3Client{status: ecoflowdelta3.Status{
+	response := readDelta3Status(context.Background(), validDelta3Config(), fakeDelta3Client{status: ecoflowprivate.Status{
 		DeviceType:         "DELTA_3",
 		CMSBatterySoc:      &soc,
 		ACInW:              &acInW,
@@ -347,13 +347,13 @@ func validDelta3Config() config.Config {
 	}
 }
 
-func delta3StatusFixture(soc int) ecoflowdelta3.Status {
+func delta3StatusFixture(soc int) ecoflowprivate.Status {
 	acInW := 100
 	acOutW := 380
 	acLimitW := 100
 	gridBypassDisabled := false
 	acOutputEnabled := true
-	return ecoflowdelta3.Status{
+	return ecoflowprivate.Status{
 		DeviceType:         "DELTA_3",
 		CMSBatterySoc:      &soc,
 		ACInW:              &acInW,
@@ -365,7 +365,7 @@ func delta3StatusFixture(soc int) ecoflowdelta3.Status {
 }
 
 type fakeDelta3Client struct {
-	status ecoflowdelta3.Status
+	status ecoflowprivate.Status
 	err    error
 	calls  *int
 }
@@ -379,7 +379,7 @@ func (r fakeEcoFlowCloudReader) GetBatteryStatus(context.Context) (domain.Batter
 	return r.status, r.err
 }
 
-func (f fakeDelta3Client) Probe(context.Context) (ecoflowdelta3.Status, error) {
+func (f fakeDelta3Client) Probe(context.Context) (ecoflowprivate.Status, error) {
 	if f.calls != nil {
 		*f.calls++
 	}
@@ -388,7 +388,7 @@ func (f fakeDelta3Client) Probe(context.Context) (ecoflowdelta3.Status, error) {
 
 type panicDelta3Client struct{}
 
-func (panicDelta3Client) Probe(context.Context) (ecoflowdelta3.Status, error) {
+func (panicDelta3Client) Probe(context.Context) (ecoflowprivate.Status, error) {
 	panic("DELTA_3 client should not be called")
 }
 

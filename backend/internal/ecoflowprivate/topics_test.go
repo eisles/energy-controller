@@ -1,4 +1,4 @@
-package ecoflowdelta3
+package ecoflowprivate
 
 import "testing"
 

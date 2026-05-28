@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eisles/energy-controller/backend/internal/ecoflowdelta3"
+	"github.com/eisles/energy-controller/backend/internal/ecoflowprivate"
 )
 
 func TestRunDryRunDoesNotRequireCredentials(t *testing.T) {
@@ -122,7 +122,7 @@ func TestRunExecuteRequiresPrivateWriteFlagBeforeNetwork(t *testing.T) {
 		"SIMULATION_MODE":            "false",
 		"ENABLE_REAL_CONTROL":        "true",
 		"AUTO_CONTROL_ENABLED":       "false",
-		"CONFIRM_ECOFLOW_WRITE":      ecoflowdelta3.ConfirmWriteValue,
+		"CONFIRM_ECOFLOW_WRITE":      ecoflowprivate.ConfirmWriteValue,
 		"ECOFLOW_PRIVATE_EMAIL":      "user@example.com",
 		"ECOFLOW_PRIVATE_PASSWORD":   "secret",
 		"ECOFLOW_DELTA3_DEVICE_SN":   "SN123",
@@ -140,7 +140,7 @@ func TestRunExecuteRequiresAutoControlDisabled(t *testing.T) {
 		"SIMULATION_MODE":            "false",
 		"ENABLE_REAL_CONTROL":        "true",
 		"AUTO_CONTROL_ENABLED":       "true",
-		"CONFIRM_ECOFLOW_WRITE":      ecoflowdelta3.ConfirmWriteValue,
+		"CONFIRM_ECOFLOW_WRITE":      ecoflowprivate.ConfirmWriteValue,
 		"ECOFLOW_PRIVATE_EMAIL":      "user@example.com",
 		"ECOFLOW_PRIVATE_PASSWORD":   "secret",
 		"ECOFLOW_DELTA3_DEVICE_SN":   "SN123",
@@ -153,7 +153,7 @@ func TestRunExecuteRequiresAutoControlDisabled(t *testing.T) {
 }
 
 func TestRunOfflineFixtureDecodesSnapshot(t *testing.T) {
-	payload := ecoflowdelta3.BuildGetSnapshotPayload(1)
+	payload := ecoflowprivate.BuildGetSnapshotPayload(1)
 	file, err := os.CreateTemp(t.TempDir(), "fixture-*.bin")
 	if err != nil {
 		t.Fatal(err)

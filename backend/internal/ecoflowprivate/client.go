@@ -1,4 +1,4 @@
-package ecoflowdelta3
+package ecoflowprivate
 
 import (
 	"context"
@@ -33,7 +33,7 @@ func NewClientWithTransport(cfg Config, transport MQTTTransport) *Client {
 
 func (c *Client) Probe(ctx context.Context) (Status, error) {
 	if missing := c.cfg.MissingReadCredentials(); len(missing) > 0 {
-		return Status{DeviceType: c.cfg.DeviceType, DeviceSN: c.cfg.DeviceSN}, fmt.Errorf("EcoFlow DELTA_3 probe missing required env: %v", missing)
+		return Status{DeviceType: c.cfg.DeviceType, DeviceSN: c.cfg.DeviceSN}, fmt.Errorf("EcoFlow private probe missing required env: %v", missing)
 	}
 	session, fromCache, err := c.cachedSession(ctx)
 	if err != nil {
@@ -179,10 +179,10 @@ func (c *Client) BuildDryRunEnergyBackupEnabled(enabled bool, startSoc int) (Com
 
 func (c *Client) validateDryRunTarget() error {
 	if c.cfg.DeviceSN == "" {
-		return fmt.Errorf("DELTA_3 dry-run requires ECOFLOW_DELTA3_DEVICE_SN or --sn")
+		return fmt.Errorf("EcoFlow private dry-run requires ECOFLOW_DELTA3_DEVICE_SN or --sn")
 	}
 	if _, ok := RangeForDeviceType(c.cfg.DeviceType); !ok {
-		return fmt.Errorf("unsupported device type for DELTA_3 dry-run: %s", c.cfg.DeviceType)
+		return fmt.Errorf("unsupported device type for EcoFlow private dry-run: %s", c.cfg.DeviceType)
 	}
 	return nil
 }
@@ -270,7 +270,7 @@ func (c *Client) ExecuteEnergyBackupEnabled(ctx context.Context, enabled bool, s
 
 func (c *Client) executeSet(ctx context.Context, build func(seq int) ([]byte, error)) (Status, error) {
 	if missing := c.cfg.MissingReadCredentials(); len(missing) > 0 {
-		return Status{DeviceType: c.cfg.DeviceType, DeviceSN: c.cfg.DeviceSN}, fmt.Errorf("EcoFlow DELTA_3 write missing required env: %v", missing)
+		return Status{DeviceType: c.cfg.DeviceType, DeviceSN: c.cfg.DeviceSN}, fmt.Errorf("EcoFlow private write missing required env: %v", missing)
 	}
 	session, fromCache, err := c.cachedSession(ctx)
 	if err != nil {
@@ -325,10 +325,10 @@ func (c *Client) executeSetWithSession(ctx context.Context, session Session, bui
 		status.merge(part)
 	}
 	if !matchedSetReply || status.LastSetReplyConfigOK == nil {
-		return status, fmt.Errorf("DELTA_3 private write did not return set acknowledgement")
+		return status, fmt.Errorf("EcoFlow private write did not return set acknowledgement")
 	}
 	if !*status.LastSetReplyConfigOK {
-		return status, fmt.Errorf("DELTA_3 private write was rejected by device")
+		return status, fmt.Errorf("EcoFlow private write was rejected by device")
 	}
 	return status, nil
 }

@@ -1,4 +1,4 @@
-package ecoflowdelta3
+package ecoflowprivate
 
 import (
 	"bytes"
@@ -238,7 +238,7 @@ func decodeHeaderMessage(raw []byte) ([]delta3Header, error) {
 		raw = raw[n:]
 	}
 	if len(headers) == 0 {
-		return nil, fmt.Errorf("DELTA_3 payload does not include headers")
+		return nil, fmt.Errorf("EcoFlow private payload does not include headers")
 	}
 	return headers, nil
 }

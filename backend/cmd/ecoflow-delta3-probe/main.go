@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eisles/energy-controller/backend/internal/ecoflowdelta3"
+	"github.com/eisles/energy-controller/backend/internal/ecoflowprivate"
 )
 
 type envGetter func(string) string
@@ -44,7 +44,7 @@ type options struct {
 
 type output struct {
 	Mode   string                 `json:"mode"`
-	Status ecoflowdelta3.Status   `json:"status"`
+	Status ecoflowprivate.Status  `json:"status"`
 	Write  map[string]interface{} `json:"write"`
 }
 
@@ -61,14 +61,14 @@ func run(ctx context.Context, args []string, getenv envGetter, out io.Writer) er
 		return err
 	}
 	cfg := buildConfig(opts, getenv)
-	client := ecoflowdelta3.NewClient(cfg)
+	client := ecoflowprivate.NewClient(cfg)
 
 	if opts.fixturePath != "" {
 		raw, err := os.ReadFile(opts.fixturePath)
 		if err != nil {
 			return err
 		}
-		status, err := ecoflowdelta3.DecodeSnapshot(cfg.DeviceType, cfg.DeviceSN, raw)
+		status, err := ecoflowprivate.DecodeSnapshot(cfg.DeviceType, cfg.DeviceSN, raw)
 		if err != nil {
 			return err
 		}
@@ -86,9 +86,9 @@ func run(ctx context.Context, args []string, getenv envGetter, out io.Writer) er
 	return writeJSON(out, output{Mode: "read-only", Status: status, Write: map[string]interface{}{"wouldSend": false, "sent": false, "reason": "read-only probe"}})
 }
 
-func runWriteCandidate(ctx context.Context, opts options, getenv envGetter, client *ecoflowdelta3.Client, out io.Writer) error {
+func runWriteCandidate(ctx context.Context, opts options, getenv envGetter, client *ecoflowprivate.Client, out io.Writer) error {
 	if opts.writeCandidateCount() != 1 {
-		return fmt.Errorf("set only one command per DELTA_3 probe run")
+		return fmt.Errorf("set only one command per EcoFlow private probe run")
 	}
 	command := "set_ac_charge_power"
 	if opts.backupReserveSocSet {
@@ -105,7 +105,7 @@ func runWriteCandidate(ctx context.Context, opts options, getenv envGetter, clie
 	if opts.energyBackupEnabledSet && !opts.energyBackupStartSocSet {
 		return fmt.Errorf("--energy-backup-start-soc is required with --energy-backup-enabled")
 	}
-	guards := ecoflowdelta3.WriteGuards{
+	guards := ecoflowprivate.WriteGuards{
 		MockMode:                envBool(getenv, "MOCK_MODE", true),
 		SimulationMode:          envBool(getenv, "SIMULATION_MODE", true),
 		EnableRealControl:       envBool(getenv, "ENABLE_REAL_CONTROL", false),
@@ -117,7 +117,7 @@ func runWriteCandidate(ctx context.Context, opts options, getenv envGetter, clie
 		Command:                 command,
 	}
 	if !opts.execute {
-		var payload ecoflowdelta3.CommandPayload
+		var payload ecoflowprivate.CommandPayload
 		var err error
 		switch {
 		case opts.setACChargeWSet:
@@ -138,7 +138,7 @@ func runWriteCandidate(ctx context.Context, opts options, getenv envGetter, clie
 		}
 		return writeJSON(out, output{
 			Mode:   "dry-run",
-			Status: ecoflowdelta3.Status{},
+			Status: ecoflowprivate.Status{},
 			Write: map[string]interface{}{
 				"wouldSend": true,
 				"sent":      false,
@@ -150,7 +150,7 @@ func runWriteCandidate(ctx context.Context, opts options, getenv envGetter, clie
 		})
 	}
 
-	var status ecoflowdelta3.Status
+	var status ecoflowprivate.Status
 	var err error
 	switch {
 	case opts.setACChargeWSet:
@@ -198,7 +198,7 @@ func parseOptions(args []string) (options, error) {
 	flags.IntVar(&opts.energyBackupStartSoc, "energy-backup-start-soc", 0, "required backup start SOC when --energy-backup-enabled is set")
 	flags.BoolVar(&opts.execute, "execute", false, "send one real private MQTT write command")
 	flags.BoolVar(&opts.allowPrivateAPIWrite, "allow-private-api-write", false, "required together with --execute for private MQTT write")
-	flags.BoolVar(&opts.allowAutoControlOverlap, "allow-auto-control-overlap", false, "allow one-shot DELTA_3 private write while AUTO_CONTROL_ENABLED=true")
+	flags.BoolVar(&opts.allowAutoControlOverlap, "allow-auto-control-overlap", false, "allow one-shot EcoFlow private write while AUTO_CONTROL_ENABLED=true")
 	if err := flags.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -252,15 +252,15 @@ func (opts options) writeCandidateCount() int {
 	return count
 }
 
-func buildConfig(opts options, getenv envGetter) ecoflowdelta3.Config {
+func buildConfig(opts options, getenv envGetter) ecoflowprivate.Config {
 	timeout := opts.timeout
 	if !opts.timeoutSet {
 		if timeoutSeconds := envInt(getenv, "ECOFLOW_DELTA3_TIMEOUT_SEC", 0); timeoutSeconds > 0 {
 			timeout = time.Duration(timeoutSeconds) * time.Second
 		}
 	}
-	return ecoflowdelta3.Config{
-		PrivateAPIHost: firstNonEmpty(opts.privateAPIHost, getenv("ECOFLOW_PRIVATE_API_HOST"), ecoflowdelta3.DefaultPrivateAPIHost),
+	return ecoflowprivate.Config{
+		PrivateAPIHost: firstNonEmpty(opts.privateAPIHost, getenv("ECOFLOW_PRIVATE_API_HOST"), ecoflowprivate.DefaultPrivateAPIHost),
 		Email:          getenv("ECOFLOW_PRIVATE_EMAIL"),
 		Password:       getenv("ECOFLOW_PRIVATE_PASSWORD"),
 		DeviceSN:       firstNonEmpty(opts.sn, getenv("ECOFLOW_DELTA3_DEVICE_SN")),
