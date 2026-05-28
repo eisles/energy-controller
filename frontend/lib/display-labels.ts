@@ -7,6 +7,7 @@ const strategyStateLabels: Record<string, string> = {
   HOLD: "保留",
   WAIT_PRO3: "DELTA Pro 3優先待ち",
   SAFE_LIMIT: "安全上限調整",
+  AC_OUTPUT_OFF: "AC出力OFF",
   DISABLED: "無効",
   UNAVAILABLE: "取得不可",
   FULL: "満充電付近",
@@ -45,6 +46,7 @@ const exactGuardReasonLabels: Record<string, string> = {
   "target AC charge limit is unavailable": "目標AC充電上限がありません",
   "target AC charge limit diff is below threshold": "AC充電上限の差分がしきい値未満です",
   "backup reserve status unavailable": "バックアップリザーブ値が取得できません",
+  "previous backup reserve command was not reflected by device": "前回のバックアップリザーブ設定が実機に反映されていないため同じ送信を止めています",
   "mode status verified": "動作モード確認済み",
   "outside night charge window": "深夜充電時間外です",
   "night charge not needed": "深夜充電は不要です",
@@ -88,7 +90,14 @@ const exactReasonLabels: Record<string, string> = {
   "DELTA 3 Plus auxiliary target is within command diff threshold": "DELTA 3 Plus補助目標が変更しきい値内です",
   "DELTA Pro 3 priority is satisfied; use DELTA 3 Plus to absorb residual export": "DELTA Pro 3優先後の残余売電をDELTA 3 Plusで吸収します",
   "DELTA Pro 3 priority is satisfied; set DELTA 3 Plus AC charge and backup reserve to absorb export": "DELTA 3 PlusのAC充電上限とバックアップを上げて売電を吸収します",
-  "DELTA 3 Plus AC charge is maxed but passthrough; raise backup reserve above current SOC": "DELTA 3 Plusがパススルーのためリザーブを現在残量より上げます"
+  "DELTA 3 Plus AC charge is maxed but passthrough; raise backup reserve above current SOC": "DELTA 3 Plusがパススルーのためリザーブを現在残量より上げます",
+  "DELTA 3 Plus AC output is OFF; auto recovery is allowed for this device, but AC output write payload is not verified yet": "DELTA 3 PlusのAC出力がOFFです。復旧許可はありますが、AC出力ONの送信payloadが未検証のため自動復旧は行いません",
+  "DELTA 3 Plus AC output is OFF; auto recovery is not allowed for this device": "DELTA 3 PlusのAC出力がOFFです。この機器は自動復旧が許可されていません",
+  "previous backup reserve command was not reflected by device": "前回のバックアップリザーブ設定が実機に反映されていないため同じ送信を止めています",
+  "DELTA 3 Plus backup reserve status is unavailable after the last command": "前回リザーブ送信後の実機リザーブ状態を取得できません",
+  "DELTA 3 Plus backup reserve command is reflected by the device": "前回リザーブ送信は実機へ反映済みです",
+  "waiting for DELTA 3 Plus backup reserve command reflection": "前回リザーブ送信の実機反映待ちです",
+  "DELTA 3 Plus backup reserve command was not reflected by the device": "前回リザーブ送信が実機へ反映されていません"
 };
 
 const partialReasonLabels: Array<[string, string]> = [

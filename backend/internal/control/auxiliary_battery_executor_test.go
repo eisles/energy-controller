@@ -372,6 +372,389 @@ func TestEvaluateDelta3AuxCommandGuardSuppressesBackupReserveWhenCurrentReserveU
 	}
 }
 
+func TestEvaluateDelta3AuxCommandGuardMarksBackupReserveApplyPending(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	currentLimit := 300
+	currentReserve := 0
+	targetReserve := 80
+	previous := &domain.Delta3AuxControlCommandLog{
+		MeasuredAt:             now.Add(-1 * time.Minute),
+		CommandSent:            true,
+		StrategyState:          "READY",
+		ShouldSetBackupReserve: true,
+		TargetBackupReserveSoc: &targetReserve,
+		CommandFingerprint:     "previous",
+	}
+	status := domain.Status{
+		ExportW:   200,
+		UpdatedAt: now,
+		Delta3AuxPlan: &domain.Delta3AuxPlan{
+			StrategyState:               "READY",
+			RecommendedACChargeLimitW:   currentLimit,
+			CurrentACChargeLimitW:       &currentLimit,
+			RecommendedBackupReserveSoc: &targetReserve,
+			CurrentBackupReserveSoc:     &currentReserve,
+			ShouldSetBackupReserve:      true,
+			Reason:                      "test pending",
+		},
+	}
+
+	EvaluateDelta3AuxCommandGuard(delta3AuxRealWriteGuardInput(status, previous), Delta3AuxSettings{
+		Enabled:            true,
+		MinCommandDiffW:    100,
+		MinCommandInterval: 5 * time.Minute,
+	})
+
+	if status.Delta3AuxPlan.BackupReserveApplyState != "pending" {
+		t.Fatalf("BackupReserveApplyState = %q, want pending", status.Delta3AuxPlan.BackupReserveApplyState)
+	}
+	if status.Delta3AuxPlan.LastBackupReserveTargetSoc == nil || *status.Delta3AuxPlan.LastBackupReserveTargetSoc != targetReserve {
+		t.Fatalf("LastBackupReserveTargetSoc = %v, want %d", status.Delta3AuxPlan.LastBackupReserveTargetSoc, targetReserve)
+	}
+}
+
+func TestEvaluateDelta3AuxCommandGuardSuppressesUnreflectedBackupReserveRetry(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 10, 0, 0, time.UTC)
+	currentLimit := 300
+	currentReserve := 0
+	targetReserve := 80
+	previous := &domain.Delta3AuxControlCommandLog{
+		MeasuredAt:             now.Add(-10 * time.Minute),
+		CommandSent:            true,
+		StrategyState:          "READY",
+		ShouldSetBackupReserve: true,
+		TargetBackupReserveSoc: &targetReserve,
+		CommandFingerprint:     "previous",
+	}
+	status := domain.Status{
+		ExportW:   200,
+		UpdatedAt: now,
+		Delta3AuxPlan: &domain.Delta3AuxPlan{
+			StrategyState:               "READY",
+			RecommendedACChargeLimitW:   currentLimit,
+			CurrentACChargeLimitW:       &currentLimit,
+			RecommendedBackupReserveSoc: &targetReserve,
+			CurrentBackupReserveSoc:     &currentReserve,
+			ShouldSetBackupReserve:      true,
+			Reason:                      "test failed",
+		},
+	}
+
+	log := EvaluateDelta3AuxCommandGuard(delta3AuxRealWriteGuardInput(status, previous), Delta3AuxSettings{
+		Enabled:            true,
+		MinCommandDiffW:    100,
+		MinCommandInterval: 5 * time.Minute,
+	})
+
+	if status.Delta3AuxPlan.BackupReserveApplyState != "failed" {
+		t.Fatalf("BackupReserveApplyState = %q, want failed", status.Delta3AuxPlan.BackupReserveApplyState)
+	}
+	if log.WouldWrite {
+		t.Fatal("WouldWrite = true, want false for unreflected reserve retry")
+	}
+	if log.SuppressedReason != "previous backup reserve command was not reflected by device" {
+		t.Fatalf("SuppressedReason = %q, want unreflected reserve suppression", log.SuppressedReason)
+	}
+}
+
+func TestEvaluateDelta3AuxCommandGuardSuppressesStaleBackupReserveRetry(t *testing.T) {
+	now := time.Date(2026, 5, 28, 13, 10, 0, 0, time.UTC)
+	currentLimit := 300
+	currentReserve := 0
+	targetReserve := 80
+	previous := &domain.Delta3AuxControlCommandLog{
+		MeasuredAt:             now.Add(-1 * time.Hour),
+		CommandSent:            true,
+		StrategyState:          "READY",
+		ShouldSetBackupReserve: true,
+		TargetBackupReserveSoc: &targetReserve,
+		CommandFingerprint:     "delta3_aux;state=READY;ac=-;reserve=80;adjust_ac=false;set_reserve=true;disable_reserve=false",
+	}
+	status := domain.Status{
+		ExportW:   200,
+		UpdatedAt: now,
+		Delta3AuxPlan: &domain.Delta3AuxPlan{
+			StrategyState:               "READY",
+			RecommendedACChargeLimitW:   currentLimit,
+			CurrentACChargeLimitW:       &currentLimit,
+			RecommendedBackupReserveSoc: &targetReserve,
+			CurrentBackupReserveSoc:     &currentReserve,
+			ShouldSetBackupReserve:      true,
+			Reason:                      "test stale retry",
+		},
+	}
+
+	log := EvaluateDelta3AuxCommandGuard(delta3AuxRealWriteGuardInput(status, previous), Delta3AuxSettings{
+		Enabled:            true,
+		MinCommandDiffW:    100,
+		MinCommandInterval: 5 * time.Minute,
+	})
+
+	if status.Delta3AuxPlan.BackupReserveApplyState != "stale" {
+		t.Fatalf("BackupReserveApplyState = %q, want stale", status.Delta3AuxPlan.BackupReserveApplyState)
+	}
+	if log.WouldWrite {
+		t.Fatalf("WouldWrite = true, want false for stale unreflected reserve retry")
+	}
+	if log.SuppressedReason != "previous backup reserve command was not reflected by device" {
+		t.Fatalf("SuppressedReason = %q, want unreflected reserve suppression", log.SuppressedReason)
+	}
+}
+
+func TestEvaluateDelta3AuxCommandGuardAllowsSafeLimitAfterUnreflectedBackupReserve(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 10, 0, 0, time.UTC)
+	currentLimit := 1400
+	targetLimit := 1000
+	currentReserve := 0
+	targetReserve := 80
+	previous := &domain.Delta3AuxControlCommandLog{
+		MeasuredAt:             now.Add(-10 * time.Minute),
+		CommandSent:            true,
+		StrategyState:          "READY",
+		ShouldSetBackupReserve: true,
+		TargetBackupReserveSoc: &targetReserve,
+		CommandFingerprint:     "previous",
+	}
+	status := domain.Status{
+		ExportW:   200,
+		UpdatedAt: now,
+		Delta3AuxPlan: &domain.Delta3AuxPlan{
+			StrategyState:               "SAFE_LIMIT",
+			RecommendedACChargeLimitW:   targetLimit,
+			CurrentACChargeLimitW:       &currentLimit,
+			RecommendedBackupReserveSoc: &targetReserve,
+			CurrentBackupReserveSoc:     &currentReserve,
+			ShouldAdjustACChargeLimit:   true,
+			ShouldSetBackupReserve:      true,
+			Reason:                      "test safe limit",
+		},
+	}
+
+	log := EvaluateDelta3AuxCommandGuard(delta3AuxRealWriteGuardInput(status, previous), Delta3AuxSettings{
+		Enabled:            true,
+		MinCommandDiffW:    100,
+		MinCommandInterval: 5 * time.Minute,
+	})
+
+	if status.Delta3AuxPlan.BackupReserveApplyState != "failed" {
+		t.Fatalf("BackupReserveApplyState = %q, want failed", status.Delta3AuxPlan.BackupReserveApplyState)
+	}
+	if !log.WouldWrite {
+		t.Fatalf("WouldWrite = false, want true for safe AC limit reduction; suppressed=%q", log.SuppressedReason)
+	}
+	if log.TargetACChargeLimitW == nil || *log.TargetACChargeLimitW != targetLimit {
+		t.Fatalf("TargetACChargeLimitW = %v, want %d", log.TargetACChargeLimitW, targetLimit)
+	}
+	if log.ShouldSetBackupReserve || log.TargetBackupReserveSoc != nil {
+		t.Fatalf("reserve retry was not stripped: shouldSet=%t target=%v", log.ShouldSetBackupReserve, log.TargetBackupReserveSoc)
+	}
+}
+
+func TestEvaluateDelta3AuxCommandGuardMarksBackupReserveApplied(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 10, 0, 0, time.UTC)
+	currentLimit := 300
+	targetReserve := 80
+	enabled := true
+	previous := &domain.Delta3AuxControlCommandLog{
+		MeasuredAt:             now.Add(-10 * time.Minute),
+		CommandSent:            true,
+		StrategyState:          "READY",
+		ShouldSetBackupReserve: true,
+		TargetBackupReserveSoc: &targetReserve,
+		CommandFingerprint:     "previous",
+	}
+	status := domain.Status{
+		ExportW:   200,
+		UpdatedAt: now,
+		Delta3AuxPlan: &domain.Delta3AuxPlan{
+			StrategyState:               "HOLD",
+			RecommendedACChargeLimitW:   currentLimit,
+			CurrentACChargeLimitW:       &currentLimit,
+			RecommendedBackupReserveSoc: &targetReserve,
+			CurrentBackupReserveSoc:     &targetReserve,
+			CurrentBackupReserveEnabled: &enabled,
+			ShouldSetBackupReserve:      false,
+			Reason:                      "test applied",
+		},
+	}
+
+	EvaluateDelta3AuxCommandGuard(delta3AuxRealWriteGuardInput(status, previous), Delta3AuxSettings{
+		Enabled:            true,
+		MinCommandDiffW:    100,
+		MinCommandInterval: 5 * time.Minute,
+	})
+
+	if status.Delta3AuxPlan.BackupReserveApplyState != "applied" {
+		t.Fatalf("BackupReserveApplyState = %q, want applied", status.Delta3AuxPlan.BackupReserveApplyState)
+	}
+}
+
+func TestEvaluateDelta3AuxCommandGuardDoesNotApplySetBySocOnly(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 20, 0, 0, time.UTC)
+	currentLimit := 300
+	targetReserve := 80
+	disabled := false
+	previous := &domain.Delta3AuxControlCommandLog{
+		MeasuredAt:             now.Add(-10 * time.Minute),
+		CommandSent:            true,
+		StrategyState:          "READY",
+		ShouldSetBackupReserve: true,
+		TargetBackupReserveSoc: &targetReserve,
+		CommandFingerprint:     "previous-set",
+	}
+	status := domain.Status{
+		ExportW:   0,
+		UpdatedAt: now,
+		Delta3AuxPlan: &domain.Delta3AuxPlan{
+			StrategyState:               "HOLD",
+			RecommendedACChargeLimitW:   currentLimit,
+			CurrentACChargeLimitW:       &currentLimit,
+			RecommendedBackupReserveSoc: &targetReserve,
+			CurrentBackupReserveSoc:     &targetReserve,
+			CurrentBackupReserveEnabled: &disabled,
+			ShouldSetBackupReserve:      false,
+			Reason:                      "test set not applied",
+		},
+	}
+
+	EvaluateDelta3AuxCommandGuard(delta3AuxRealWriteGuardInput(status, previous), Delta3AuxSettings{
+		Enabled:            true,
+		MinCommandDiffW:    100,
+		MinCommandInterval: 5 * time.Minute,
+	})
+
+	if status.Delta3AuxPlan.BackupReserveApplyState != "failed" {
+		t.Fatalf("BackupReserveApplyState = %q, want failed", status.Delta3AuxPlan.BackupReserveApplyState)
+	}
+}
+
+func TestEvaluateDelta3AuxCommandGuardRequiresEnabledStatusForSetApplied(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 25, 0, 0, time.UTC)
+	currentLimit := 300
+	targetReserve := 80
+	previous := &domain.Delta3AuxControlCommandLog{
+		MeasuredAt:             now.Add(-10 * time.Minute),
+		CommandSent:            true,
+		StrategyState:          "READY",
+		ShouldSetBackupReserve: true,
+		TargetBackupReserveSoc: &targetReserve,
+		CommandFingerprint:     "previous-set",
+	}
+	status := domain.Status{
+		ExportW:   0,
+		UpdatedAt: now,
+		Delta3AuxPlan: &domain.Delta3AuxPlan{
+			StrategyState:               "HOLD",
+			RecommendedACChargeLimitW:   currentLimit,
+			CurrentACChargeLimitW:       &currentLimit,
+			RecommendedBackupReserveSoc: &targetReserve,
+			CurrentBackupReserveSoc:     &targetReserve,
+			ShouldSetBackupReserve:      false,
+			Reason:                      "test set enabled unavailable",
+		},
+	}
+
+	EvaluateDelta3AuxCommandGuard(delta3AuxRealWriteGuardInput(status, previous), Delta3AuxSettings{
+		Enabled:            true,
+		MinCommandDiffW:    100,
+		MinCommandInterval: 5 * time.Minute,
+	})
+
+	if status.Delta3AuxPlan.BackupReserveApplyState != "failed" {
+		t.Fatalf("BackupReserveApplyState = %q, want failed", status.Delta3AuxPlan.BackupReserveApplyState)
+	}
+}
+
+func TestEvaluateDelta3AuxCommandGuardUsesLatestReserveCommandWhenPreviousIsACOnly(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 20, 0, 0, time.UTC)
+	currentLimit := 300
+	currentReserve := 0
+	targetReserve := 80
+	previousACOnly := &domain.Delta3AuxControlCommandLog{
+		MeasuredAt:                now.Add(-2 * time.Minute),
+		CommandSent:               true,
+		StrategyState:             "RECOVERING",
+		TargetACChargeLimitW:      &currentLimit,
+		ShouldAdjustACChargeLimit: true,
+		CommandFingerprint:        "delta3_aux;state=RECOVERING;ac=300;reserve=-;adjust_ac=true;set_reserve=false;disable_reserve=false",
+	}
+	previousReserve := &domain.Delta3AuxControlCommandLog{
+		MeasuredAt:             now.Add(-10 * time.Minute),
+		CommandSent:            true,
+		StrategyState:          "READY",
+		ShouldSetBackupReserve: true,
+		TargetBackupReserveSoc: &targetReserve,
+		CommandFingerprint:     "previous-reserve",
+	}
+	status := domain.Status{
+		ExportW:   200,
+		UpdatedAt: now,
+		Delta3AuxPlan: &domain.Delta3AuxPlan{
+			StrategyState:               "READY",
+			RecommendedACChargeLimitW:   currentLimit,
+			CurrentACChargeLimitW:       &currentLimit,
+			RecommendedBackupReserveSoc: &targetReserve,
+			CurrentBackupReserveSoc:     &currentReserve,
+			ShouldSetBackupReserve:      true,
+			Reason:                      "test failed after ac only",
+		},
+	}
+	input := delta3AuxRealWriteGuardInput(status, previousACOnly)
+	input.PreviousReserve = previousReserve
+
+	log := EvaluateDelta3AuxCommandGuard(input, Delta3AuxSettings{
+		Enabled:            true,
+		MinCommandDiffW:    100,
+		MinCommandInterval: 5 * time.Minute,
+	})
+
+	if status.Delta3AuxPlan.BackupReserveApplyState != "failed" {
+		t.Fatalf("BackupReserveApplyState = %q, want failed", status.Delta3AuxPlan.BackupReserveApplyState)
+	}
+	if log.SuppressedReason != "previous backup reserve command was not reflected by device" {
+		t.Fatalf("SuppressedReason = %q, want unreflected reserve suppression", log.SuppressedReason)
+	}
+}
+
+func TestEvaluateDelta3AuxCommandGuardDoesNotApplyDisableBySocOnly(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 20, 0, 0, time.UTC)
+	currentLimit := 300
+	targetReserve := 30
+	enabled := true
+	previous := &domain.Delta3AuxControlCommandLog{
+		MeasuredAt:                 now.Add(-10 * time.Minute),
+		CommandSent:                true,
+		StrategyState:              "FULL",
+		ShouldDisableBackupReserve: true,
+		TargetBackupReserveSoc:     &targetReserve,
+		CommandFingerprint:         "previous-disable",
+	}
+	status := domain.Status{
+		ExportW:   0,
+		UpdatedAt: now,
+		Delta3AuxPlan: &domain.Delta3AuxPlan{
+			StrategyState:               "HOLD",
+			RecommendedACChargeLimitW:   currentLimit,
+			CurrentACChargeLimitW:       &currentLimit,
+			RecommendedBackupReserveSoc: &targetReserve,
+			CurrentBackupReserveSoc:     &targetReserve,
+			CurrentBackupReserveEnabled: &enabled,
+			ShouldDisableBackupReserve:  false,
+			Reason:                      "test disable not applied",
+		},
+	}
+
+	EvaluateDelta3AuxCommandGuard(delta3AuxRealWriteGuardInput(status, previous), Delta3AuxSettings{
+		Enabled:            true,
+		MinCommandDiffW:    100,
+		MinCommandInterval: 5 * time.Minute,
+	})
+
+	if status.Delta3AuxPlan.BackupReserveApplyState != "failed" {
+		t.Fatalf("BackupReserveApplyState = %q, want failed", status.Delta3AuxPlan.BackupReserveApplyState)
+	}
+}
+
 func delta3AuxRealWriteGuardInput(status domain.Status, previous *domain.Delta3AuxControlCommandLog) Delta3AuxCommandGuardInput {
 	return Delta3AuxCommandGuardInput{
 		Status:                 status,
@@ -387,5 +770,6 @@ func delta3AuxRealWriteGuardInput(status domain.Status, previous *domain.Delta3A
 		Execute:                true,
 		AllowPrivateAPIWrite:   true,
 		Previous:               previous,
+		PreviousReserve:        previous,
 	}
 }

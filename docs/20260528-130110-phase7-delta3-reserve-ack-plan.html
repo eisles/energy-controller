@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Phase 7 DELTA 3 Plus 2 リザーブ反映検知 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; margin: 32px; color: #1f2937; }
+    h1, h2 { color: #111827; }
+    code { background: #f3f4f6; padding: 0.1em 0.3em; border-radius: 4px; }
+    pre { background: #111827; color: #f9fafb; padding: 16px; border-radius: 8px; overflow: auto; }
+    ul, ol { padding-left: 1.5em; }
+    .note { border-left: 4px solid #2563eb; padding-left: 12px; color: #374151; }
+  </style>
+</head>
+<body>
+  <h1>Phase 7 DELTA 3 Plus 2 リザーブ反映検知 実装計画</h1>
+
+  <h2>目的</h2>
+  <p>DELTA 3 Plus 2 で AC 充電上限は反映されている一方、バックアップリザーブ値が <code>0% / OFF</code> のままでパススルーになり、実充電へ移らない状態を検知できるようにする。</p>
+  <p>この計画では、リザーブ制御コマンドを追加で強めるのではなく、既存の実機writeゲートを維持したまま、送信済みコマンドと現在の実機状態を突き合わせて以下を実現する。</p>
+  <ul>
+    <li>リザーブ反映待ちを画面と <code>Delta3AuxPlan</code> に出す。</li>
+    <li>一定時間後も反映されない場合はリザーブ反映失敗として扱う。</li>
+    <li>反映失敗中は同じリザーブ候補を繰り返し送らない。</li>
+    <li>AC充電上限の安全制御や買電時の充電停止は止めない。</li>
+  </ul>
+
+  <h2>非目的</h2>
+  <ul>
+    <li>DELTA 3 Plus の新しい private API payload を推測して実機writeすること。</li>
+    <li>AC出力ON/OFFの自動復旧writeを追加すること。</li>
+    <li>DELTA Pro 3 の制御ロジックを変更すること。</li>
+    <li>機器マスターの優先順位や夜間充電配分を再設計すること。</li>
+  </ul>
+
+  <h2>現状</h2>
+  <ul>
+    <li>DELTA 3 Plus 1台目はルータ接続のため制御対象外。</li>
+    <li>DELTA 3 Plus 2 が現在の補助バッテリー制御対象。</li>
+    <li>直近では AC充電上限の変更は反映されている。</li>
+    <li>一方で <code>backupReserveSoc=0</code>, <code>backupReserveEnabled=false</code> が続き、<code>target_backup_reserve_soc=80</code> などの送信後も実機状態が変わっていない。</li>
+    <li>現在の <code>EvaluateDelta3AuxCommandGuard</code> は、直近ログの fingerprint と最小間隔で抑止するが、「送信済みリザーブが反映されなかった」という意味づけを持っていない。</li>
+  </ul>
+
+  <h2>変更対象</h2>
+  <ul>
+    <li><code>backend/internal/domain/status.go</code>: <code>Delta3AuxPlan</code> にリザーブ反映状態を追加する。</li>
+    <li><code>backend/internal/control/delta3_aux_executor.go</code>: 直近送信済みログと現在状態から反映待ち/失敗を判定する。</li>
+    <li><code>backend/internal/control/delta3_aux_planner.go</code>: 必要なら計画理由に反映状態を組み込む。</li>
+    <li><code>backend/internal/control/delta3_aux_executor_test.go</code>: 反映待ち、反映失敗、AC安全制御優先の単体テストを追加する。</li>
+    <li><code>frontend/lib/types.ts</code>, <code>frontend/components/StatusCards.tsx</code>, <code>frontend/lib/display-labels.ts</code>: 表示を追加する。</li>
+  </ul>
+
+  <h2>データ/API契約</h2>
+  <p><code>Delta3AuxPlan</code> に以下を追加する。</p>
+  <ul>
+    <li><code>backupReserveApplyState</code>: 空、<code>pending</code>、<code>failed</code>、<code>applied</code></li>
+    <li><code>backupReserveApplyReason</code>: 画面表示用の短い理由。</li>
+    <li><code>lastBackupReserveCommandAt</code>: 直近のリザーブ実送信時刻。</li>
+    <li><code>lastBackupReserveTargetSoc</code>: 直近のリザーブ目標値。</li>
+  </ul>
+  <p>DBスキーマは変更しない。既存の <code>delta3_aux_control_command_logs</code> から判定する。</p>
+
+  <h2>判定ロジック</h2>
+  <ol>
+    <li>直近の実送信済みリザーブログを取得済みの <code>Previous</code> として使う。</li>
+    <li>現在の実機状態と比較する。リザーブ有効化コマンドは <code>backupReserveEnabled=true</code> かつ <code>backupReserveSoc == target_backup_reserve_soc</code> なら <code>applied</code>、リザーブ無効化コマンドは <code>backupReserveEnabled=false</code> なら <code>applied</code>、最小間隔未満なら <code>pending</code>、経過後も不一致なら <code>failed</code> とする。</li>
+    <li><code>failed</code> かつ次の候補が同じ <code>target_backup_reserve_soc</code> の場合は <code>previous backup reserve command was not reflected by device</code> で抑止する。</li>
+    <li>反映失敗中の同一リザーブ候補は外し、AC充電上限を下げる安全制御、<code>SAFE_LIMIT</code>、買電中の充電低下候補は抑止しない。</li>
+  </ol>
+
+  <h2>安全境界</h2>
+  <ul>
+    <li>実機write条件は既存どおり維持する。</li>
+    <li>新しい実機write payload は追加しない。</li>
+    <li>反映失敗時は同じリザーブwriteを抑止し、AC充電上限の安全方向だけ許可する。</li>
+    <li>既存のDELTA 3 Plus 1台目制御除外は維持する。</li>
+  </ul>
+
+  <h2>実装手順</h2>
+  <ol>
+    <li><code>Delta3AuxPlan</code> に反映状態フィールドを追加する。</li>
+    <li><code>EvaluateDelta3AuxCommandGuard</code> で直近リザーブ実送信ログと現在状態を比較し、Planへ反映状態を埋める。</li>
+    <li><code>delta3AuxCommandSuppressedReason</code> に、反映失敗中の同一リザーブ候補抑止を追加する。</li>
+    <li>フロントエンドの型と表示を追加する。</li>
+    <li>単体テストを追加する。</li>
+    <li>backend/frontend の検証を実行する。</li>
+    <li><code>codex review --uncommitted</code> で実装レビューを回す。</li>
+  </ol>
+
+  <h2>検証コマンド</h2>
+  <pre><code>cd backend &amp;&amp; rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build
+rtk git diff --check
+rtk codex review --uncommitted</code></pre>
+
+  <h2>運用メモ</h2>
+  <p class="note">実装後、Plus2で <code>backupReserveSoc=0</code> が続く場合でも、同じリザーブ設定の連続送信は止まる。画面上は反映失敗として見えるため、次の作業は EcoFlow private API のリザーブpayload再検証になる。</p>
+</body>
+</html>

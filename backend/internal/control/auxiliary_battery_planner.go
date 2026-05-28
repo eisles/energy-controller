@@ -21,6 +21,7 @@ type Delta3AuxSettings struct {
 	MinDischargeReserveSoc    int
 	BackupReserveMinSoc       int
 	BackupReserveMaxSoc       int
+	AutoRecoverACOutput       bool
 }
 
 type Delta3AuxStatus struct {
@@ -33,6 +34,7 @@ type Delta3AuxStatus struct {
 	MaxChargeSoc         *int
 	BackupReserveSoc     *int
 	BackupReserveEnabled *bool
+	ACOutputEnabled      *bool
 	LastError            string
 }
 
@@ -67,18 +69,20 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 	pro3Settings = normalizeSettings(pro3Settings)
 	status := input.Status
 	plan := domain.Delta3AuxPlan{
-		Mode:                      "read-only",
-		StrategyState:             "IDLE",
-		ResidualExportW:           status.ExportW,
-		SafetyMarginW:             settings.SafetyMarginW,
-		CurrentACChargeLimitW:     input.Delta3.ACChargeLimitW,
-		CurrentBackupReserveSoc:   input.Delta3.BackupReserveSoc,
-		Delta3Soc:                 input.Delta3.SOC,
-		Delta3MaxChargeSoc:        input.Delta3.MaxChargeSoc,
-		Delta3ACOutputW:           positiveIntPtr(delta3ACOutputLoadW(input.Delta3)),
-		SafeACChargeLimitW:        delta3SafeACChargeLimitW(input.Delta3, settings),
-		RecommendedACChargeLimitW: valueOrZero(input.Delta3.ACChargeLimitW),
-		WouldWrite:                false,
+		Mode:                        "read-only",
+		StrategyState:               "IDLE",
+		ResidualExportW:             status.ExportW,
+		SafetyMarginW:               settings.SafetyMarginW,
+		CurrentACChargeLimitW:       input.Delta3.ACChargeLimitW,
+		CurrentBackupReserveSoc:     input.Delta3.BackupReserveSoc,
+		CurrentBackupReserveEnabled: input.Delta3.BackupReserveEnabled,
+		Delta3Soc:                   input.Delta3.SOC,
+		Delta3MaxChargeSoc:          input.Delta3.MaxChargeSoc,
+		Delta3ACOutputW:             positiveIntPtr(delta3ACOutputLoadW(input.Delta3)),
+		Delta3ACOutputEnabled:       input.Delta3.ACOutputEnabled,
+		SafeACChargeLimitW:          delta3SafeACChargeLimitW(input.Delta3, settings),
+		RecommendedACChargeLimitW:   valueOrZero(input.Delta3.ACChargeLimitW),
+		WouldWrite:                  false,
 	}
 
 	if !settings.Enabled {
@@ -96,7 +100,6 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 		plan.Reason = "DELTA 3 Plus SOC or AC charge limit is unavailable"
 		return plan
 	}
-
 	currentLimitW := *input.Delta3.ACChargeLimitW
 	safeChargeLimitW := delta3SafeACChargeLimitW(input.Delta3, settings)
 	maxChargeSoc := 100
@@ -134,6 +137,16 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 		maybeDisableDelta3BackupReserve(&plan, input.Delta3)
 		plan.WouldWrite = plan.ShouldAdjustACChargeLimit || plan.ShouldDisableBackupReserve
 		plan.Reason = fmt.Sprintf("DELTA 3 Plus AC charge limit exceeds output-aware safe limit (%dW = max %dW - AC output %dW)", safeChargeLimitW, settings.MaxChargeW, delta3ACOutputLoadW(input.Delta3))
+		return plan
+	}
+
+	if input.Delta3.ACOutputEnabled != nil && !*input.Delta3.ACOutputEnabled {
+		plan.StrategyState = "AC_OUTPUT_OFF"
+		if settings.AutoRecoverACOutput {
+			plan.Reason = "DELTA 3 Plus AC output is OFF; auto recovery is allowed for this device, but AC output write payload is not verified yet"
+		} else {
+			plan.Reason = "DELTA 3 Plus AC output is OFF; auto recovery is not allowed for this device"
+		}
 		return plan
 	}
 

@@ -76,6 +76,85 @@ func TestStatusRepositoryUpdatesAndReadsCurrentStatus(t *testing.T) {
 	}
 }
 
+func TestMigrationAddsAutoRecoverACOutputBeforeSeed(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Fatalf("db close failed: %v", err)
+		}
+	})
+	if _, err := db.Exec(`CREATE TABLE charging_devices (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		provider TEXT NOT NULL,
+		role TEXT NOT NULL,
+		credential_ref TEXT NOT NULL,
+		device_sn TEXT NOT NULL DEFAULT '',
+		device_type TEXT NOT NULL DEFAULT '',
+		status_source TEXT NOT NULL DEFAULT '',
+		enabled INTEGER NOT NULL DEFAULT 1,
+		control_enabled INTEGER NOT NULL DEFAULT 0,
+		priority INTEGER NOT NULL DEFAULT 100,
+		min_charge_w INTEGER NOT NULL DEFAULT 0,
+		max_charge_w INTEGER NOT NULL DEFAULT 0,
+		charge_step_w INTEGER NOT NULL DEFAULT 1,
+		capacity_wh INTEGER NOT NULL DEFAULT 0,
+		target_soc INTEGER NOT NULL DEFAULT 90,
+		reserve_soc INTEGER NOT NULL DEFAULT 30,
+		backup_reserve_min_soc INTEGER NOT NULL DEFAULT 0,
+		backup_reserve_max_soc INTEGER NOT NULL DEFAULT 0,
+		expected_daytime_load_w INTEGER NOT NULL DEFAULT 0,
+		supports_soc_read INTEGER NOT NULL DEFAULT 0,
+		supports_ac_charge_limit INTEGER NOT NULL DEFAULT 0,
+		supports_on_off INTEGER NOT NULL DEFAULT 0,
+		notes TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL,
+		UNIQUE(credential_ref)
+	)`); err != nil {
+		t.Fatalf("create old charging_devices failed: %v", err)
+	}
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate failed: %v", err)
+	}
+	rows, err := db.Query(`PRAGMA table_info(charging_devices)`)
+	if err != nil {
+		t.Fatalf("PRAGMA table_info failed: %v", err)
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			t.Fatalf("scan table_info failed: %v", err)
+		}
+		if name == "auto_recover_ac_output" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("table_info rows failed: %v", err)
+	}
+	if !found {
+		t.Fatal("auto_recover_ac_output column was not added")
+	}
+	devices, err := NewChargingDeviceRepository(db).ListChargingDevices(context.Background())
+	if err != nil {
+		t.Fatalf("ListChargingDevices failed after migration: %v", err)
+	}
+	if len(devices) == 0 {
+		t.Fatal("seeded charging devices = 0, want defaults")
+	}
+}
+
 func TestDelta3AuxControlCommandRepositoryInsertsAndPages(t *testing.T) {
 	db := openTestDB(t)
 	repo := NewDelta3AuxControlCommandRepository(db)
@@ -728,6 +807,66 @@ func TestNotificationRepositoryInsertsAndReadsLatest(t *testing.T) {
 	}
 	if got.ErrorMessage == nil || *got.ErrorMessage != message {
 		t.Fatalf("ErrorMessage = %v, want %q", got.ErrorMessage, message)
+	}
+}
+
+func TestPro3ACOutputEventRepositoryInsertsAndPages(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewPro3ACOutputEventRepository(db)
+	now := time.Date(2026, 5, 28, 18, 45, 0, 0, time.UTC)
+	temp := 33.5
+	maxOut := 3600
+	prevTarget := 800
+
+	if err := repo.InsertPro3ACOutputEvent(context.Background(), domain.Pro3ACOutputEvent{
+		MeasuredAt:                     now,
+		EventType:                      "ac_output_off_memory",
+		OutputPowerOffMemory:           true,
+		GridW:                          120,
+		ImportW:                        120,
+		BatterySoc:                     44,
+		BatteryInputW:                  100,
+		BatteryOutputW:                 267,
+		ACChargeLimitW:                 400,
+		BMSMaxCellTempC:                &temp,
+		ACOutDsgPowMaxW:                &maxOut,
+		PreviousCommandKind:            "set_ac_charge_limit",
+		PreviousCommandSent:            true,
+		PreviousCommandWouldWrite:      true,
+		PreviousCommandTargetACChargeW: &prevTarget,
+		Message:                        "detected",
+		CreatedAt:                      now,
+	}); err != nil {
+		t.Fatalf("InsertPro3ACOutputEvent failed: %v", err)
+	}
+
+	latest, err := repo.LatestPro3ACOutputEventByType(context.Background(), "ac_output_off_memory")
+	if err != nil {
+		t.Fatalf("LatestPro3ACOutputEventByType failed: %v", err)
+	}
+	if latest == nil || !latest.OutputPowerOffMemory || latest.BMSMaxCellTempC == nil || *latest.BMSMaxCellTempC != temp {
+		t.Fatalf("unexpected latest event: %+v", latest)
+	}
+	if latest.PreviousCommandTargetACChargeW == nil || *latest.PreviousCommandTargetACChargeW != prevTarget {
+		t.Fatalf("PreviousCommandTargetACChargeW = %v, want %d", latest.PreviousCommandTargetACChargeW, prevTarget)
+	}
+
+	if err := repo.InsertPro3ACOutputEvent(context.Background(), domain.Pro3ACOutputEvent{
+		MeasuredAt:           now,
+		EventType:            "ac_output_off_memory",
+		OutputPowerOffMemory: true,
+		Message:              "duplicate",
+		CreatedAt:            now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("duplicate InsertPro3ACOutputEvent failed: %v", err)
+	}
+
+	items, total, err := repo.ListPro3ACOutputEventsPage(context.Background(), 10, 0)
+	if err != nil {
+		t.Fatalf("ListPro3ACOutputEventsPage failed: %v", err)
+	}
+	if total != 1 || len(items) != 1 {
+		t.Fatalf("events = %d/%d, want 1/1", len(items), total)
 	}
 }
 

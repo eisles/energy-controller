@@ -158,6 +158,35 @@ func migrate(db *sql.DB) error {
 			consecutive_hits INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS pro3_ac_output_event_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			measured_at TEXT NOT NULL,
+			event_type TEXT NOT NULL,
+			output_power_off_memory INTEGER NOT NULL DEFAULT 0,
+			grid_w INTEGER NOT NULL,
+			import_w INTEGER NOT NULL,
+			export_w INTEGER NOT NULL,
+			battery_soc INTEGER NOT NULL,
+			battery_input_w INTEGER NOT NULL,
+			battery_output_w INTEGER NOT NULL,
+			ac_charge_limit_w INTEGER NOT NULL,
+			bms_max_cell_temp_c REAL,
+			bms_max_mos_temp_c REAL,
+			ac_out_freq_hz REAL,
+			ac_out_dsg_pow_max_w INTEGER,
+			previous_command_measured_at TEXT,
+			previous_command_kind TEXT NOT NULL DEFAULT '',
+			previous_command_sent INTEGER NOT NULL DEFAULT 0,
+			previous_command_would_write INTEGER NOT NULL DEFAULT 0,
+			previous_command_target_ac_charge_w INTEGER,
+			previous_command_target_reserve_soc INTEGER,
+			previous_command_reason TEXT NOT NULL DEFAULT '',
+			message TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			UNIQUE(event_type, measured_at)
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_pro3_ac_output_event_logs_event_type_measured_at
+			ON pro3_ac_output_event_logs(event_type, measured_at)`,
 		`CREATE TABLE IF NOT EXISTS tariff_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			plan_name TEXT NOT NULL,
@@ -245,6 +274,7 @@ func migrate(db *sql.DB) error {
 			backup_reserve_min_soc INTEGER NOT NULL DEFAULT 0,
 			backup_reserve_max_soc INTEGER NOT NULL DEFAULT 0,
 			expected_daytime_load_w INTEGER NOT NULL DEFAULT 0,
+			auto_recover_ac_output INTEGER NOT NULL DEFAULT 0,
 			supports_soc_read INTEGER NOT NULL DEFAULT 0,
 			supports_ac_charge_limit INTEGER NOT NULL DEFAULT 0,
 			supports_on_off INTEGER NOT NULL DEFAULT 0,
@@ -288,7 +318,7 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
-	for _, column := range []string{"device_sn", "device_type", "status_source", "backup_reserve_min_soc", "backup_reserve_max_soc", "expected_daytime_load_w"} {
+	for _, column := range []string{"device_sn", "device_type", "status_source", "backup_reserve_min_soc", "backup_reserve_max_soc", "expected_daytime_load_w", "auto_recover_ac_output"} {
 		if err := addKnownColumnIfMissing(db, "charging_devices", column); err != nil {
 			return err
 		}
@@ -371,6 +401,7 @@ func migrate(db *sql.DB) error {
 		"surplus_plan_json",
 		"night_charge_plan_json",
 		"delta3_aux_plan_json",
+		"pro3_ac_output_event_json",
 	} {
 		if err := addKnownColumnIfMissing(db, "current_status", column); err != nil {
 			return err
@@ -481,18 +512,19 @@ var knownMigrationColumns = map[string]map[string]string{
 		"ecoflow_diagnostics_json": "TEXT",
 	},
 	"current_status": {
-		"ac_charge_limit_w":        "INTEGER",
-		"backup_reserve_soc":       "INTEGER",
-		"energy_backup_enabled":    "INTEGER",
-		"tou_mode_enabled":         "INTEGER",
-		"self_powered_enabled":     "INTEGER",
-		"scheduled_enabled":        "INTEGER",
-		"intelligent_enabled":      "INTEGER",
-		"battery_full_energy_wh":   "INTEGER",
-		"ecoflow_diagnostics_json": "TEXT",
-		"surplus_plan_json":        "TEXT",
-		"night_charge_plan_json":   "TEXT",
-		"delta3_aux_plan_json":     "TEXT",
+		"ac_charge_limit_w":         "INTEGER",
+		"backup_reserve_soc":        "INTEGER",
+		"energy_backup_enabled":     "INTEGER",
+		"tou_mode_enabled":          "INTEGER",
+		"self_powered_enabled":      "INTEGER",
+		"scheduled_enabled":         "INTEGER",
+		"intelligent_enabled":       "INTEGER",
+		"battery_full_energy_wh":    "INTEGER",
+		"ecoflow_diagnostics_json":  "TEXT",
+		"surplus_plan_json":         "TEXT",
+		"night_charge_plan_json":    "TEXT",
+		"delta3_aux_plan_json":      "TEXT",
+		"pro3_ac_output_event_json": "TEXT",
 	},
 	"tariff_plans": {
 		"export_rate_yen": "REAL NOT NULL DEFAULT 7.0",
@@ -531,6 +563,7 @@ var knownMigrationColumns = map[string]map[string]string{
 		"backup_reserve_min_soc":  "INTEGER NOT NULL DEFAULT 0",
 		"backup_reserve_max_soc":  "INTEGER NOT NULL DEFAULT 0",
 		"expected_daytime_load_w": "INTEGER NOT NULL DEFAULT 0",
+		"auto_recover_ac_output":  "INTEGER NOT NULL DEFAULT 0",
 	},
 	"delta3_aux_control_command_logs": {
 		"previous_backup_reserve_soc":   "INTEGER",
@@ -599,31 +632,31 @@ func seedChargingDevices(db *sql.DB, now time.Time) error {
 		`INSERT INTO charging_devices (
 			name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
 			min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
-			expected_daytime_load_w, supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
+			expected_daytime_load_w, auto_recover_ac_output, supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, created_at, updated_at
 		)
 		SELECT name, kind, provider, role, credential_ref, device_sn, device_type, status_source, enabled, control_enabled, priority,
 			min_charge_w, max_charge_w, charge_step_w, capacity_wh, target_soc, reserve_soc, backup_reserve_min_soc, backup_reserve_max_soc,
-			expected_daytime_load_w, supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, ?, ?
+			expected_daytime_load_w, auto_recover_ac_output, supports_soc_read, supports_ac_charge_limit, supports_on_off, notes, ?, ?
 		FROM (
 			SELECT 'DELTA Pro 3' AS name, 'ecoflow_delta_pro3' AS kind, 'ecoflow' AS provider, 'primary' AS role,
 				'ecoflow_pro3_primary' AS credential_ref, '' AS device_sn, 'DELTA_PRO3' AS device_type, 'ecoflow_cloud' AS status_source,
 				1 AS enabled, 0 AS control_enabled, 10 AS priority,
 				400 AS min_charge_w, 1500 AS max_charge_w, 100 AS charge_step_w, 12288 AS capacity_wh,
 				90 AS target_soc, 30 AS reserve_soc, 30 AS backup_reserve_min_soc, 90 AS backup_reserve_max_soc,
-				0 AS expected_daytime_load_w,
+				0 AS expected_daytime_load_w, 0 AS auto_recover_ac_output,
 				1 AS supports_soc_read, 1 AS supports_ac_charge_limit,
 				0 AS supports_on_off, '既存の DELTA Pro 3 制御用。SN や認証情報は環境変数側で管理します。' AS notes
 			UNION ALL
 			SELECT 'DELTA 3 Plus', 'ecoflow_delta3_plus', 'ecoflow', 'auxiliary',
 				'ecoflow_delta3_primary', '', 'DELTA_3', 'ecoflow_private_mqtt', 1, 0, 20,
 				100, 1500, 100, 2048,
-				90, 20, 20, 90, 400, 1, 1,
+				90, 20, 20, 90, 400, 0, 1, 1,
 				1, 'DELTA 3 Plus 補助充電候補。追加台はこのマスタで増やします。'
 			UNION ALL
 			SELECT '手動補助バッテリー', 'manual', 'manual', 'manual_auxiliary',
 				'manual_auxiliary', '', '', 'manual', 1, 0, 90,
 				0, 0, 1, 0,
-				90, 20, 20, 90, 0, 0, 0,
+				90, 20, 20, 90, 0, 0, 0, 0,
 				0, 'API制御できない補助充電の運用メモ用です。'
 		)
 		WHERE NOT EXISTS (SELECT 1 FROM charging_devices)`,

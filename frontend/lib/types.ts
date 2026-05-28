@@ -13,9 +13,11 @@ export type EnergyStatus = {
   scheduledEnabled?: boolean | null;
   intelligentEnabled?: boolean | null;
   batteryFullEnergyWh?: number | null;
+  ecoflowDiagnostics?: Record<string, unknown> | null;
   surplusPlan?: SurplusPlan | null;
   nightChargePlan?: NightChargePlan | null;
   delta3AuxPlan?: Delta3AuxPlan | null;
+  pro3AcOutputEvent?: Pro3ACOutputEvent | null;
   targetChargeW: number;
   state: string;
   mode: string;
@@ -25,6 +27,33 @@ export type EnergyStatus = {
   lastDecisionReason: string;
   lastError: string | null;
   updatedAt: string;
+};
+
+export type Pro3ACOutputEvent = {
+  id: number;
+  measuredAt: string;
+  eventType: string;
+  outputPowerOffMemory: boolean;
+  gridW: number;
+  importW: number;
+  exportW: number;
+  batterySoc: number;
+  batteryInputW: number;
+  batteryOutputW: number;
+  acChargeLimitW: number;
+  bmsMaxCellTempC?: number | null;
+  bmsMaxMosTempC?: number | null;
+  acOutFreqHz?: number | null;
+  acOutDsgPowMaxW?: number | null;
+  previousCommandMeasuredAt?: string | null;
+  previousCommandKind: string;
+  previousCommandSent: boolean;
+  previousCommandWouldWrite: boolean;
+  previousCommandTargetAcChargeW?: number | null;
+  previousCommandTargetReserveSoc?: number | null;
+  previousCommandReason: string;
+  message: string;
+  createdAt: string;
 };
 
 export type Delta3Status = {
@@ -69,6 +98,7 @@ export type DeviceStatus = {
   backupReserveMinSoc: number;
   backupReserveMaxSoc: number;
   expectedDaytimeLoadW: number;
+  autoRecoverAcOutput: boolean;
   controlEnabled: boolean;
   status: Delta3Status;
 };
@@ -99,9 +129,15 @@ export type Delta3AuxPlan = {
   currentAcChargeLimitW?: number | null;
   recommendedBackupReserveSoc?: number | null;
   currentBackupReserveSoc?: number | null;
+  currentBackupReserveEnabled?: boolean | null;
+  backupReserveApplyState?: string;
+  backupReserveApplyReason?: string;
+  lastBackupReserveCommandAt?: string;
+  lastBackupReserveTargetSoc?: number | null;
   delta3Soc?: number | null;
   delta3MaxChargeSoc?: number | null;
   delta3AcOutputW?: number | null;
+  delta3AcOutputEnabled?: boolean | null;
   safeAcChargeLimitW: number;
   residualExportW: number;
   safetyMarginW: number;
@@ -482,6 +518,7 @@ export type ChargingDevice = {
   backupReserveMinSoc: number;
   backupReserveMaxSoc: number;
   expectedDaytimeLoadW: number;
+  autoRecoverAcOutput: boolean;
   supportsSocRead: boolean;
   supportsAcChargeLimit: boolean;
   supportsOnOff: boolean;

@@ -62,6 +62,10 @@ func (r *Delta3AuxControlCommandRepository) LatestDelta3AuxControlWriteCandidate
 	return r.latestDelta3AuxControlCommandLog(ctx, "WHERE would_write = 1 OR command_sent = 1 OR (error_message IS NOT NULL AND error_message <> '')")
 }
 
+func (r *Delta3AuxControlCommandRepository) LatestDelta3AuxReserveCommandLog(ctx context.Context) (*domain.Delta3AuxControlCommandLog, error) {
+	return r.latestDelta3AuxControlCommandLog(ctx, "WHERE command_sent = 1 AND target_backup_reserve_soc IS NOT NULL AND (error_message IS NULL OR error_message = '')")
+}
+
 func (r *Delta3AuxControlCommandRepository) latestDelta3AuxControlCommandLog(ctx context.Context, whereClause string) (*domain.Delta3AuxControlCommandLog, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT
 		id, measured_at, strategy_state, command_fingerprint, grid_w, import_w, export_w, residual_export_w,

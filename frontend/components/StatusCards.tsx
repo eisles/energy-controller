@@ -91,7 +91,39 @@ export function StatusCards({ status, fetchError }: StatusCardsProps) {
           <AlertDescription>{status.lastError}</AlertDescription>
         </Alert>
       ) : null}
+
+      <Pro3ACOutputMonitor status={status} />
     </>
+  );
+}
+
+function Pro3ACOutputMonitor({ status }: { status: EnergyStatus }) {
+  const event = status.pro3AcOutputEvent;
+  const outputPowerOffMemory = event?.outputPowerOffMemory === true || booleanDiagnostic(status, "outputPowerOffMemory") === true;
+  if (!outputPowerOffMemory && !event) {
+    return null;
+  }
+  return (
+    <Alert variant={outputPowerOffMemory ? "destructive" : "default"} className="section">
+      <AlertTitle>DELTA Pro 3 AC出力監視</AlertTitle>
+      <AlertDescription>
+        <div className="detail-strip planner-secondary" aria-label="DELTA Pro 3 AC output event">
+          <Detail label="AC出力OFF履歴" value={outputPowerOffMemory ? "検知" : "未検知"} />
+          <Detail label="検知時刻" value={formatDateTime(event?.measuredAt || status.updatedAt)} />
+          <Detail label="SOC" value={nullablePercent(event?.batterySoc ?? status.batterySoc)} />
+          <Detail label="AC入力" value={nullableWatt(event?.batteryInputW ?? status.batteryInputW)} />
+          <Detail label="AC出力" value={nullableWatt(event?.batteryOutputW ?? status.batteryOutputW)} />
+          <Detail label="AC充電上限" value={nullableWatt(event?.acChargeLimitW ?? status.acChargeLimitW)} />
+          <Detail label="セル温度" value={nullableTemperature(event?.bmsMaxCellTempC ?? numericDiagnostic(status, "bmsMaxCellTemp"))} />
+          <Detail label="MOS温度" value={nullableTemperature(event?.bmsMaxMosTempC ?? numericDiagnostic(status, "bmsMaxMosTemp"))} />
+          <Detail label="AC周波数" value={nullableHertz(event?.acOutFreqHz ?? numericDiagnostic(status, "acOutFreq"))} />
+          <Detail label="出力上限" value={nullableWatt(event?.acOutDsgPowMaxW ?? numericDiagnostic(status, "plugInInfoAcOutDsgPowMax"))} />
+          <Detail label="直前コマンド" value={previousPro3CommandLabel(event)} />
+          <Detail label="直前理由" value={event?.previousCommandReason ? decisionReasonLabel(event.previousCommandReason) : "-"} />
+        </div>
+        {event?.message ? <p className="planner-reason">{event.message}</p> : null}
+      </AlertDescription>
+    </Alert>
   );
 }
 
@@ -170,6 +202,7 @@ export function Delta3StatusCard({
                           <Detail label="Device type" value={device.status.deviceType || device.deviceType || "-"} />
                           <Detail label="Updated" value={formatDateTime(device.status.updatedAt || "")} />
                           <Detail label="制御候補" value={device.controlEnabled ? "有効" : "無効"} />
+                          <Detail label="AC出力OFF復旧" value={device.autoRecoverAcOutput ? "許可" : "禁止"} />
                         </div>
                       </>
                     ) : (
@@ -188,8 +221,10 @@ export function Delta3StatusCard({
               <Detail label="現在AC上限" value={nullableWatt(auxiliaryPlan?.currentAcChargeLimitW)} />
               <Detail label="AC出力考慮上限" value={nullableWatt(auxiliaryPlan?.safeAcChargeLimitW)} />
               <Detail label="DELTA 3 Plus出力" value={nullableWatt(auxiliaryPlan?.delta3AcOutputW)} />
+              <Detail label="DELTA 3 Plus AC出力" value={nullableOnOff(auxiliaryPlan?.delta3AcOutputEnabled)} />
               <Detail label="推奨リザーブ残量" value={nullablePercent(auxiliaryPlan?.recommendedBackupReserveSoc)} />
               <Detail label="現在リザーブ残量" value={nullablePercent(auxiliaryPlan?.currentBackupReserveSoc)} />
+              <Detail label="リザーブ反映" value={backupReserveApplyLabel(auxiliaryPlan)} />
               <Detail label="残余売電" value={nullableWatt(auxiliaryPlan?.residualExportW ?? sourceStatus.exportW)} />
               <Detail label="安全余力" value={nullableWatt(auxiliaryPlan?.safetyMarginW)} />
               <Detail label="リザーブ解除" value={writeCandidateLabel(auxiliaryPlan?.shouldDisableBackupReserve)} />
@@ -224,8 +259,10 @@ export function Delta3StatusCard({
               <Detail label="現在AC上限" value={nullableWatt(auxiliaryPlan?.currentAcChargeLimitW)} />
               <Detail label="AC出力考慮上限" value={nullableWatt(auxiliaryPlan?.safeAcChargeLimitW)} />
               <Detail label="DELTA 3 Plus出力" value={nullableWatt(auxiliaryPlan?.delta3AcOutputW)} />
+              <Detail label="DELTA 3 Plus AC出力" value={nullableOnOff(auxiliaryPlan?.delta3AcOutputEnabled)} />
               <Detail label="推奨リザーブ残量" value={nullablePercent(auxiliaryPlan?.recommendedBackupReserveSoc)} />
               <Detail label="現在リザーブ残量" value={nullablePercent(auxiliaryPlan?.currentBackupReserveSoc)} />
+              <Detail label="リザーブ反映" value={backupReserveApplyLabel(auxiliaryPlan)} />
               <Detail label="残余売電" value={nullableWatt(auxiliaryPlan?.residualExportW ?? sourceStatus.exportW)} />
               <Detail label="安全余力" value={nullableWatt(auxiliaryPlan?.safetyMarginW)} />
               <Detail label="リザーブ解除" value={writeCandidateLabel(auxiliaryPlan?.shouldDisableBackupReserve)} />
@@ -703,8 +740,74 @@ function nullableOnOff(value: boolean | null | undefined) {
   return value ? "ON" : "OFF";
 }
 
+function backupReserveApplyLabel(plan: EnergyStatus["delta3AuxPlan"] | null | undefined) {
+  if (!plan?.backupReserveApplyState) {
+    return "-";
+  }
+  const stateLabels: Record<string, string> = {
+    pending: "反映待ち",
+    failed: "反映失敗",
+    applied: "反映済み",
+    stale: "古い履歴"
+  };
+  const state = stateLabels[plan.backupReserveApplyState] ?? plan.backupReserveApplyState;
+  const target = plan.lastBackupReserveTargetSoc === null || plan.lastBackupReserveTargetSoc === undefined ? "" : ` / 目標 ${plan.lastBackupReserveTargetSoc}%`;
+  return `${state}${target}`;
+}
+
 function nullableWatt(value: number | null | undefined) {
   return value === null || value === undefined ? "-" : `${value} W`;
+}
+
+function nullableTemperature(value: number | null | undefined) {
+  return value === null || value === undefined ? "-" : `${formatDecimal(value)} ℃`;
+}
+
+function nullableHertz(value: number | null | undefined) {
+  return value === null || value === undefined ? "-" : `${formatDecimal(value)} Hz`;
+}
+
+function numericDiagnostic(status: EnergyStatus, key: string) {
+  const value = status.ecoflowDiagnostics?.[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function booleanDiagnostic(status: EnergyStatus, key: string) {
+  const value = status.ecoflowDiagnostics?.[key];
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1") {
+      return true;
+    }
+    if (normalized === "false" || normalized === "0") {
+      return false;
+    }
+  }
+  return null;
+}
+
+function previousPro3CommandLabel(event: EnergyStatus["pro3AcOutputEvent"] | null | undefined) {
+  if (!event?.previousCommandKind) {
+    return "なし";
+  }
+  const sent = event.previousCommandSent ? "送信あり" : "未送信";
+  const targetAc = event.previousCommandTargetAcChargeW === null || event.previousCommandTargetAcChargeW === undefined ? "" : ` / AC ${event.previousCommandTargetAcChargeW}W`;
+  const targetReserve =
+    event.previousCommandTargetReserveSoc === null || event.previousCommandTargetReserveSoc === undefined ? "" : ` / リザーブ ${event.previousCommandTargetReserveSoc}%`;
+  return `${event.previousCommandKind} / ${sent}${targetAc}${targetReserve}`;
 }
 
 function nullablePositiveWatt(value: number | null | undefined) {

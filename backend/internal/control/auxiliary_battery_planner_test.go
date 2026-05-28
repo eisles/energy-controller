@@ -195,6 +195,51 @@ func TestPlanDelta3AuxChargingLowersReserveToMasterFloorWhenImporting(t *testing
 	}
 }
 
+func TestPlanDelta3AuxChargingStillReducesChargeWhenACOutputOffAndImporting(t *testing.T) {
+	currentLimit := 700
+	soc := 70
+	reserve := 72
+	enabled := true
+	acOutputEnabled := false
+	plan := PlanDelta3AuxCharging(Delta3AuxPlanInput{
+		Status: domain.Status{
+			ImportW:     180,
+			SurplusPlan: &domain.SurplusPlan{StrategyState: "RECOVERING"},
+			UpdatedAt:   time.Date(2026, 5, 28, 10, 0, 0, 0, time.UTC),
+		},
+		Delta3: Delta3AuxStatus{
+			Available:            true,
+			SOC:                  &soc,
+			ACChargeLimitW:       &currentLimit,
+			BackupReserveSoc:     &reserve,
+			BackupReserveEnabled: &enabled,
+			ACOutputEnabled:      &acOutputEnabled,
+		},
+	}, Delta3AuxSettings{
+		Enabled:              true,
+		MinChargeW:           100,
+		MaxChargeW:           1500,
+		SafetyMarginW:        50,
+		MinCommandDiffW:      100,
+		MaxIncreaseStepW:     300,
+		MaxDecreaseStepW:     500,
+		StopImportThresholdW: 50,
+	}, DefaultSettings())
+
+	if plan.StrategyState != "RECOVERING" {
+		t.Fatalf("StrategyState = %q, want RECOVERING", plan.StrategyState)
+	}
+	if plan.RecommendedACChargeLimitW != 400 {
+		t.Fatalf("RecommendedACChargeLimitW = %d, want 400", plan.RecommendedACChargeLimitW)
+	}
+	if !plan.ShouldAdjustACChargeLimit {
+		t.Fatal("ShouldAdjustACChargeLimit = false, want true")
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true")
+	}
+}
+
 func TestPlanDelta3AuxChargingDoesNotLowerReserveBelowSoc(t *testing.T) {
 	currentLimit := 100
 	soc := 20
@@ -228,6 +273,50 @@ func TestPlanDelta3AuxChargingDoesNotLowerReserveBelowSoc(t *testing.T) {
 	}
 	if plan.WouldWrite {
 		t.Fatal("WouldWrite = true, want false")
+	}
+}
+
+func TestPlanDelta3AuxChargingStillAppliesSafeLimitWhenACOutputOff(t *testing.T) {
+	currentLimit := 1400
+	soc := 45
+	acOut := 500
+	acOutputEnabled := false
+	plan := PlanDelta3AuxCharging(Delta3AuxPlanInput{
+		Status: domain.Status{
+			ExportW:        600,
+			ACChargeLimitW: 1500,
+			BatterySoc:     95,
+			SurplusPlan:    &domain.SurplusPlan{StrategyState: "CHARGING"},
+			UpdatedAt:      time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC),
+		},
+		Delta3: Delta3AuxStatus{
+			Available:       true,
+			SOC:             &soc,
+			ACOutW:          &acOut,
+			ACChargeLimitW:  &currentLimit,
+			ACOutputEnabled: &acOutputEnabled,
+		},
+	}, Delta3AuxSettings{
+		Enabled:          true,
+		MinChargeW:       100,
+		MaxChargeW:       1500,
+		SafetyMarginW:    50,
+		MinCommandDiffW:  100,
+		MaxIncreaseStepW: 300,
+		MaxDecreaseStepW: 500,
+	}, DefaultSettings())
+
+	if plan.StrategyState != "SAFE_LIMIT" {
+		t.Fatalf("StrategyState = %q, want SAFE_LIMIT", plan.StrategyState)
+	}
+	if plan.RecommendedACChargeLimitW != 1000 {
+		t.Fatalf("RecommendedACChargeLimitW = %d, want 1000", plan.RecommendedACChargeLimitW)
+	}
+	if !plan.ShouldAdjustACChargeLimit {
+		t.Fatal("ShouldAdjustACChargeLimit = false, want true")
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true")
 	}
 }
 

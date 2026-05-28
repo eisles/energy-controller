@@ -73,6 +73,10 @@ type fakeDelta3AuxCommandRepository struct {
 	previous *domain.Delta3AuxControlCommandLog
 }
 
+type fakePro3ACOutputEventRepository struct {
+	latest *domain.Pro3ACOutputEvent
+}
+
 func (c *recordingSurplusWriteClient) SetACChargePower(_ context.Context, watts int) error {
 	c.acChargePowerW = intPtr(watts)
 	return nil
@@ -100,6 +104,26 @@ func (r fakeDelta3AuxCommandRepository) LatestDelta3AuxControlCommandLog(context
 
 func (r fakeDelta3AuxCommandRepository) LatestDelta3AuxControlWriteCandidateLog(context.Context) (*domain.Delta3AuxControlCommandLog, error) {
 	return r.previous, nil
+}
+
+func (r fakeDelta3AuxCommandRepository) LatestDelta3AuxReserveCommandLog(context.Context) (*domain.Delta3AuxControlCommandLog, error) {
+	if r.previous != nil && r.previous.TargetBackupReserveSoc != nil {
+		return r.previous, nil
+	}
+	return nil, nil
+}
+
+func (r *fakePro3ACOutputEventRepository) InsertPro3ACOutputEvent(_ context.Context, event domain.Pro3ACOutputEvent) error {
+	r.latest = &event
+	return nil
+}
+
+func (r *fakePro3ACOutputEventRepository) LatestPro3ACOutputEvent(_ context.Context) (*domain.Pro3ACOutputEvent, error) {
+	return r.latest, nil
+}
+
+func (r *fakePro3ACOutputEventRepository) LatestPro3ACOutputEventByType(_ context.Context, _ string) (*domain.Pro3ACOutputEvent, error) {
+	return r.latest, nil
 }
 
 func (c *recordingSurplusWriteClient) SetBackupReserveSoc(_ context.Context, percent int) error {
@@ -155,6 +179,8 @@ func TestRecordStatusPersistsWouldSendLogWithoutCommandSent(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
+		nil,
 		slog.Default(),
 	)
 
@@ -173,6 +199,47 @@ func TestRecordStatusPersistsWouldSendLogWithoutCommandSent(t *testing.T) {
 	}
 	if !strings.Contains(logs[0].DecisionReason, "would-send") {
 		t.Fatalf("DecisionReason = %q, want would-send marker", logs[0].DecisionReason)
+	}
+}
+
+func TestRecordPro3ACOutputEventClearsCurrentStatusWhenOffMemoryClears(t *testing.T) {
+	now := time.Date(2026, 5, 28, 19, 20, 0, 0, time.UTC)
+	repo := &fakePro3ACOutputEventRepository{
+		latest: &domain.Pro3ACOutputEvent{
+			MeasuredAt:           now.Add(-10 * time.Minute),
+			EventType:            "ac_output_off_memory",
+			OutputPowerOffMemory: true,
+			Message:              "previous event",
+			CreatedAt:            now.Add(-10 * time.Minute),
+		},
+	}
+	status := domain.Status{
+		UpdatedAt:          now,
+		EcoFlowDiagnostics: map[string]any{"outputPowerOffMemory": false},
+		Pro3ACOutputEvent:  repo.latest,
+		LastDecisionReason: "normal",
+		State:              "running",
+		Mode:               "test",
+		BatterySoc:         50,
+		BatteryInputW:      0,
+		BatteryOutputW:     200,
+		ACChargeLimitW:     400,
+		TargetChargeW:      0,
+	}
+
+	recordPro3ACOutputEvent(
+		context.Background(),
+		config.Config{Clock: fixedMainClock{now: now}},
+		&status,
+		nil,
+		repo,
+		nil,
+		nil,
+		slog.Default(),
+	)
+
+	if status.Pro3ACOutputEvent != nil {
+		t.Fatalf("Pro3ACOutputEvent = %+v, want nil when current off-memory is false", status.Pro3ACOutputEvent)
 	}
 }
 
@@ -541,6 +608,8 @@ func TestRecordStatusPersistsDelta3AuxSuppressionOnStatus(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
+		nil,
 		stubDelta3StatusReader{status: api.Delta3StatusResponse{
 			Available:      true,
 			SOC:            &soc,
@@ -613,6 +682,8 @@ func TestRecordStatusPersistsNightOwnedSurplusSkipLogWithoutWriteCandidate(t *te
 		store.NewLogRepository(db),
 		store.NewNightChargePlanRepository(db),
 		surplusRepository,
+		nil,
+		nil,
 		nil,
 		nil,
 		nil,

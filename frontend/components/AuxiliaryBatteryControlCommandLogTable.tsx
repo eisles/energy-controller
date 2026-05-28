@@ -16,7 +16,7 @@ type Props = {
   onPageChange: (page: number) => void;
 };
 
-export function Delta3AuxControlCommandLogTable({ logs, error, page, pageSize, total, onPageChange }: Props) {
+export function AuxiliaryBatteryControlCommandLogTable({ logs, error, page, pageSize, total, onPageChange }: Props) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const startIndex = (page - 1) * pageSize;
   const firstItem = total === 0 ? 0 : startIndex + 1;

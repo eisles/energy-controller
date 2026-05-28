@@ -41,6 +41,7 @@ type chargingDevicePayload struct {
 	BackupReserveMinSoc   int    `json:"backupReserveMinSoc"`
 	BackupReserveMaxSoc   int    `json:"backupReserveMaxSoc"`
 	ExpectedDaytimeLoadW  int    `json:"expectedDaytimeLoadW"`
+	AutoRecoverACOutput   bool   `json:"autoRecoverAcOutput"`
 	SupportsSocRead       bool   `json:"supportsSocRead"`
 	SupportsACChargeLimit bool   `json:"supportsAcChargeLimit"`
 	SupportsOnOff         bool   `json:"supportsOnOff"`
@@ -128,6 +129,7 @@ func chargingDeviceFromPayload(payload chargingDevicePayload) domain.ChargingDev
 		BackupReserveMinSoc:   payload.BackupReserveMinSoc,
 		BackupReserveMaxSoc:   payload.BackupReserveMaxSoc,
 		ExpectedDaytimeLoadW:  payload.ExpectedDaytimeLoadW,
+		AutoRecoverACOutput:   payload.AutoRecoverACOutput,
 		SupportsSocRead:       payload.SupportsSocRead,
 		SupportsACChargeLimit: payload.SupportsACChargeLimit,
 		SupportsOnOff:         payload.SupportsOnOff,

@@ -80,6 +80,7 @@ type DeviceStatusResponse struct {
 	BackupReserveMinSoc  int                  `json:"backupReserveMinSoc"`
 	BackupReserveMaxSoc  int                  `json:"backupReserveMaxSoc"`
 	ExpectedDaytimeLoadW int                  `json:"expectedDaytimeLoadW"`
+	AutoRecoverACOutput  bool                 `json:"autoRecoverAcOutput"`
 	ControlEnabled       bool                 `json:"controlEnabled"`
 	Status               Delta3StatusResponse `json:"status"`
 }
@@ -200,6 +201,7 @@ func (r *Delta3StatusReader) CurrentDeviceStatuses(ctx context.Context, devices 
 			BackupReserveMinSoc:  device.BackupReserveMinSoc,
 			BackupReserveMaxSoc:  device.BackupReserveMaxSoc,
 			ExpectedDaytimeLoadW: device.ExpectedDaytimeLoadW,
+			AutoRecoverACOutput:  device.AutoRecoverACOutput,
 			ControlEnabled:       device.ControlEnabled,
 			Status:               status,
 		})

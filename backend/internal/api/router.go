@@ -60,6 +60,7 @@ func NewRouter(deps Dependencies) http.Handler {
 		mux.HandleFunc("GET /api/analytics/ecoflow-load", ecoFlowLoadHandler(store.NewEcoFlowLoadRepositoryWithTimezone(deps.DB, deps.Config.WeatherTimezone), deps.Logger))
 		mux.HandleFunc("GET /api/energy-meter/logs", energyMeterLogsHandler(store.NewEnergyMeterRepository(deps.DB), deps.Logger))
 		mux.HandleFunc("GET /api/surplus-control/commands", surplusControlCommandLogsHandler(store.NewSurplusControlCommandRepository(deps.DB), deps.Logger))
+		mux.HandleFunc("GET /api/pro3/ac-output-events", pro3ACOutputEventsHandler(store.NewPro3ACOutputEventRepository(deps.DB), deps.Logger))
 		mux.HandleFunc("GET /api/delta3/aux-plan", delta3AuxPlanHandler(statusProvider, deps.Logger))
 		mux.HandleFunc("GET /api/delta3/aux-commands", delta3AuxControlCommandLogsHandler(store.NewDelta3AuxControlCommandRepository(deps.DB), deps.Logger))
 		mux.HandleFunc("GET /api/night-charge/plans", nightChargePlanLogsHandler(store.NewNightChargePlanRepository(deps.DB), deps.Logger))

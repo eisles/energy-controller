@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/eisles/energy-controller/backend/internal/domain"
 )
@@ -21,6 +22,7 @@ type Delta3AuxCommandGuardInput struct {
 	Execute                bool
 	AllowPrivateAPIWrite   bool
 	Previous               *domain.Delta3AuxControlCommandLog
+	PreviousReserve        *domain.Delta3AuxControlCommandLog
 }
 
 type Delta3AuxWriteClient interface {
@@ -45,6 +47,7 @@ func EvaluateDelta3AuxCommandGuard(input Delta3AuxCommandGuardInput, settings De
 		SuppressedReason: "no DELTA 3 Plus auxiliary plan",
 	}
 	if plan != nil {
+		annotateDelta3AuxBackupReserveApplyState(plan, latestDelta3AuxReserveCommand(input), settings, status.UpdatedAt)
 		log.StrategyState = plan.StrategyState
 		log.ResidualExportW = plan.ResidualExportW
 		log.Delta3Soc = plan.Delta3Soc
@@ -63,6 +66,7 @@ func EvaluateDelta3AuxCommandGuard(input Delta3AuxCommandGuardInput, settings De
 		log.ShouldSetBackupReserve = plan.ShouldSetBackupReserve
 		log.ShouldDisableBackupReserve = plan.ShouldDisableBackupReserve
 		log.DecisionReason = plan.Reason
+		stripDelta3AuxUnreflectedReserveRetry(&log, plan)
 	}
 	log.CommandFingerprint = delta3AuxCommandFingerprint(log)
 	log.SuppressedReason = delta3AuxCommandSuppressedReason(input, settings, log)
@@ -124,6 +128,11 @@ func delta3AuxCommandSuppressedReason(input Delta3AuxCommandGuardInput, settings
 	}
 	if log.ShouldAdjustACChargeLimit && log.StrategyState != "SAFE_LIMIT" && !log.ShouldSetBackupReserve && !log.ShouldDisableBackupReserve && abs(*log.TargetACChargeLimitW-*log.PreviousACChargeLimitW) < settings.MinCommandDiffW {
 		return "command suppressed by minimum diff"
+	}
+	if input.Status.Delta3AuxPlan != nil && delta3AuxBackupReserveCommandUnreflected(input.Status.Delta3AuxPlan) &&
+		log.TargetBackupReserveSoc != nil && input.Status.Delta3AuxPlan.LastBackupReserveTargetSoc != nil &&
+		*log.TargetBackupReserveSoc == *input.Status.Delta3AuxPlan.LastBackupReserveTargetSoc {
+		return "previous backup reserve command was not reflected by device"
 	}
 	if previousDelta3AuxWriteCandidate(input.Previous) {
 		if input.Previous.CommandFingerprint == log.CommandFingerprint {
@@ -205,4 +214,136 @@ func previousDelta3AuxWriteCandidate(previous *domain.Delta3AuxControlCommandLog
 
 func previousDelta3AuxErroredCandidate(previous *domain.Delta3AuxControlCommandLog) bool {
 	return previous != nil && previous.ErrorMessage != nil && previous.CommandFingerprint != ""
+}
+
+func annotateDelta3AuxBackupReserveApplyState(plan *domain.Delta3AuxPlan, previous *domain.Delta3AuxControlCommandLog, settings Delta3AuxSettings, now time.Time) {
+	if plan == nil || previous == nil || previous.ErrorMessage != nil || !previous.CommandSent || previous.TargetBackupReserveSoc == nil {
+		return
+	}
+	elapsed := time.Duration(0)
+	hasElapsed := !now.IsZero() && !previous.MeasuredAt.IsZero()
+	if hasElapsed {
+		elapsed = now.Sub(previous.MeasuredAt)
+	}
+	plan.LastBackupReserveCommandAt = previous.MeasuredAt.Format(time.RFC3339Nano)
+	plan.LastBackupReserveTargetSoc = previous.TargetBackupReserveSoc
+	if previous.ShouldDisableBackupReserve {
+		if plan.CurrentBackupReserveEnabled != nil && !*plan.CurrentBackupReserveEnabled {
+			plan.BackupReserveApplyState = "applied"
+			plan.BackupReserveApplyReason = "DELTA 3 Plus backup reserve command is reflected by the device"
+			return
+		}
+		if !hasElapsed || elapsed < settings.MinCommandInterval {
+			plan.BackupReserveApplyState = "pending"
+			plan.BackupReserveApplyReason = "waiting for DELTA 3 Plus backup reserve command reflection"
+			return
+		}
+		if delta3AuxBackupReserveCommandIsStale(elapsed, settings) {
+			plan.BackupReserveApplyState = "stale"
+			plan.BackupReserveApplyReason = "previous DELTA 3 Plus backup reserve command is still not reflected after the stale window"
+			return
+		}
+		plan.BackupReserveApplyState = "failed"
+		plan.BackupReserveApplyReason = "DELTA 3 Plus backup reserve command was not reflected by the device"
+		return
+	}
+	if previous.ShouldSetBackupReserve && plan.CurrentBackupReserveEnabled != nil && !*plan.CurrentBackupReserveEnabled {
+		if !hasElapsed || elapsed < settings.MinCommandInterval {
+			plan.BackupReserveApplyState = "pending"
+			plan.BackupReserveApplyReason = "waiting for DELTA 3 Plus backup reserve command reflection"
+			return
+		}
+		if delta3AuxBackupReserveCommandIsStale(elapsed, settings) {
+			plan.BackupReserveApplyState = "stale"
+			plan.BackupReserveApplyReason = "previous DELTA 3 Plus backup reserve command is still not reflected after the stale window"
+			return
+		}
+		plan.BackupReserveApplyState = "failed"
+		plan.BackupReserveApplyReason = "DELTA 3 Plus backup reserve command was not reflected by the device"
+		return
+	}
+	if plan.CurrentBackupReserveSoc == nil {
+		plan.BackupReserveApplyState = "pending"
+		plan.BackupReserveApplyReason = "DELTA 3 Plus backup reserve status is unavailable after the last command"
+		return
+	}
+	if previous.ShouldSetBackupReserve && plan.CurrentBackupReserveEnabled == nil {
+		if !hasElapsed || elapsed < settings.MinCommandInterval {
+			plan.BackupReserveApplyState = "pending"
+			plan.BackupReserveApplyReason = "waiting for DELTA 3 Plus backup reserve enabled status after the last command"
+			return
+		}
+		if delta3AuxBackupReserveCommandIsStale(elapsed, settings) {
+			plan.BackupReserveApplyState = "stale"
+			plan.BackupReserveApplyReason = "previous DELTA 3 Plus backup reserve command is still not reflected after the stale window"
+			return
+		}
+		plan.BackupReserveApplyState = "failed"
+		plan.BackupReserveApplyReason = "DELTA 3 Plus backup reserve enabled status is unavailable after the last command"
+		return
+	}
+	if *plan.CurrentBackupReserveSoc == *previous.TargetBackupReserveSoc {
+		plan.BackupReserveApplyState = "applied"
+		plan.BackupReserveApplyReason = "DELTA 3 Plus backup reserve command is reflected by the device"
+		return
+	}
+	if !hasElapsed || elapsed < settings.MinCommandInterval {
+		plan.BackupReserveApplyState = "pending"
+		plan.BackupReserveApplyReason = "waiting for DELTA 3 Plus backup reserve command reflection"
+		return
+	}
+	if delta3AuxBackupReserveCommandIsStale(elapsed, settings) {
+		plan.BackupReserveApplyState = "stale"
+		plan.BackupReserveApplyReason = "previous DELTA 3 Plus backup reserve command is still not reflected after the stale window"
+		return
+	}
+	plan.BackupReserveApplyState = "failed"
+	plan.BackupReserveApplyReason = "DELTA 3 Plus backup reserve command was not reflected by the device"
+}
+
+func delta3AuxBackupReserveCommandIsStale(elapsed time.Duration, settings Delta3AuxSettings) bool {
+	window := 6 * settings.MinCommandInterval
+	if window < 30*time.Minute {
+		window = 30 * time.Minute
+	}
+	return elapsed >= window
+}
+
+func latestDelta3AuxReserveCommand(input Delta3AuxCommandGuardInput) *domain.Delta3AuxControlCommandLog {
+	if input.PreviousReserve != nil {
+		return input.PreviousReserve
+	}
+	if input.Previous != nil && input.Previous.TargetBackupReserveSoc != nil && (input.Previous.ShouldSetBackupReserve || input.Previous.ShouldDisableBackupReserve) {
+		return input.Previous
+	}
+	return nil
+}
+
+func stripDelta3AuxUnreflectedReserveRetry(log *domain.Delta3AuxControlCommandLog, plan *domain.Delta3AuxPlan) {
+	if log == nil || plan == nil || !delta3AuxBackupReserveCommandUnreflected(plan) || plan.LastBackupReserveTargetSoc == nil || log.TargetBackupReserveSoc == nil {
+		return
+	}
+	if *log.TargetBackupReserveSoc != *plan.LastBackupReserveTargetSoc || !delta3AuxAllowsSafetyWriteDespiteReserveFailure(*log) {
+		return
+	}
+	log.ShouldSetBackupReserve = false
+	log.ShouldDisableBackupReserve = false
+	log.TargetBackupReserveSoc = nil
+}
+
+func delta3AuxAllowsSafetyWriteDespiteReserveFailure(log domain.Delta3AuxControlCommandLog) bool {
+	if !log.ShouldAdjustACChargeLimit || log.PreviousACChargeLimitW == nil || log.TargetACChargeLimitW == nil {
+		return false
+	}
+	if log.StrategyState == "SAFE_LIMIT" {
+		return true
+	}
+	return *log.TargetACChargeLimitW < *log.PreviousACChargeLimitW
+}
+
+func delta3AuxBackupReserveCommandUnreflected(plan *domain.Delta3AuxPlan) bool {
+	if plan == nil {
+		return false
+	}
+	return plan.BackupReserveApplyState == "failed" || plan.BackupReserveApplyState == "stale"
 }

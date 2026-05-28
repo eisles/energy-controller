@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { ControlPanel } from "@/components/ControlPanel";
-import { Delta3AuxControlCommandLogTable } from "@/components/Delta3AuxControlCommandLogTable";
+import { AuxiliaryBatteryControlCommandLogTable } from "@/components/AuxiliaryBatteryControlCommandLogTable";
 import { DryRunPlanHistory } from "@/components/DryRunPlanHistory";
 import { EnergyCharts } from "@/components/EnergyCharts";
 import { EnergyMeterLogTable } from "@/components/EnergyMeterLogTable";
@@ -934,7 +934,7 @@ export function Dashboard() {
             onToggle={() => toggleSection("delta3AuxCommand")}
             headerControls={headerControls}
           >
-            <Delta3AuxControlCommandLogTable
+            <AuxiliaryBatteryControlCommandLogTable
               logs={delta3AuxCommandLogs}
               error={delta3AuxCommandError}
               page={delta3AuxCommandPage}

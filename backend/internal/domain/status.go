@@ -33,33 +33,34 @@ type ControlDecision struct {
 }
 
 type Status struct {
-	GridW                            int              `json:"gridW"`
-	ImportW                          int              `json:"importW"`
-	ExportW                          int              `json:"exportW"`
-	BatterySoc                       int              `json:"batterySoc"`
-	BatteryInputW                    int              `json:"batteryInputW"`
-	BatteryOutputW                   int              `json:"batteryOutputW"`
-	ACChargeLimitW                   int              `json:"acChargeLimitW"`
-	BackupReserveSoc                 *int             `json:"backupReserveSoc,omitempty"`
-	EnergyBackupEnabled              *bool            `json:"energyBackupEnabled,omitempty"`
-	TOUModeEnabled                   *bool            `json:"touModeEnabled,omitempty"`
-	SelfPoweredEnabled               *bool            `json:"selfPoweredEnabled,omitempty"`
-	ScheduledEnabled                 *bool            `json:"scheduledEnabled,omitempty"`
-	IntelligentEnabled               *bool            `json:"intelligentEnabled,omitempty"`
-	BatteryFullEnergyWh              *int             `json:"batteryFullEnergyWh,omitempty"`
-	EcoFlowDiagnostics               map[string]any   `json:"ecoflowDiagnostics,omitempty"`
-	SurplusPlan                      *SurplusPlan     `json:"surplusPlan,omitempty"`
-	NightChargePlan                  *NightChargePlan `json:"nightChargePlan,omitempty"`
-	Delta3AuxPlan                    *Delta3AuxPlan   `json:"delta3AuxPlan,omitempty"`
-	TargetChargeW                    int              `json:"targetChargeW"`
-	State                            string           `json:"state"`
-	Mode                             string           `json:"mode"`
-	RealControlTrialUntil            *time.Time       `json:"realControlTrialUntil,omitempty"`
-	RealControlTrialActive           bool             `json:"realControlTrialActive"`
-	RealControlTrialRemainingSeconds int64            `json:"realControlTrialRemainingSeconds"`
-	LastDecisionReason               string           `json:"lastDecisionReason"`
-	LastError                        *string          `json:"lastError"`
-	UpdatedAt                        time.Time        `json:"updatedAt"`
+	GridW                            int                `json:"gridW"`
+	ImportW                          int                `json:"importW"`
+	ExportW                          int                `json:"exportW"`
+	BatterySoc                       int                `json:"batterySoc"`
+	BatteryInputW                    int                `json:"batteryInputW"`
+	BatteryOutputW                   int                `json:"batteryOutputW"`
+	ACChargeLimitW                   int                `json:"acChargeLimitW"`
+	BackupReserveSoc                 *int               `json:"backupReserveSoc,omitempty"`
+	EnergyBackupEnabled              *bool              `json:"energyBackupEnabled,omitempty"`
+	TOUModeEnabled                   *bool              `json:"touModeEnabled,omitempty"`
+	SelfPoweredEnabled               *bool              `json:"selfPoweredEnabled,omitempty"`
+	ScheduledEnabled                 *bool              `json:"scheduledEnabled,omitempty"`
+	IntelligentEnabled               *bool              `json:"intelligentEnabled,omitempty"`
+	BatteryFullEnergyWh              *int               `json:"batteryFullEnergyWh,omitempty"`
+	EcoFlowDiagnostics               map[string]any     `json:"ecoflowDiagnostics,omitempty"`
+	SurplusPlan                      *SurplusPlan       `json:"surplusPlan,omitempty"`
+	NightChargePlan                  *NightChargePlan   `json:"nightChargePlan,omitempty"`
+	Delta3AuxPlan                    *Delta3AuxPlan     `json:"delta3AuxPlan,omitempty"`
+	Pro3ACOutputEvent                *Pro3ACOutputEvent `json:"pro3AcOutputEvent,omitempty"`
+	TargetChargeW                    int                `json:"targetChargeW"`
+	State                            string             `json:"state"`
+	Mode                             string             `json:"mode"`
+	RealControlTrialUntil            *time.Time         `json:"realControlTrialUntil,omitempty"`
+	RealControlTrialActive           bool               `json:"realControlTrialActive"`
+	RealControlTrialRemainingSeconds int64              `json:"realControlTrialRemainingSeconds"`
+	LastDecisionReason               string             `json:"lastDecisionReason"`
+	LastError                        *string            `json:"lastError"`
+	UpdatedAt                        time.Time          `json:"updatedAt"`
 }
 
 type SurplusPlan struct {
@@ -88,9 +89,15 @@ type Delta3AuxPlan struct {
 	CurrentACChargeLimitW       *int   `json:"currentAcChargeLimitW,omitempty"`
 	RecommendedBackupReserveSoc *int   `json:"recommendedBackupReserveSoc,omitempty"`
 	CurrentBackupReserveSoc     *int   `json:"currentBackupReserveSoc,omitempty"`
+	CurrentBackupReserveEnabled *bool  `json:"currentBackupReserveEnabled,omitempty"`
+	BackupReserveApplyState     string `json:"backupReserveApplyState,omitempty"`
+	BackupReserveApplyReason    string `json:"backupReserveApplyReason,omitempty"`
+	LastBackupReserveCommandAt  string `json:"lastBackupReserveCommandAt,omitempty"`
+	LastBackupReserveTargetSoc  *int   `json:"lastBackupReserveTargetSoc,omitempty"`
 	Delta3Soc                   *int   `json:"delta3Soc,omitempty"`
 	Delta3MaxChargeSoc          *int   `json:"delta3MaxChargeSoc,omitempty"`
 	Delta3ACOutputW             *int   `json:"delta3AcOutputW,omitempty"`
+	Delta3ACOutputEnabled       *bool  `json:"delta3AcOutputEnabled,omitempty"`
 	SafeACChargeLimitW          int    `json:"safeAcChargeLimitW"`
 	ResidualExportW             int    `json:"residualExportW"`
 	SafetyMarginW               int    `json:"safetyMarginW"`
@@ -462,6 +469,33 @@ type Delta3AuxControlCommandLog struct {
 	DecisionReason             string    `json:"decisionReason"`
 	ErrorMessage               *string   `json:"errorMessage"`
 	CreatedAt                  time.Time `json:"createdAt"`
+}
+
+type Pro3ACOutputEvent struct {
+	ID                              int64      `json:"id"`
+	MeasuredAt                      time.Time  `json:"measuredAt"`
+	EventType                       string     `json:"eventType"`
+	OutputPowerOffMemory            bool       `json:"outputPowerOffMemory"`
+	GridW                           int        `json:"gridW"`
+	ImportW                         int        `json:"importW"`
+	ExportW                         int        `json:"exportW"`
+	BatterySoc                      int        `json:"batterySoc"`
+	BatteryInputW                   int        `json:"batteryInputW"`
+	BatteryOutputW                  int        `json:"batteryOutputW"`
+	ACChargeLimitW                  int        `json:"acChargeLimitW"`
+	BMSMaxCellTempC                 *float64   `json:"bmsMaxCellTempC,omitempty"`
+	BMSMaxMosTempC                  *float64   `json:"bmsMaxMosTempC,omitempty"`
+	ACOutFreqHz                     *float64   `json:"acOutFreqHz,omitempty"`
+	ACOutDsgPowMaxW                 *int       `json:"acOutDsgPowMaxW,omitempty"`
+	PreviousCommandMeasuredAt       *time.Time `json:"previousCommandMeasuredAt,omitempty"`
+	PreviousCommandKind             string     `json:"previousCommandKind"`
+	PreviousCommandSent             bool       `json:"previousCommandSent"`
+	PreviousCommandWouldWrite       bool       `json:"previousCommandWouldWrite"`
+	PreviousCommandTargetACChargeW  *int       `json:"previousCommandTargetAcChargeW,omitempty"`
+	PreviousCommandTargetReserveSoc *int       `json:"previousCommandTargetReserveSoc,omitempty"`
+	PreviousCommandReason           string     `json:"previousCommandReason"`
+	Message                         string     `json:"message"`
+	CreatedAt                       time.Time  `json:"createdAt"`
 }
 
 type NotificationLog struct {

@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Phase 7: DELTA Pro 3 AC出力OFFイベント追跡 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; max-width: 960px; margin: 40px auto; padding: 0 24px; color: #17202a; }
+    h1, h2, h3 { line-height: 1.3; }
+    code, pre { background: #f4f6f8; border-radius: 6px; }
+    code { padding: 2px 5px; }
+    pre { padding: 14px; overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #d8dee4; padding: 8px; }
+    th { background: #f6f8fa; }
+  </style>
+</head>
+<body>
+  <h1>Phase 7: DELTA Pro 3 AC出力OFFイベント追跡 実装計画</h1>
+  <h2>目的</h2>
+  <p>DELTA Pro 3 の AC出力がOFFになった場合に、次回から原因追跡できるようにする。</p>
+  <p>現在は <code>power_logs.ecoflow_diagnostics_json.outputPowerOffMemory</code> で「過去にAC出力OFFが発生した可能性」は見えるが、画面上で目立たず、直前コマンド・温度・出力W・AC出力状態を1つのイベントとして追えない。</p>
+
+  <h2>非目的</h2>
+  <ul>
+    <li>DELTA Pro 3 の AC出力を自動でON/OFFする実機writeは追加しない。</li>
+    <li>EcoFlow APIの未確定なAC出力制御payloadは実装しない。</li>
+    <li>DELTA 3 Plus の補助制御ロジックは変更しない。</li>
+    <li>既存の余剰追従・夜間充電アルゴリズムの判断式は変更しない。</li>
+  </ul>
+
+  <h2>現状</h2>
+  <ul>
+    <li>DELTA Pro 3 の診断値は <code>current_status.ecoflow_diagnostics_json</code> と <code>power_logs.ecoflow_diagnostics_json</code> に保存されている。</li>
+    <li><code>outputPowerOffMemory=true</code> は取得できている。</li>
+    <li><code>surplus_control_command_logs</code> には直前の余剰追従コマンドが保存されている。</li>
+    <li>通知基盤は <code>notification_logs</code> と Slack webhook ベースの <code>notify</code> package がある。</li>
+    <li>画面の上部ステータスカードでは、AC出力OFF履歴や直前状況を専用表示していない。</li>
+  </ul>
+
+  <h2>データ/API契約</h2>
+  <h3>新規ドメイン</h3>
+  <p><code>domain.Pro3ACOutputEvent</code> を追加する。</p>
+  <p>保存する主な項目は、検知時刻、イベント種別、<code>outputPowerOffMemory</code>、SOC、AC入力/出力、AC充電上限、Grid、温度、AC出力上限、直前コマンド、メッセージ、作成時刻。</p>
+
+  <h3>DB</h3>
+  <p>新規テーブル <code>pro3_ac_output_event_logs</code> を追加する。</p>
+  <p>イベントは同じ <code>event_type + measured_at</code> で重複保存しない。初期実装では、状態が <code>outputPowerOffMemory=true</code> のときに30分以上前の同種イベントがなければ保存する。</p>
+
+  <h3>API</h3>
+  <p><code>GET /api/pro3/ac-output-events?limit=20&amp;offset=0</code> を追加する。</p>
+  <pre><code>{
+  "items": [],
+  "limit": 20,
+  "offset": 0,
+  "total": 0
+}</code></pre>
+  <p><code>GET /api/status</code> には直近イベントを <code>pro3AcOutputEvent</code> として含める。</p>
+
+  <h3>通知</h3>
+  <p>既存の通知基盤を使い、<code>outputPowerOffMemory=true</code> を検出したら <code>notification_logs</code> に <code>kind=pro3_ac_output_off</code> で保存する。</p>
+  <p><code>NOTIFICATION_ENABLED=true</code> かつ Slack 設定がある場合だけ Slack 送信する。通知は cooldown を設け、同じフラグで頻繁に送らない。</p>
+
+  <h2>画面</h2>
+  <p>トップ画面に DELTA Pro 3 の AC出力監視ブロックを追加する。</p>
+  <ul>
+    <li>現在の <code>outputPowerOffMemory</code></li>
+    <li>SOC</li>
+    <li>AC入力/出力</li>
+    <li>AC充電上限</li>
+    <li>温度</li>
+    <li>直近イベント時刻</li>
+    <li>直前コマンド</li>
+    <li>直前コマンド理由</li>
+  </ul>
+
+  <h2>安全境界</h2>
+  <ul>
+    <li>本実装は read-only 監視と通知のみ。</li>
+    <li>EcoFlow write は追加しない。</li>
+    <li>既存の <code>ENABLE_REAL_CONTROL</code> / <code>SIMULATION_MODE</code> の安全境界は変更しない。</li>
+    <li>通知送信は外部writeだが、既存通知基盤の設定に従う。未設定時はDBログのみ。</li>
+    <li>秘密情報、SN、token はログや通知に出さない。</li>
+  </ul>
+
+  <h2>実装手順</h2>
+  <ol>
+    <li><code>domain.Status</code> に <code>Pro3ACOutputEvent</code> を追加する。</li>
+    <li><code>domain.Pro3ACOutputEvent</code> と page 型を追加する。</li>
+    <li>migration に <code>pro3_ac_output_event_logs</code> を追加する。</li>
+    <li>repository を追加し、insert / latest / list page / latest within cooldown を実装する。</li>
+    <li><code>recordStatus</code> で <code>outputPowerOffMemory=true</code> を検出し、直前 <code>surplus_control_command_logs</code> と診断値をまとめてイベント化する。</li>
+    <li>既存 <code>notification_logs</code> を使って <code>pro3_ac_output_off</code> 通知を保存・送信する。</li>
+    <li><code>GET /api/pro3/ac-output-events</code> を追加する。</li>
+    <li><code>GET /api/status</code> に直近イベントを含める。</li>
+    <li>frontend types と <code>StatusCards</code> に AC出力監視ブロックを追加する。</li>
+    <li>Go unit test を追加する。</li>
+    <li>frontend build で型と表示を検証する。</li>
+  </ol>
+
+  <h2>レビュー観点</h2>
+  <ul>
+    <li><code>outputPowerOffMemory=true</code> が継続していても通知/イベントが連投されないこと。</li>
+    <li>直前コマンドは <code>surplus_control_command_logs</code> から読み、AC出力OFF操作と誤認させない表示にすること。</li>
+    <li><code>nil</code> 診断値や古いDBでも起動できること。</li>
+    <li>実機writeを追加していないこと。</li>
+    <li>DB migration が既存DBに対して安全に再実行できること。</li>
+  </ul>
+
+  <h2>検証コマンド</h2>
+  <pre><code>cd backend &amp;&amp; rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build
+rtk git diff --check</code></pre>
+  <pre><code>rtk proxy curl -fsS http://localhost:18085/api/status | jq '.pro3AcOutputEvent'
+rtk proxy curl -fsS 'http://localhost:18085/api/pro3/ac-output-events?limit=5' | jq .</code></pre>
+
+  <h2>運用メモ</h2>
+  <p>今回の変更で次回のAC出力OFF発生時は、少なくとも「検知時刻」「温度」「出力W」「SOC」「直前コマンド」を同じイベントとして追える。原因を本体保護・瞬間負荷・直前制御・通信/DB問題に切り分けやすくなる。</p>
+</body>
+</html>

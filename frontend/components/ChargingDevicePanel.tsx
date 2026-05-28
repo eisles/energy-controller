@@ -30,6 +30,7 @@ const emptyDevice: ChargingDevice = {
   backupReserveMinSoc: 20,
   backupReserveMaxSoc: 90,
   expectedDaytimeLoadW: 400,
+  autoRecoverAcOutput: false,
   supportsSocRead: true,
   supportsAcChargeLimit: true,
   supportsOnOff: true,
@@ -220,6 +221,9 @@ export function ChargingDevicePanel() {
                           <Badge className="charging-device-badge" variant={device.controlEnabled ? "warning" : "secondary"}>
                             {device.controlEnabled ? "制御候補" : "制御対象外"}
                           </Badge>
+                          <Badge className="charging-device-badge" variant={device.autoRecoverAcOutput ? "warning" : "secondary"}>
+                            {device.autoRecoverAcOutput ? "AC復旧許可" : "AC復旧なし"}
+                          </Badge>
                         </TableCell>
                         <TableCell>
                           {maskDeviceSn(device.deviceSn)}
@@ -324,6 +328,7 @@ export function ChargingDevicePanel() {
                     <CheckboxField label="SOC読み取り" checked={editing.supportsSocRead} onChange={(checked) => setEditing({ ...editing, supportsSocRead: checked })} />
                     <CheckboxField label="AC上限設定" checked={editing.supportsAcChargeLimit} onChange={(checked) => setEditing({ ...editing, supportsAcChargeLimit: checked })} />
                     <CheckboxField label="ON/OFF制御" checked={editing.supportsOnOff} onChange={(checked) => setEditing({ ...editing, supportsOnOff: checked })} />
+                    <CheckboxField label="AC出力OFF復旧許可" checked={editing.autoRecoverAcOutput} onChange={(checked) => setEditing({ ...editing, autoRecoverAcOutput: checked })} />
                   </div>
                   <FormItem>
                     <FormLabel htmlFor="charging-device-notes">メモ</FormLabel>
@@ -399,6 +404,7 @@ function normalizeDeviceForSave(device: ChargingDevice): ChargingDevice {
     backupReserveMinSoc,
     backupReserveMaxSoc,
     expectedDaytimeLoadW: Math.max(0, Math.round(device.expectedDaytimeLoadW || 0)),
+    autoRecoverAcOutput: Boolean(device.autoRecoverAcOutput),
     notes: device.notes.trim()
   };
 }
