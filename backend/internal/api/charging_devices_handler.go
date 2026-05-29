@@ -191,7 +191,7 @@ func clampChargingDeviceSoc(value int) int {
 
 func allowedChargingDeviceKind(value string) bool {
 	switch value {
-	case "ecoflow_delta_pro3", "ecoflow_delta3_plus", "switchbot_plug", "manual":
+	case "ecoflow_delta_pro3", "ecoflow_delta3_plus", "ecoflow_river2", "switchbot_plug", "manual":
 		return true
 	default:
 		return false
@@ -207,6 +207,8 @@ func defaultChargingDeviceType(kind string, value string) string {
 		return "DELTA_PRO3"
 	case "ecoflow_delta3_plus":
 		return "DELTA_3"
+	case "ecoflow_river2":
+		return "RIVER_2"
 	default:
 		return ""
 	}
@@ -220,6 +222,8 @@ func defaultChargingDeviceStatusSource(kind string, value string) string {
 	case "ecoflow_delta_pro3":
 		return "ecoflow_cloud"
 	case "ecoflow_delta3_plus":
+		return "ecoflow_private_mqtt"
+	case "ecoflow_river2":
 		return "ecoflow_private_mqtt"
 	case "switchbot_plug":
 		return "switchbot_cloud"
@@ -251,6 +255,8 @@ func validChargingDeviceType(device domain.ChargingDevice) bool {
 		default:
 			return false
 		}
+	case "ecoflow_river2":
+		return device.DeviceType == "RIVER_2"
 	default:
 		return false
 	}
@@ -261,6 +267,8 @@ func validChargingDeviceStatusSource(device domain.ChargingDevice) bool {
 	case "ecoflow_delta_pro3":
 		return device.StatusSource == "ecoflow_cloud"
 	case "ecoflow_delta3_plus":
+		return device.StatusSource == "ecoflow_private_mqtt"
+	case "ecoflow_river2":
 		return device.StatusSource == "ecoflow_private_mqtt"
 	case "switchbot_plug":
 		return device.StatusSource == "switchbot_cloud"

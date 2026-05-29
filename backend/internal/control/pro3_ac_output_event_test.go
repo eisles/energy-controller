@@ -17,14 +17,14 @@ func TestBuildPro3ACOutputEventCapturesDiagnosticsAndPreviousCommand(t *testing.
 		ImportW:        120,
 		BatterySoc:     44,
 		BatteryInputW:  100,
-		BatteryOutputW: 267,
+		BatteryOutputW: 0,
 		ACChargeLimitW: 400,
 		UpdatedAt:      now,
 		EcoFlowDiagnostics: map[string]any{
 			"outputPowerOffMemory":     true,
 			"bmsMaxCellTemp":           33,
 			"bmsMaxMosTemp":            32.5,
-			"acOutFreq":                60,
+			"acOutFreq":                0,
 			"plugInInfoAcOutDsgPowMax": 3600,
 		},
 	}, &domain.SurplusControlCommandLog{
@@ -59,19 +59,66 @@ func TestBuildPro3ACOutputEventCapturesDiagnosticsAndPreviousCommand(t *testing.
 
 func TestBuildPro3ACOutputEventSkipsWhenOffMemoryIsFalse(t *testing.T) {
 	_, ok := BuildPro3ACOutputEvent(domain.Status{
-		EcoFlowDiagnostics: map[string]any{"outputPowerOffMemory": false},
+		BatteryOutputW: 200,
+		EcoFlowDiagnostics: map[string]any{
+			"outputPowerOffMemory": false,
+			"acOutFreq":            60,
+		},
 	}, nil, time.Now())
 	if ok {
 		t.Fatal("BuildPro3ACOutputEvent ok=true, want false")
 	}
 }
 
+func TestBuildPro3ACOutputEventSkipsWhenOffMemoryIsStateRestoreSettingOnly(t *testing.T) {
+	_, ok := BuildPro3ACOutputEvent(domain.Status{
+		BatteryOutputW: 267,
+		EcoFlowDiagnostics: map[string]any{
+			"outputPowerOffMemory": true,
+			"acOutFreq":            60,
+		},
+	}, nil, time.Now())
+	if ok {
+		t.Fatal("BuildPro3ACOutputEvent ok=true, want false for outputPowerOffMemory setting only")
+	}
+}
+
+func TestBuildPro3ACOutputEventUsesACOutputEnabledFalseSignal(t *testing.T) {
+	event, ok := BuildPro3ACOutputEvent(domain.Status{
+		BatteryOutputW: 0,
+		EcoFlowDiagnostics: map[string]any{
+			"outputPowerOffMemory": false,
+			"acOutputEnabled":      false,
+		},
+	}, nil, time.Now())
+	if !ok {
+		t.Fatal("BuildPro3ACOutputEvent returned ok=false")
+	}
+	if event.OutputPowerOffMemory {
+		t.Fatalf("OutputPowerOffMemory = true, want false when only acOutputEnabled=false")
+	}
+}
+
+func TestBuildPro3ACOutputEventSkipsWhenOffSignalTelemetryIsMissing(t *testing.T) {
+	_, ok := BuildPro3ACOutputEvent(domain.Status{
+		BatteryOutputW: 0,
+		EcoFlowDiagnostics: map[string]any{
+			"outputPowerOffMemory": false,
+		},
+	}, nil, time.Now())
+	if ok {
+		t.Fatal("BuildPro3ACOutputEvent ok=true, want false without acOutputEnabled=false or acOutFreq<=0")
+	}
+}
+
 func TestBuildPro3ACOutputEventUsesExistingMasterTemperatureKey(t *testing.T) {
 	event, ok := BuildPro3ACOutputEvent(domain.Status{
-		UpdatedAt: time.Date(2026, 5, 28, 19, 0, 0, 0, time.UTC),
+		UpdatedAt:      time.Date(2026, 5, 28, 19, 0, 0, 0, time.UTC),
+		BatteryOutputW: 0,
 		EcoFlowDiagnostics: map[string]any{
 			"outputPowerOffMemory": true,
 			"bmsMasterTemp":        44.5,
+			"acOutFreq":            0,
 		},
 	}, nil, time.Now())
 	if !ok {

@@ -8,28 +8,30 @@ import (
 )
 
 type NightChargeDeviceInput struct {
-	DeviceID                int64
-	Name                    string
-	Kind                    string
-	Priority                int
-	Enabled                 bool
-	ControlEnabled          bool
-	WriteTarget             bool
-	CapacityWh              int
-	CurrentSoc              *int
-	CurrentACChargeLimitW   *int
-	CurrentBackupReserveSoc *int
-	ReserveSoc              int
-	TargetSoc               int
-	BackupReserveMinSoc     int
-	BackupReserveMaxSoc     int
-	ExpectedDaytimeLoadW    int
-	MinChargeW              int
-	MaxChargeW              int
-	SupportsACChargeLimit   bool
-	StatusAvailable         bool
-	StatusUnavailableReason string
-	DataSource              string
+	DeviceID                  int64
+	Name                      string
+	Kind                      string
+	Priority                  int
+	Enabled                   bool
+	ControlEnabled            bool
+	WriteTarget               bool
+	CapacityWh                int
+	CurrentSoc                *int
+	CurrentACChargeLimitW     *int
+	CurrentBackupReserveSoc   *int
+	CurrentTOUModeEnabled     *bool
+	CurrentSelfPoweredEnabled *bool
+	ReserveSoc                int
+	TargetSoc                 int
+	BackupReserveMinSoc       int
+	BackupReserveMaxSoc       int
+	ExpectedDaytimeLoadW      int
+	MinChargeW                int
+	MaxChargeW                int
+	SupportsACChargeLimit     bool
+	StatusAvailable           bool
+	StatusUnavailableReason   string
+	DataSource                string
 }
 
 type NightChargeDeviceWriteGuard struct {
@@ -378,13 +380,11 @@ func syncPrimaryPro3NightChargePlan(plan *domain.NightChargePlan, devicePlans []
 		plan.ShouldSetACChargeLimit = false
 		plan.ShouldSetBackupReserve = false
 		if !devicePlan.ShouldCharge {
-			plan.ShouldDisableEnergyModes = false
-			plan.ShouldEnableTOUMode = false
-			plan.ShouldEnableSelfPoweredMode = false
-			plan.WouldWrite = false
-			plan.CommandBlockReason = "current SOC is already above the allocated DELTA Pro 3 night target"
-			plan.CommandFingerprint = NightChargeCommandFingerprint(*plan)
-			plan.ActionSummary = nightChargeActionSummary(*plan)
+			if devicePlan.BlockReason != "" {
+				blockPrimaryPro3NightChargePlan(plan, devicePlan.BlockReason)
+				return
+			}
+			syncPrimaryPro3NightRecoveryPlan(plan, devicePlan, input, settings, guard)
 			return
 		}
 
@@ -395,6 +395,9 @@ func syncPrimaryPro3NightChargePlan(plan *domain.NightChargePlan, devicePlans []
 		plan.ShouldSetBackupReserve = input.CurrentBackupReserveSoc == nil || *input.CurrentBackupReserveSoc != recommendedReserve
 
 		switch {
+		case devicePlan.BlockReason != "":
+			plan.WouldWrite = false
+			plan.CommandBlockReason = devicePlan.BlockReason
 		case !nightChargeHasCandidateChange(*plan):
 			plan.WouldWrite = false
 			plan.CommandBlockReason = "night charge settings already match allocated DELTA Pro 3 plan"
@@ -415,6 +418,62 @@ func syncPrimaryPro3NightChargePlan(plan *domain.NightChargePlan, devicePlans []
 		plan.ActionSummary = nightChargeActionSummary(*plan)
 		return
 	}
+}
+
+func blockPrimaryPro3NightChargePlan(plan *domain.NightChargePlan, reason string) {
+	plan.ShouldDisableEnergyModes = false
+	plan.ShouldEnableTOUMode = false
+	plan.ShouldEnableSelfPoweredMode = false
+	plan.ShouldSetACChargeLimit = false
+	plan.ShouldSetBackupReserve = false
+	plan.WouldWrite = false
+	plan.CommandBlockReason = reason
+	plan.CommandFingerprint = NightChargeCommandFingerprint(*plan)
+	plan.ActionSummary = nightChargeActionSummary(*plan)
+}
+
+func syncPrimaryPro3NightRecoveryPlan(plan *domain.NightChargePlan, devicePlan domain.NightChargeDevicePlan, input NightChargeDeviceInput, settings Settings, guard NightChargeDeviceWriteGuard) {
+	plan.RecommendedMode = "self-powered"
+	plan.ShouldDisableEnergyModes = false
+	plan.ShouldEnableTOUMode = false
+	plan.ShouldEnableSelfPoweredMode = boolPtrFalse(input.CurrentSelfPoweredEnabled) || boolPtrTrue(input.CurrentTOUModeEnabled)
+
+	stopFloorW := nightChargeStopFloorW(input, settings)
+	if stopFloorW > 0 {
+		plan.RecommendedACChargeLimitW = stopFloorW
+		plan.ShouldSetACChargeLimit = input.CurrentACChargeLimitW != nil && *input.CurrentACChargeLimitW-stopFloorW >= settings.MinCommandDiffW
+	}
+
+	recommendedReserve := devicePlan.RecommendedTargetSoc
+	plan.RecommendedBackupReserveSoc = &recommendedReserve
+	plan.ShouldSetBackupReserve = input.CurrentBackupReserveSoc == nil || *input.CurrentBackupReserveSoc != recommendedReserve
+
+	switch {
+	case !nightChargeHasCandidateChange(*plan):
+		plan.WouldWrite = false
+		plan.CommandBlockReason = "night charge settings already match allocated DELTA Pro 3 recovery plan"
+	case !nightChargeDeviceWindowActive(*plan, guard):
+		plan.WouldWrite = false
+		plan.CommandBlockReason = "outside night charge window"
+	case nightChargeDeviceGuardBlockReason(guard) != "":
+		plan.WouldWrite = false
+		plan.CommandBlockReason = nightChargeDeviceGuardBlockReason(guard)
+	case nightChargeDeviceSpecificBlockReason(devicePlan.Kind, guard) != "":
+		plan.WouldWrite = false
+		plan.CommandBlockReason = nightChargeDeviceSpecificBlockReason(devicePlan.Kind, guard)
+	default:
+		plan.WouldWrite = true
+		plan.CommandBlockReason = ""
+	}
+	plan.CommandFingerprint = NightChargeCommandFingerprint(*plan)
+	plan.ActionSummary = nightChargeActionSummary(*plan)
+}
+
+func nightChargeStopFloorW(device NightChargeDeviceInput, settings Settings) int {
+	if device.MinChargeW > 0 {
+		return device.MinChargeW
+	}
+	return settings.MinChargeW
 }
 
 func hasUnhandledNightChargeDeviceDemand(devicePlans []domain.NightChargeDevicePlan) bool {

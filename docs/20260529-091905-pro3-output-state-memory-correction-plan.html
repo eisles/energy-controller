@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>DELTA Pro 3 出力状態復帰設定の誤検知修正計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; margin: 40px; color: #1f2937; }
+    h1, h2 { color: #111827; }
+    code { background: #f3f4f6; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    section { margin-bottom: 28px; }
+    ul { padding-left: 1.4rem; }
+  </style>
+</head>
+<body>
+  <h1>DELTA Pro 3 出力状態復帰設定の誤検知修正計画</h1>
+  <section>
+    <h2>Goal</h2>
+    <p><code>outputPowerOffMemory</code> を「AC出力OFF履歴」として扱っている誤判定を修正する。この値は「出力ポートのON/OFF状態を記憶し、電源復帰時に同じ状態へ戻す設定」として扱う。</p>
+  </section>
+  <section>
+    <h2>Non-goals</h2>
+    <ul>
+      <li>EcoFlow 実機への新しい write 制御は追加しない。</li>
+      <li>既存DBテーブルの破壊的マイグレーションは行わない。</li>
+      <li>過去ログは削除・書き換えしない。</li>
+      <li>DELTA 3 Plus 補助充電制御ロジックは対象外。</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Current State</h2>
+    <ul>
+      <li><code>BuildPro3ACOutputEvent</code> が <code>outputPowerOffMemory=true</code> のみでイベントを生成している。</li>
+      <li>通知と画面が「AC出力OFF履歴」と表示している。</li>
+      <li>実ログではこの値が true でも AC出力W と AC周波数が取れており、AC出力は継続している。</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Data/API Contract</h2>
+    <ul>
+      <li><code>Pro3ACOutputEvent.outputPowerOffMemory</code> は互換のため残す。</li>
+      <li><code>event_type=ac_output_off_memory</code> は過去互換のため残すが、新規生成条件を変更する。</li>
+      <li><code>outputPowerOffMemory=true</code> だけではイベントを生成しない。</li>
+      <li>実AC出力OFFは <code>battery_output_w</code>、<code>acOutFreq</code>、将来の <code>acOutputEnabled</code> で判定する。</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Files Likely To Change</h2>
+    <ul>
+      <li><code>backend/internal/control/pro3_ac_output_event.go</code></li>
+      <li><code>backend/internal/control/pro3_ac_output_event_test.go</code></li>
+      <li><code>backend/internal/notify/pro3_ac_output_alert.go</code></li>
+      <li><code>backend/cmd/server/main_test.go</code></li>
+      <li><code>frontend/components/StatusCards.tsx</code></li>
+      <li><code>frontend/lib/types.ts</code></li>
+    </ul>
+  </section>
+  <section>
+    <h2>Implementation Steps</h2>
+    <ol>
+      <li><code>BuildPro3ACOutputEvent</code> の生成条件を修正する。</li>
+      <li>イベントメッセージを「AC出力OFF相当を検知」に変更する。</li>
+      <li>通知文言を同様に修正する。</li>
+      <li>画面では <code>outputPowerOffMemory</code> を「出力状態復帰設定」として通常情報扱いにする。</li>
+      <li>実OFF相当だけ警告表示する。</li>
+      <li>テストを更新する。</li>
+    </ol>
+  </section>
+  <section>
+    <h2>Safety Boundaries</h2>
+    <ul>
+      <li>実機 write は行わない。</li>
+      <li><code>.env</code> や秘密情報は変更しない。</li>
+      <li>既存ログの削除やDB改変は行わない。</li>
+      <li>EcoFlow write path には触れない。</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Review Points</h2>
+    <ul>
+      <li><code>outputPowerOffMemory</code> を警告条件として使っていないこと。</li>
+      <li>実OFF検知が過剰に発火しないこと。</li>
+      <li>既存API利用側を壊さないこと。</li>
+      <li>表示文言が「履歴」と誤解させないこと。</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Verification Commands</h2>
+    <ul>
+      <li><code>cd backend &amp;&amp; rtk go test ./...</code></li>
+      <li><code>cd frontend &amp;&amp; rtk npm run build</code></li>
+      <li><code>rtk curl -s http://localhost:18085/api/status | rtk jq '.pro3AcOutputEvent, .ecoflowDiagnostics.outputPowerOffMemory'</code></li>
+    </ul>
+  </section>
+  <section>
+    <h2>Rollback Notes</h2>
+    <p>問題があれば本修正差分を revert する。DB破壊変更は入れないため、データ移行は不要。</p>
+  </section>
+</body>
+</html>

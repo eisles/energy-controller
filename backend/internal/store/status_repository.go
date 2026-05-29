@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"reflect"
 	"time"
 
 	"github.com/eisles/energy-controller/backend/internal/domain"
@@ -101,7 +102,7 @@ func (r *StatusRepository) CurrentStatus(ctx context.Context) (domain.Status, er
 		}
 		status.Delta3AuxPlan = &plan
 	}
-	if pro3ACOutputEventJSON.Valid && pro3ACOutputEventJSON.String != "" {
+	if pro3ACOutputEventJSON.Valid && pro3ACOutputEventJSON.String != "" && pro3ACOutputEventJSON.String != "null" {
 		var event domain.Pro3ACOutputEvent
 		if err := json.Unmarshal([]byte(pro3ACOutputEventJSON.String), &event); err != nil {
 			return domain.Status{}, err
@@ -223,7 +224,7 @@ func nullableBool(value *bool) any {
 }
 
 func nullableJSON(value any) any {
-	if value == nil {
+	if value == nil || isNilJSONValue(value) {
 		return nil
 	}
 	encoded, err := json.Marshal(value)
@@ -231,6 +232,16 @@ func nullableJSON(value any) any {
 		return nil
 	}
 	return string(encoded)
+}
+
+func isNilJSONValue(value any) bool {
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
+	}
 }
 
 func mapFromJSON(value string) (map[string]any, error) {

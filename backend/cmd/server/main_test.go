@@ -202,7 +202,7 @@ func TestRecordStatusPersistsWouldSendLogWithoutCommandSent(t *testing.T) {
 	}
 }
 
-func TestRecordPro3ACOutputEventClearsCurrentStatusWhenOffMemoryClears(t *testing.T) {
+func TestRecordPro3ACOutputEventClearsCurrentStatusWhenOffMemoryIsStateRestoreSettingOnly(t *testing.T) {
 	now := time.Date(2026, 5, 28, 19, 20, 0, 0, time.UTC)
 	repo := &fakePro3ACOutputEventRepository{
 		latest: &domain.Pro3ACOutputEvent{
@@ -215,7 +215,7 @@ func TestRecordPro3ACOutputEventClearsCurrentStatusWhenOffMemoryClears(t *testin
 	}
 	status := domain.Status{
 		UpdatedAt:          now,
-		EcoFlowDiagnostics: map[string]any{"outputPowerOffMemory": false},
+		EcoFlowDiagnostics: map[string]any{"outputPowerOffMemory": true, "acOutFreq": 60},
 		Pro3ACOutputEvent:  repo.latest,
 		LastDecisionReason: "normal",
 		State:              "running",
@@ -239,7 +239,7 @@ func TestRecordPro3ACOutputEventClearsCurrentStatusWhenOffMemoryClears(t *testin
 	)
 
 	if status.Pro3ACOutputEvent != nil {
-		t.Fatalf("Pro3ACOutputEvent = %+v, want nil when current off-memory is false", status.Pro3ACOutputEvent)
+		t.Fatalf("Pro3ACOutputEvent = %+v, want nil when outputPowerOffMemory is only the state restore setting", status.Pro3ACOutputEvent)
 	}
 }
 

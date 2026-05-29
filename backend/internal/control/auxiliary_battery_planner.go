@@ -241,8 +241,11 @@ func maybeSetDelta3BackupReserve(plan *domain.Delta3AuxPlan, status Delta3AuxSta
 	if reserveFloor > reserveCeiling {
 		return
 	}
-	target := clamp(*status.SOC+pro3Settings.ReserveRaiseStepPercent, reserveFloor, reserveCeiling)
-	if *status.BackupReserveSoc >= target && backupReserveEnabled(status.BackupReserveEnabled) {
+	target := reserveCeiling
+	if *status.BackupReserveSoc > 0 && !backupReserveKnownDisabled(status.BackupReserveEnabled) {
+		target = clamp(*status.SOC+pro3Settings.ReserveRaiseStepPercent, reserveFloor, reserveCeiling)
+	}
+	if *status.BackupReserveSoc >= target && !backupReserveKnownDisabled(status.BackupReserveEnabled) {
 		return
 	}
 	plan.RecommendedBackupReserveSoc = &target
@@ -317,6 +320,10 @@ func positiveIntPtr(value int) *int {
 
 func backupReserveEnabled(value *bool) bool {
 	return value != nil && *value
+}
+
+func backupReserveKnownDisabled(value *bool) bool {
+	return value != nil && !*value
 }
 
 func normalizeDelta3AuxSettings(settings Delta3AuxSettings) Delta3AuxSettings {

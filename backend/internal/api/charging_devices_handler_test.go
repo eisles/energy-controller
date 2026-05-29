@@ -103,6 +103,25 @@ func TestPostChargingDeviceHandlerSavesDevice(t *testing.T) {
 	}
 }
 
+func TestPostChargingDeviceHandlerSavesRiver2ReadOnlyDevice(t *testing.T) {
+	store := &stubChargingDeviceStore{}
+	body := []byte(`{"name":"RIVER 2","kind":"ecoflow_river2","provider":"ecoflow","role":"auxiliary","credentialRef":"ecoflow_river2_fridge","deviceSn":"RIVER2SN","deviceType":"","enabled":true,"controlEnabled":false,"priority":60,"minChargeW":0,"maxChargeW":0,"chargeStepW":100,"capacityWh":256,"targetSoc":90,"reserveSoc":20,"supportsSocRead":true,"supportsAcChargeLimit":false,"supportsOnOff":false,"notes":"read-only verification"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/charging-devices", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	postChargingDeviceHandler(store, slog.Default())(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if store.saved.DeviceType != "RIVER_2" || store.saved.StatusSource != "ecoflow_private_mqtt" {
+		t.Fatalf("saved identity = %q/%q, want RIVER_2/ecoflow_private_mqtt", store.saved.DeviceType, store.saved.StatusSource)
+	}
+	if store.saved.ControlEnabled || store.saved.SupportsACChargeLimit || store.saved.SupportsOnOff {
+		t.Fatalf("RIVER 2 should be read-only by default: %#v", store.saved)
+	}
+}
+
 func TestPostChargingDeviceHandlerSavesExplicitBackupReserveRange(t *testing.T) {
 	store := &stubChargingDeviceStore{}
 	body := []byte(`{"name":"DELTA 3 Plus 2","kind":"ecoflow_delta3_plus","provider":"ecoflow","role":"auxiliary","credentialRef":"ecoflow_delta3_secondary","deviceSn":"TESTSN456","deviceType":"DELTA_3","enabled":true,"controlEnabled":false,"priority":30,"minChargeW":100,"maxChargeW":1500,"chargeStepW":100,"capacityWh":2048,"targetSoc":90,"reserveSoc":20,"backupReserveMinSoc":25,"backupReserveMaxSoc":85,"supportsSocRead":true,"supportsAcChargeLimit":true,"supportsOnOff":true}`)

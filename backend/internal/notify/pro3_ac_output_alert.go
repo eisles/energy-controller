@@ -72,7 +72,7 @@ func pro3ACOutputAlertMessage(event domain.Pro3ACOutputEvent) string {
 	if event.PreviousCommandKind != "" {
 		previousCommand = fmt.Sprintf("%s sent=%t wouldWrite=%t", event.PreviousCommandKind, event.PreviousCommandSent, event.PreviousCommandWouldWrite)
 	}
-	return fmt.Sprintf("DELTA Pro 3 のAC出力OFF履歴を検知しました。\n\n時刻: %s\nSOC: %d%%\nAC入力: %dW\nAC出力: %dW\nAC充電上限: %dW\n直前制御: %s\n理由: %s",
+	return fmt.Sprintf("DELTA Pro 3 のAC出力停止シグナルを検知しました。\n\n時刻: %s\nSOC: %d%%\nAC入力: %dW\nAC出力: %dW\nAC充電上限: %dW\n直前制御: %s\n理由: %s",
 		event.MeasuredAt.Format("2006-01-02 15:04:05"),
 		event.BatterySoc,
 		event.BatteryInputW,

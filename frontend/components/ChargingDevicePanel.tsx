@@ -137,7 +137,7 @@ export function ChargingDevicePanel() {
       <Card>
         <CardHeader>
           <CardTitle>充電機器マスタ</CardTitle>
-          <CardDescription>DELTA Pro 3 / DELTA 3 Plus / 手動補助機器</CardDescription>
+          <CardDescription>DELTA Pro 3 / DELTA 3 Plus / RIVER 2 / 手動補助機器</CardDescription>
         </CardHeader>
         <CardContent>
           <p className="readonly-note">
@@ -462,6 +462,9 @@ function defaultDeviceType(kind: string, value: string) {
   if (kind === "ecoflow_delta3_plus") {
     return "DELTA_3";
   }
+  if (kind === "ecoflow_river2") {
+    return "RIVER_2";
+  }
   return "";
 }
 
@@ -485,6 +488,9 @@ function defaultStatusSource(kind: string, value: string) {
   if (kind === "ecoflow_delta3_plus") {
     return "ecoflow_private_mqtt";
   }
+  if (kind === "ecoflow_river2") {
+    return "ecoflow_private_mqtt";
+  }
   if (kind === "switchbot_plug") {
     return "switchbot_cloud";
   }
@@ -498,6 +504,9 @@ function validDeviceTypeForKind(kind: string, deviceType: string) {
   if (kind === "ecoflow_delta3_plus") {
     return ["DELTA_3", "DELTA_3_PLUS", "DELTA_3_1500", "DELTA_3_MAX_PLUS"].includes(deviceType);
   }
+  if (kind === "ecoflow_river2") {
+    return deviceType === "RIVER_2";
+  }
   return deviceType === "";
 }
 
@@ -506,6 +515,9 @@ function validStatusSourceForKind(kind: string, statusSource: string) {
     return statusSource === "ecoflow_cloud";
   }
   if (kind === "ecoflow_delta3_plus") {
+    return statusSource === "ecoflow_private_mqtt";
+  }
+  if (kind === "ecoflow_river2") {
     return statusSource === "ecoflow_private_mqtt";
   }
   if (kind === "switchbot_plug") {
@@ -518,6 +530,7 @@ function deviceKindLabel(value: string) {
   const labels: Record<string, string> = {
     ecoflow_delta_pro3: "DELTA Pro 3",
     ecoflow_delta3_plus: "DELTA 3 Plus",
+    ecoflow_river2: "RIVER 2",
     switchbot_plug: "SwitchBot Plug",
     manual: "手動"
   };

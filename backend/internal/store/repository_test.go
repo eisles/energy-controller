@@ -71,6 +71,9 @@ func TestStatusRepositoryUpdatesAndReadsCurrentStatus(t *testing.T) {
 	if got.Delta3AuxPlan == nil || got.Delta3AuxPlan.StrategyState != "READY" || got.Delta3AuxPlan.RecommendedACChargeLimitW != 300 {
 		t.Fatalf("Delta3AuxPlan = %+v, want READY 300W", got.Delta3AuxPlan)
 	}
+	if got.Pro3ACOutputEvent != nil {
+		t.Fatalf("Pro3ACOutputEvent = %+v, want nil", got.Pro3ACOutputEvent)
+	}
 	if !got.UpdatedAt.Equal(now) {
 		t.Fatalf("UpdatedAt = %s, want %s", got.UpdatedAt, now)
 	}

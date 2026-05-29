@@ -173,7 +173,7 @@ func (r *Delta3StatusReader) CurrentDeviceStatuses(ctx context.Context, devices 
 	responses := make([]DeviceStatusResponse, 0, len(devices))
 	for _, device := range devices {
 		status := deviceStatusNotAvailable(device)
-		if canReadDelta3Status(device) {
+		if canReadEcoFlowPrivateMQTTStatus(device) {
 			cfg := Delta3ConfigForDevice(r.cfg, device)
 			status = r.currentStatusForConfig(ctx, cfg, false)
 		} else if canReadEcoFlowCloudStatus(device) {
@@ -278,10 +278,10 @@ func EcoFlowCloudConfigForDevice(cfg config.Config, device domain.ChargingDevice
 	return cfg
 }
 
-func canReadDelta3Status(device domain.ChargingDevice) bool {
+func canReadEcoFlowPrivateMQTTStatus(device domain.ChargingDevice) bool {
 	return device.Enabled &&
 		device.Provider == "ecoflow" &&
-		device.Kind == "ecoflow_delta3_plus" &&
+		(device.Kind == "ecoflow_delta3_plus" || device.Kind == "ecoflow_river2") &&
 		device.StatusSource == "ecoflow_private_mqtt" &&
 		strings.TrimSpace(device.DeviceSN) != "" &&
 		device.SupportsSocRead
@@ -298,7 +298,7 @@ func canReadEcoFlowCloudStatus(device domain.ChargingDevice) bool {
 
 func deviceStatusNotAvailable(device domain.ChargingDevice) Delta3StatusResponse {
 	reason := "read-only status is not implemented for this device"
-	if device.Provider == "ecoflow" && (device.Kind == "ecoflow_delta3_plus" || device.Kind == "ecoflow_delta_pro3") && strings.TrimSpace(device.DeviceSN) == "" {
+	if device.Provider == "ecoflow" && (device.Kind == "ecoflow_delta3_plus" || device.Kind == "ecoflow_delta_pro3" || device.Kind == "ecoflow_river2") && strings.TrimSpace(device.DeviceSN) == "" {
 		reason = "device SN is not configured"
 	}
 	return Delta3StatusResponse{
@@ -367,6 +367,13 @@ func readDelta3Status(ctx context.Context, cfg config.Config, client delta3Probe
 			Available:  false,
 			DeviceType: cfg.Delta3DeviceType,
 			LastError:  err.Error(),
+		}
+	}
+	if !hasReadablePrivateMQTTTelemetry(status) {
+		return Delta3StatusResponse{
+			Available:  false,
+			DeviceType: cfg.Delta3DeviceType,
+			LastError:  fmt.Sprintf("EcoFlow private MQTT returned no supported telemetry fields for %s", cfg.Delta3DeviceType),
 		}
 	}
 	return mapDelta3Status(status, time.Now())
@@ -479,6 +486,20 @@ func mapDelta3Status(status ecoflowprivate.Status, now time.Time) Delta3StatusRe
 		BackupReserveEnabled: status.BackupReserveEnabled,
 		UpdatedAt:            now.Format(time.RFC3339),
 	}
+}
+
+func hasReadablePrivateMQTTTelemetry(status ecoflowprivate.Status) bool {
+	return status.CMSBatterySoc != nil ||
+		status.BMSBatterySoc != nil ||
+		status.ACInW != nil ||
+		status.ACOutW != nil ||
+		status.ACChargeLimitW != nil ||
+		status.GridBypassDisabled != nil ||
+		status.ACOutputEnabled != nil ||
+		status.MaxChargeSoc != nil ||
+		status.MinDischargeSoc != nil ||
+		status.BackupReserveSoc != nil ||
+		status.BackupReserveEnabled != nil
 }
 
 func firstIntPtr(values ...*int) *int {

@@ -424,7 +424,7 @@ func (w ecoFlowDelta3AuxWriteClient) SetEnergyBackupEnabled(ctx context.Context,
 		MQTTClientID:   cfg.Delta3MQTTClientID,
 		Timeout:        cfg.Delta3Timeout,
 	})
-	_, err = client.ExecuteEnergyBackupEnabled(ctx, enabled, startSoc, ecoflowprivate.WriteGuards{
+	guards := ecoflowprivate.WriteGuards{
 		MockMode:                cfg.MockMode,
 		SimulationMode:          cfg.SimulationMode,
 		EnableRealControl:       cfg.EnableRealControl,
@@ -433,9 +433,13 @@ func (w ecoFlowDelta3AuxWriteClient) SetEnergyBackupEnabled(ctx context.Context,
 		ConfirmEcoFlowWrite:     cfg.ConfirmEcoFlowWrite,
 		Execute:                 cfg.Delta3ExecuteWrite,
 		AllowPrivateAPIWrite:    cfg.Delta3AllowPrivateWrite,
-		Command:                 "set_energy_backup_enabled",
 		DeviceType:              cfg.Delta3DeviceType,
-	})
+	}
+	if enabled {
+		_, err = client.ExecuteBackupReserve(ctx, startSoc, guards)
+		return err
+	}
+	_, err = client.ExecuteEnergyBackupEnabled(ctx, false, startSoc, guards)
 	return err
 }
 
@@ -923,28 +927,30 @@ func nightChargeDeviceInputs(ctx context.Context, targetProvider delta3WriteTarg
 	for _, deviceStatus := range deviceStatuses {
 		device := deviceByID[deviceStatus.ID]
 		inputs = append(inputs, control.NightChargeDeviceInput{
-			DeviceID:                deviceStatus.ID,
-			Name:                    deviceStatus.Name,
-			Kind:                    deviceStatus.Kind,
-			Priority:                deviceStatus.Priority,
-			Enabled:                 deviceStatus.Enabled,
-			ControlEnabled:          deviceStatus.ControlEnabled,
-			WriteTarget:             deviceStatus.ID == pro3WriteTargetID,
-			CapacityWh:              deviceStatus.CapacityWh,
-			CurrentSoc:              deviceStatus.Status.SOC,
-			CurrentACChargeLimitW:   deviceStatus.Status.ACChargeLimitW,
-			CurrentBackupReserveSoc: deviceStatus.Status.BackupReserveSoc,
-			ReserveSoc:              deviceStatus.ReserveSoc,
-			TargetSoc:               deviceStatus.TargetSoc,
-			BackupReserveMinSoc:     deviceStatus.BackupReserveMinSoc,
-			BackupReserveMaxSoc:     deviceStatus.BackupReserveMaxSoc,
-			ExpectedDaytimeLoadW:    deviceStatus.ExpectedDaytimeLoadW,
-			MinChargeW:              deviceStatus.MinChargeW,
-			MaxChargeW:              deviceStatus.MaxChargeW,
-			SupportsACChargeLimit:   device.SupportsACChargeLimit,
-			StatusAvailable:         deviceStatus.Status.Available,
-			StatusUnavailableReason: deviceStatus.Status.LastError,
-			DataSource:              deviceStatus.StatusSource,
+			DeviceID:                  deviceStatus.ID,
+			Name:                      deviceStatus.Name,
+			Kind:                      deviceStatus.Kind,
+			Priority:                  deviceStatus.Priority,
+			Enabled:                   deviceStatus.Enabled,
+			ControlEnabled:            deviceStatus.ControlEnabled,
+			WriteTarget:               deviceStatus.ID == pro3WriteTargetID,
+			CapacityWh:                deviceStatus.CapacityWh,
+			CurrentSoc:                deviceStatus.Status.SOC,
+			CurrentACChargeLimitW:     deviceStatus.Status.ACChargeLimitW,
+			CurrentBackupReserveSoc:   deviceStatus.Status.BackupReserveSoc,
+			CurrentTOUModeEnabled:     deviceStatus.Status.TOUModeEnabled,
+			CurrentSelfPoweredEnabled: deviceStatus.Status.SelfPoweredEnabled,
+			ReserveSoc:                deviceStatus.ReserveSoc,
+			TargetSoc:                 deviceStatus.TargetSoc,
+			BackupReserveMinSoc:       deviceStatus.BackupReserveMinSoc,
+			BackupReserveMaxSoc:       deviceStatus.BackupReserveMaxSoc,
+			ExpectedDaytimeLoadW:      deviceStatus.ExpectedDaytimeLoadW,
+			MinChargeW:                deviceStatus.MinChargeW,
+			MaxChargeW:                deviceStatus.MaxChargeW,
+			SupportsACChargeLimit:     device.SupportsACChargeLimit,
+			StatusAvailable:           deviceStatus.Status.Available,
+			StatusUnavailableReason:   deviceStatus.Status.LastError,
+			DataSource:                deviceStatus.StatusSource,
 		})
 	}
 	return inputs

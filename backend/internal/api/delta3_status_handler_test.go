@@ -190,6 +190,24 @@ func TestDelta3StatusReaderCachesContextDeadlineExceeded(t *testing.T) {
 	}
 }
 
+func TestDelta3StatusReaderMarksUnsupportedPrivateMQTTPayloadUnavailable(t *testing.T) {
+	reader := newDelta3StatusReader(validDelta3Config(), nil, fakeDelta3Client{
+		status: ecoflowprivate.Status{
+			DeviceType:          "RIVER_2",
+			UnsupportedMessages: 14,
+		},
+	})
+
+	status := reader.CurrentStatus(context.Background())
+
+	if status.Available {
+		t.Fatalf("Available = true, want false for unsupported payload")
+	}
+	if !strings.Contains(status.LastError, "no supported telemetry fields") {
+		t.Fatalf("LastError = %q, want unsupported telemetry message", status.LastError)
+	}
+}
+
 func TestDelta3StatusReaderReturnsDeviceStatuses(t *testing.T) {
 	var probed []string
 	reader := newDelta3StatusReader(validDelta3Config(), nil, nil)
@@ -226,23 +244,37 @@ func TestDelta3StatusReaderReturnsDeviceStatuses(t *testing.T) {
 			Priority:        30,
 			ControlEnabled:  false,
 		},
+		{
+			ID:              3,
+			Name:            "RIVER 2",
+			Kind:            "ecoflow_river2",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			CredentialRef:   "river2",
+			DeviceSN:        "SN789",
+			DeviceType:      "RIVER_2",
+			StatusSource:    "ecoflow_private_mqtt",
+			Priority:        60,
+			ControlEnabled:  false,
+		},
 	}
 
 	statuses := reader.CurrentDeviceStatuses(context.Background(), devices)
 
-	if len(statuses) != 2 {
-		t.Fatalf("CurrentDeviceStatuses len = %d, want 2", len(statuses))
+	if len(statuses) != 3 {
+		t.Fatalf("CurrentDeviceStatuses len = %d, want 3", len(statuses))
 	}
-	if statuses[0].DeviceSN != "SN123" || statuses[1].DeviceSN != "SN456" {
-		t.Fatalf("device SNs = %q/%q, want SN123/SN456", statuses[0].DeviceSN, statuses[1].DeviceSN)
+	if statuses[0].DeviceSN != "SN123" || statuses[1].DeviceSN != "SN456" || statuses[2].DeviceSN != "SN789" {
+		t.Fatalf("device SNs = %q/%q/%q, want SN123/SN456/SN789", statuses[0].DeviceSN, statuses[1].DeviceSN, statuses[2].DeviceSN)
 	}
 	if statuses[0].Status.DeviceType != "DELTA_3" {
 		t.Fatalf("status device type = %q, want mapped probe fixture type", statuses[0].Status.DeviceType)
 	}
-	if !statuses[0].Status.Available || !statuses[1].Status.Available {
+	if !statuses[0].Status.Available || !statuses[1].Status.Available || !statuses[2].Status.Available {
 		t.Fatalf("statuses should be available: %+v", statuses)
 	}
-	if strings.Join(probed, ",") != "SN123/DELTA_3_PLUS,SN456/DELTA_3_PLUS" {
+	if strings.Join(probed, ",") != "SN123/DELTA_3_PLUS,SN456/DELTA_3_PLUS,SN789/RIVER_2" {
 		t.Fatalf("probed configs = %v, want each device SN/type", probed)
 	}
 }

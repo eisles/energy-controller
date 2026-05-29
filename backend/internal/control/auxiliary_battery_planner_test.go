@@ -768,7 +768,7 @@ func TestPlanDelta3AuxChargingCutsUnsafeOutputAwareLimitWhenNearFull(t *testing.
 	}
 }
 
-func TestPlanDelta3AuxChargingRaisesBackupReserveWhenPassthroughAtSafeACLimit(t *testing.T) {
+func TestPlanDelta3AuxChargingRaisesBackupReserveToCeilingWhenPassthroughAtSafeACLimit(t *testing.T) {
 	currentLimit := 1000
 	soc := 30
 	maxSoc := 90
@@ -802,8 +802,8 @@ func TestPlanDelta3AuxChargingRaisesBackupReserveWhenPassthroughAtSafeACLimit(t 
 		MaxDecreaseStepW: 500,
 	}, DefaultSettings())
 
-	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 32 {
-		t.Fatalf("RecommendedBackupReserveSoc = %v, want 32", plan.RecommendedBackupReserveSoc)
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 90 {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want 90", plan.RecommendedBackupReserveSoc)
 	}
 	if !plan.ShouldSetBackupReserve {
 		t.Fatal("ShouldSetBackupReserve = false, want true")
@@ -854,6 +854,46 @@ func TestPlanDelta3AuxChargingClampsBackupReserveToMasterMaximum(t *testing.T) {
 
 	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 31 {
 		t.Fatalf("RecommendedBackupReserveSoc = %v, want 31", plan.RecommendedBackupReserveSoc)
+	}
+	if !plan.ShouldSetBackupReserve {
+		t.Fatal("ShouldSetBackupReserve = false, want true")
+	}
+}
+
+func TestPlanDelta3AuxChargingStepsBackupReserveWhenEnabledStateUnknown(t *testing.T) {
+	currentLimit := 1000
+	soc := 30
+	acIn := 469
+	acOut := 469
+	reserve := 31
+	plan := PlanDelta3AuxCharging(Delta3AuxPlanInput{
+		Status: domain.Status{
+			ExportW:        1200,
+			ACChargeLimitW: 1500,
+			BatterySoc:     95,
+			SurplusPlan:    &domain.SurplusPlan{StrategyState: "CHARGING"},
+			UpdatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		},
+		Delta3: Delta3AuxStatus{
+			Available:        true,
+			SOC:              &soc,
+			ACInW:            &acIn,
+			ACOutW:           &acOut,
+			ACChargeLimitW:   &currentLimit,
+			BackupReserveSoc: &reserve,
+		},
+	}, Delta3AuxSettings{
+		Enabled:          true,
+		MinChargeW:       100,
+		MaxChargeW:       1500,
+		SafetyMarginW:    50,
+		MinCommandDiffW:  100,
+		MaxIncreaseStepW: 300,
+		MaxDecreaseStepW: 500,
+	}, DefaultSettings())
+
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 32 {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want stepwise 32", plan.RecommendedBackupReserveSoc)
 	}
 	if !plan.ShouldSetBackupReserve {
 		t.Fatal("ShouldSetBackupReserve = false, want true")
@@ -948,7 +988,7 @@ func TestPlanDelta3AuxChargingDisablesBackupReserveWhenExportBelowThreshold(t *t
 	}
 }
 
-func TestPlanDelta3AuxChargingClampsBackupReserveToWritableMinimum(t *testing.T) {
+func TestPlanDelta3AuxChargingRaisesDisabledBackupReserveToCeilingAtLowSoc(t *testing.T) {
 	currentLimit := 1000
 	soc := 1
 	acIn := 469
@@ -982,10 +1022,10 @@ func TestPlanDelta3AuxChargingClampsBackupReserveToWritableMinimum(t *testing.T)
 	}, DefaultSettings())
 
 	if plan.RecommendedBackupReserveSoc == nil {
-		t.Fatal("RecommendedBackupReserveSoc = nil, want 5")
+		t.Fatal("RecommendedBackupReserveSoc = nil, want 90")
 	}
-	if *plan.RecommendedBackupReserveSoc != 5 {
-		t.Fatalf("RecommendedBackupReserveSoc = %d, want 5", *plan.RecommendedBackupReserveSoc)
+	if *plan.RecommendedBackupReserveSoc != 90 {
+		t.Fatalf("RecommendedBackupReserveSoc = %d, want 90", *plan.RecommendedBackupReserveSoc)
 	}
 	if !plan.ShouldSetBackupReserve {
 		t.Fatal("ShouldSetBackupReserve = false, want true")

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>DELTA Pro 3 目標到達後の深夜充電停止制御 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; max-width: 960px; margin: 32px auto; padding: 0 20px; color: #1f2937; }
+    h1 { font-size: 28px; border-bottom: 2px solid #d1d5db; padding-bottom: 8px; }
+    h2 { font-size: 21px; margin-top: 32px; border-left: 4px solid #2563eb; padding-left: 10px; }
+    h3 { font-size: 17px; margin-top: 24px; }
+    code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; }
+    ul { padding-left: 1.4em; }
+    .note { background: #eff6ff; border: 1px solid #bfdbfe; padding: 12px 14px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>DELTA Pro 3 目標到達後の深夜充電停止制御 実装計画</h1>
+  <h2>目的</h2>
+  <p>深夜充電プランが「現在残量は目標到達済みなので充電不要」と判定しているにもかかわらず、DELTA Pro 3 が TOU モードと高い AC 充電上限のまま充電し続ける状態を修正する。</p>
+  <p>現在の問題は、<code>PlanNightCharging</code> が self-powered へ戻す候補を作っても、複数機器向けの <code>syncPrimaryPro3NightChargePlan</code> が DELTA Pro 3 の機器別 <code>ShouldCharge=false</code> を見た時点で write 候補をすべて消している点にある。そのため、画面上は「充電不要」と見えるが、実機へ「充電を止める/抑制する」候補が残らない。</p>
+  <h2>非目的</h2>
+  <ul>
+    <li>実機 write の安全ゲートを緩めない。</li>
+    <li><code>ENABLE_REAL_CONTROL</code> や <code>.env</code> の既定値を実制御側に変更しない。</li>
+    <li>DELTA 3 Plus の制御方針や AC 出力 ON/OFF 制御を変更しない。</li>
+    <li>未検証の EcoFlow private MQTT payload を追加しない。</li>
+    <li>深夜充電プラン全体の需要予測ロジックを作り直さない。</li>
+  </ul>
+  <h2>現状整理</h2>
+  <ul>
+    <li><code>applyNightModeRecommendation</code> は、現在エネルギーが推奨夜間目標を超えている場合に <code>RecommendedMode="self-powered"</code> と <code>ShouldEnableSelfPoweredMode=true</code> を作れる。</li>
+    <li><code>applyNightChargeCommandPlan</code> は self-powered 推奨時に <code>RecommendedBackupReserveSoc</code> と <code>ShouldSetBackupReserve</code> を作れる。</li>
+    <li>その後 <code>ApplyNightChargeDevicePlans</code> が機器別配分を行い、DELTA Pro 3 の機器別目標に同期する。</li>
+    <li><code>syncPrimaryPro3NightChargePlan</code> は <code>devicePlan.ShouldCharge=false</code> の場合、write 候補を false に戻している。</li>
+    <li>この上書きにより、TOU モード継続中や AC 充電上限 1500W の状態でも「止めるための write 候補」が消える。</li>
+  </ul>
+  <h2>変更方針</h2>
+  <p>DELTA Pro 3 の機器別目標に到達済みでも、実機状態が深夜充電停止向けの状態になっていない場合は write 候補を残す。</p>
+  <ul>
+    <li>現在 TOU モードが有効、または self-powered が明示的に無効。</li>
+    <li>現在の AC 充電上限が機器ごとの安全な最小値より高い。</li>
+    <li>現在のバックアップリザーブが推奨目標 SOC と異なる。</li>
+  </ul>
+  <p>機器別 plan に <code>BlockReason</code> がある場合は復帰候補を作らず <code>WouldWrite=false</code> のまま block reason を表示する。候補が必要な場合は <code>ShouldChargeTonight=false</code> のまま、self-powered への復帰、バックアップリザーブ、最小 AC 充電上限への設定候補を作る。self-powered write は <code>CurrentSelfPoweredEnabled == false</code>、または <code>CurrentTOUModeEnabled == true</code> の場合に出す。状態が取得できない nil は「OFF」とは扱わず、既存の <code>SetSelfPoweredMode(true)</code> payload で TOU を false にできる状態だけ明示的に解消する。AC 充電上限の停止床は機器マスターの <code>MinChargeW</code> を優先し、未設定の場合のみ <code>settings.MinChargeW</code> を使う。AC 充電上限は現在値が停止床より高い場合だけ下げ、停止床以下の値を充電抑制目的で上げる write は行わない。</p>
+  <h2>実装内容</h2>
+  <h3>1. DELTA Pro 3 実機モードを機器別入力へ渡す</h3>
+  <p><code>NightChargeDeviceInput</code> に <code>CurrentTOUModeEnabled</code> と <code>CurrentSelfPoweredEnabled</code> を追加し、<code>nightChargeDeviceInputs</code> で status から渡す。</p>
+  <h3>2. 目標到達済み分岐を停止候補生成へ変更</h3>
+  <p><code>syncPrimaryPro3NightChargePlan</code> の <code>!devicePlan.ShouldCharge</code> 分岐を、停止候補が必要なら write 候補を残す処理へ置き換える。</p>
+  <h3>3. コマンド実行順序は既存を使う</h3>
+  <p><code>ExecuteNightChargeCommand</code> には既に TOU disable、AC charge limit set、backup reserve set、self-powered enable があるため、新規 write API は追加しない。</p>
+  <h3>4. テスト追加</h3>
+  <ul>
+    <li>目標到達済みでも TOU 有効/self-powered 明示無効/AC 上限高めなら停止候補が残る。</li>
+    <li>TOU 有効かつ self-powered 有効のように矛盾して読める状態でも、TOU を落とすために self-powered write 候補が残る。</li>
+    <li>AC 上限が機器別停止床以下なら、AC 上限を上げる候補は出ない。</li>
+    <li>実機状態が一致済みなら write 候補は出ない。</li>
+    <li>機器マスターや状態取得で DELTA Pro 3 がブロックされている場合は、復帰 write 候補も出ない。</li>
+    <li>実制御 gate が閉じている場合は候補があっても write しない。</li>
+  </ul>
+  <h2>安全境界</h2>
+  <div class="note">real write は既存の <code>ENABLE_REAL_CONTROL=true</code>、<code>SIMULATION_MODE=false</code>、<code>MOCK_MODE=false</code>、<code>AUTO_CONTROL_ENABLED=true</code>、trial 有効、確認文字列、機器マスターの enabled/controlEnabled を満たす場合のみ。デフォルトは mock/simulation を維持し、secret や device serial number は扱わない。</div>
+  <h2>変更予定ファイル</h2>
+  <ul>
+    <li><code>backend/internal/control/night_charge_device_planner.go</code></li>
+    <li><code>backend/internal/control/night_charge_device_planner_test.go</code></li>
+    <li><code>backend/cmd/server/main.go</code></li>
+    <li>必要に応じて <code>backend/cmd/server/main_test.go</code></li>
+  </ul>
+  <h2>検証コマンド</h2>
+  <ul>
+    <li><code>cd backend &amp;&amp; rtk go test ./...</code></li>
+    <li><code>rtk git diff --check</code></li>
+    <li><code>rtk codex review --uncommitted</code></li>
+  </ul>
+  <h2>ロールバック</h2>
+  <p>DB migration は含めない。問題があれば <code>NightChargeDeviceInput</code> の追加フィールドと <code>syncPrimaryPro3NightChargePlan</code> の目標到達済み分岐変更、関連テストを戻す。</p>
+</body>
+</html>

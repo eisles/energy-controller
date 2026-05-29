@@ -272,6 +272,249 @@ func TestApplyNightChargeDevicePlansDoesNotAddLoadOnTopOfCurrentEnergy(t *testin
 	}
 }
 
+func TestApplyNightChargeDevicePlansKeepsPro3RecoveryCandidateWhenTargetReached(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:             "NIGHT_CHARGE_WINDOW",
+		RecommendedNightTargetKWh: 4.0,
+		MinimumReserveSoc:         20,
+	}
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:                  1,
+		Name:                      "DELTA Pro 3",
+		Kind:                      "ecoflow_delta_pro3",
+		Enabled:                   true,
+		ControlEnabled:            true,
+		WriteTarget:               true,
+		CapacityWh:                12288,
+		CurrentSoc:                intPtr(80),
+		CurrentACChargeLimitW:     intPtr(1500),
+		CurrentBackupReserveSoc:   intPtr(60),
+		CurrentTOUModeEnabled:     boolPtr(true),
+		CurrentSelfPoweredEnabled: boolPtr(false),
+		BackupReserveMinSoc:       20,
+		BackupReserveMaxSoc:       90,
+		MinChargeW:                500,
+		MaxChargeW:                1500,
+		SupportsACChargeLimit:     true,
+		StatusAvailable:           true,
+	}}, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+
+	if plan.ShouldChargeTonight {
+		t.Fatal("ShouldChargeTonight = true, want false because current energy already reached the allocated target")
+	}
+	if plan.RecommendedMode != "self-powered" {
+		t.Fatalf("RecommendedMode = %q, want self-powered", plan.RecommendedMode)
+	}
+	if !plan.ShouldEnableSelfPoweredMode {
+		t.Fatal("ShouldEnableSelfPoweredMode = false, want true to leave TOU charge mode")
+	}
+	if !plan.ShouldSetACChargeLimit || plan.RecommendedACChargeLimitW != 500 {
+		t.Fatalf("AC limit candidate = %v/%d, want true/500", plan.ShouldSetACChargeLimit, plan.RecommendedACChargeLimitW)
+	}
+	if !plan.ShouldSetBackupReserve || plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 80 {
+		t.Fatalf("Backup reserve candidate = %v/%v, want true/80", plan.ShouldSetBackupReserve, plan.RecommendedBackupReserveSoc)
+	}
+	if !plan.WouldWrite {
+		t.Fatalf("WouldWrite = false, want true for Pro 3 recovery candidate: block=%q", plan.CommandBlockReason)
+	}
+}
+
+func TestApplyNightChargeDevicePlansKeepsPro3RecoveryCandidateWhenTOUStillEnabled(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:             "NIGHT_CHARGE_WINDOW",
+		RecommendedNightTargetKWh: 4.0,
+		MinimumReserveSoc:         20,
+	}
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:                  1,
+		Name:                      "DELTA Pro 3",
+		Kind:                      "ecoflow_delta_pro3",
+		Enabled:                   true,
+		ControlEnabled:            true,
+		WriteTarget:               true,
+		CapacityWh:                12288,
+		CurrentSoc:                intPtr(80),
+		CurrentACChargeLimitW:     intPtr(500),
+		CurrentBackupReserveSoc:   intPtr(80),
+		CurrentTOUModeEnabled:     boolPtr(true),
+		CurrentSelfPoweredEnabled: boolPtr(true),
+		BackupReserveMinSoc:       20,
+		BackupReserveMaxSoc:       90,
+		MinChargeW:                500,
+		MaxChargeW:                1500,
+		SupportsACChargeLimit:     true,
+		StatusAvailable:           true,
+	}}, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+
+	if !plan.ShouldEnableSelfPoweredMode {
+		t.Fatal("ShouldEnableSelfPoweredMode = false, want true when TOU remains enabled")
+	}
+	if plan.ShouldSetACChargeLimit || plan.ShouldSetBackupReserve {
+		t.Fatalf("AC/reserve candidates = %v/%v, want false/false", plan.ShouldSetACChargeLimit, plan.ShouldSetBackupReserve)
+	}
+	if !plan.WouldWrite {
+		t.Fatalf("WouldWrite = false, want true for TOU cleanup candidate: block=%q", plan.CommandBlockReason)
+	}
+}
+
+func TestApplyNightChargeDevicePlansDoesNotRaisePro3ACLimitForRecovery(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:             "NIGHT_CHARGE_WINDOW",
+		RecommendedNightTargetKWh: 4.0,
+		MinimumReserveSoc:         20,
+	}
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:                  1,
+		Name:                      "DELTA Pro 3",
+		Kind:                      "ecoflow_delta_pro3",
+		Enabled:                   true,
+		ControlEnabled:            true,
+		WriteTarget:               true,
+		CapacityWh:                12288,
+		CurrentSoc:                intPtr(80),
+		CurrentACChargeLimitW:     intPtr(200),
+		CurrentBackupReserveSoc:   intPtr(80),
+		CurrentTOUModeEnabled:     boolPtr(false),
+		CurrentSelfPoweredEnabled: boolPtr(true),
+		BackupReserveMinSoc:       20,
+		BackupReserveMaxSoc:       90,
+		MinChargeW:                500,
+		MaxChargeW:                1500,
+		SupportsACChargeLimit:     true,
+		StatusAvailable:           true,
+	}}, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+
+	if plan.ShouldSetACChargeLimit {
+		t.Fatal("ShouldSetACChargeLimit = true, want false because recovery must not raise the AC charge limit")
+	}
+	if plan.WouldWrite {
+		t.Fatalf("WouldWrite = true, want false when recovery settings already match: fingerprint=%q", plan.CommandFingerprint)
+	}
+	if !strings.Contains(plan.CommandBlockReason, "already match") {
+		t.Fatalf("CommandBlockReason = %q, want already match", plan.CommandBlockReason)
+	}
+}
+
+func TestApplyNightChargeDevicePlansDoesNotTreatUnknownPro3ModeAsRecoveryNeeded(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:             "NIGHT_CHARGE_WINDOW",
+		RecommendedNightTargetKWh: 4.0,
+		MinimumReserveSoc:         20,
+	}
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:                1,
+		Name:                    "DELTA Pro 3",
+		Kind:                    "ecoflow_delta_pro3",
+		Enabled:                 true,
+		ControlEnabled:          true,
+		WriteTarget:             true,
+		CapacityWh:              12288,
+		CurrentSoc:              intPtr(80),
+		CurrentACChargeLimitW:   intPtr(500),
+		CurrentBackupReserveSoc: intPtr(80),
+		BackupReserveMinSoc:     20,
+		BackupReserveMaxSoc:     90,
+		MinChargeW:              500,
+		MaxChargeW:              1500,
+		SupportsACChargeLimit:   true,
+		StatusAvailable:         true,
+	}}, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+
+	if plan.ShouldEnableSelfPoweredMode {
+		t.Fatal("ShouldEnableSelfPoweredMode = true, want false when mode telemetry is unknown and other settings already match")
+	}
+	if plan.WouldWrite {
+		t.Fatalf("WouldWrite = true, want false for unknown mode telemetry without another recovery candidate: fingerprint=%q", plan.CommandFingerprint)
+	}
+	if !strings.Contains(plan.CommandBlockReason, "already match") {
+		t.Fatalf("CommandBlockReason = %q, want already match", plan.CommandBlockReason)
+	}
+}
+
+func TestApplyNightChargeDevicePlansKeepsPro3RecoveryBehindRealControlGate(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:             "NIGHT_CHARGE_WINDOW",
+		RecommendedNightTargetKWh: 4.0,
+		MinimumReserveSoc:         20,
+	}
+	guard := allowedNightChargeDeviceWriteGuard()
+	guard.SimulationMode = true
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:                  1,
+		Name:                      "DELTA Pro 3",
+		Kind:                      "ecoflow_delta_pro3",
+		Enabled:                   true,
+		ControlEnabled:            true,
+		WriteTarget:               true,
+		CapacityWh:                12288,
+		CurrentSoc:                intPtr(80),
+		CurrentACChargeLimitW:     intPtr(1500),
+		CurrentBackupReserveSoc:   intPtr(60),
+		CurrentTOUModeEnabled:     boolPtr(true),
+		CurrentSelfPoweredEnabled: boolPtr(false),
+		BackupReserveMinSoc:       20,
+		BackupReserveMaxSoc:       90,
+		MinChargeW:                500,
+		MaxChargeW:                1500,
+		SupportsACChargeLimit:     true,
+		StatusAvailable:           true,
+	}}, DefaultSettings(), guard)
+
+	if !plan.ShouldEnableSelfPoweredMode || !plan.ShouldSetACChargeLimit || !plan.ShouldSetBackupReserve {
+		t.Fatalf("candidate flags = self:%v ac:%v reserve:%v, want all true", plan.ShouldEnableSelfPoweredMode, plan.ShouldSetACChargeLimit, plan.ShouldSetBackupReserve)
+	}
+	if plan.WouldWrite {
+		t.Fatal("WouldWrite = true, want false under simulation mode")
+	}
+	if !strings.Contains(plan.CommandBlockReason, "simulation mode") {
+		t.Fatalf("CommandBlockReason = %q, want simulation mode guard", plan.CommandBlockReason)
+	}
+}
+
+func TestApplyNightChargeDevicePlansDoesNotRecoverBlockedPro3WriteTarget(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:             "NIGHT_CHARGE_WINDOW",
+		RecommendedNightTargetKWh: 4.0,
+		MinimumReserveSoc:         20,
+	}
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:                  1,
+		Name:                      "DELTA Pro 3",
+		Kind:                      "ecoflow_delta_pro3",
+		Enabled:                   true,
+		ControlEnabled:            false,
+		WriteTarget:               true,
+		CapacityWh:                12288,
+		CurrentSoc:                intPtr(80),
+		CurrentACChargeLimitW:     intPtr(1500),
+		CurrentBackupReserveSoc:   intPtr(60),
+		CurrentTOUModeEnabled:     boolPtr(true),
+		CurrentSelfPoweredEnabled: boolPtr(false),
+		BackupReserveMinSoc:       20,
+		BackupReserveMaxSoc:       90,
+		MinChargeW:                500,
+		MaxChargeW:                1500,
+		SupportsACChargeLimit:     true,
+		StatusAvailable:           true,
+	}}, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+
+	if plan.WouldWrite {
+		t.Fatal("WouldWrite = true, want false for control-disabled Pro 3 write target")
+	}
+	if plan.ShouldEnableSelfPoweredMode || plan.ShouldSetACChargeLimit || plan.ShouldSetBackupReserve {
+		t.Fatalf("candidate flags = self:%v ac:%v reserve:%v, want all false for blocked device", plan.ShouldEnableSelfPoweredMode, plan.ShouldSetACChargeLimit, plan.ShouldSetBackupReserve)
+	}
+	if !strings.Contains(plan.CommandBlockReason, "control is disabled") {
+		t.Fatalf("CommandBlockReason = %q, want control disabled", plan.CommandBlockReason)
+	}
+}
+
 func TestApplyNightChargeDevicePlansKeepsExecutablePro3PlanWhenAuxDemandCannotRun(t *testing.T) {
 	plan := &domain.NightChargePlan{
 		StrategyState:               "NIGHT_CHARGE_WINDOW",
@@ -455,6 +698,48 @@ func TestApplyNightChargeDevicePlansKeepsWriteBehindRealControlGate(t *testing.T
 	}
 	if !strings.Contains(plan.DevicePlans[0].BlockReason, "simulation mode") {
 		t.Fatalf("BlockReason = %q, want simulation mode guard", plan.DevicePlans[0].BlockReason)
+	}
+}
+
+func TestApplyNightChargeDevicePlansPreservesPro3ChargeCandidateBehindRealControlGate(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:             "NIGHT_CHARGE_WINDOW",
+		RecommendedNightTargetKWh: 8.0,
+		MinimumReserveSoc:         20,
+	}
+	guard := allowedNightChargeDeviceWriteGuard()
+	guard.SimulationMode = true
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:                1,
+		Name:                    "DELTA Pro 3",
+		Kind:                    "ecoflow_delta_pro3",
+		Enabled:                 true,
+		ControlEnabled:          true,
+		WriteTarget:             true,
+		CapacityWh:              12288,
+		CurrentSoc:              intPtr(20),
+		CurrentACChargeLimitW:   intPtr(400),
+		CurrentBackupReserveSoc: intPtr(20),
+		BackupReserveMinSoc:     20,
+		BackupReserveMaxSoc:     90,
+		MinChargeW:              400,
+		MaxChargeW:              1500,
+		SupportsACChargeLimit:   true,
+		StatusAvailable:         true,
+	}}, DefaultSettings(), guard)
+
+	if !plan.ShouldChargeTonight {
+		t.Fatal("ShouldChargeTonight = false, want true")
+	}
+	if !plan.ShouldSetACChargeLimit || !plan.ShouldSetBackupReserve {
+		t.Fatalf("candidate flags = ac:%v reserve:%v, want both true even when writes are blocked", plan.ShouldSetACChargeLimit, plan.ShouldSetBackupReserve)
+	}
+	if plan.WouldWrite {
+		t.Fatal("WouldWrite = true, want false under simulation mode")
+	}
+	if !strings.Contains(plan.CommandBlockReason, "simulation mode") {
+		t.Fatalf("CommandBlockReason = %q, want simulation mode guard", plan.CommandBlockReason)
 	}
 }
 

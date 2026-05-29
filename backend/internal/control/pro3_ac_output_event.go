@@ -13,8 +13,10 @@ import (
 const Pro3ACOutputOffEventType = "ac_output_off_memory"
 
 func BuildPro3ACOutputEvent(status domain.Status, previous *domain.SurplusControlCommandLog, now time.Time) (*domain.Pro3ACOutputEvent, bool) {
-	outputPowerOffMemory, ok := boolDiagnostic(status.EcoFlowDiagnostics, "outputPowerOffMemory")
-	if !ok || !outputPowerOffMemory {
+	outputPowerOffMemory, _ := boolDiagnostic(status.EcoFlowDiagnostics, "outputPowerOffMemory")
+	acOutFreqHz := firstFloatDiagnostic(status.EcoFlowDiagnostics, "acOutFreq")
+	acOutDsgPowMaxW := intDiagnostic(status.EcoFlowDiagnostics, "plugInInfoAcOutDsgPowMax")
+	if !isPro3ACOutputOffSignal(status, acOutFreqHz) {
 		return nil, false
 	}
 	if now.IsZero() {
@@ -37,8 +39,8 @@ func BuildPro3ACOutputEvent(status domain.Status, previous *domain.SurplusContro
 		ACChargeLimitW:       status.ACChargeLimitW,
 		BMSMaxCellTempC:      firstFloatDiagnostic(status.EcoFlowDiagnostics, "bmsMaxCellTemp", "bmsMasterTemp"),
 		BMSMaxMosTempC:       firstFloatDiagnostic(status.EcoFlowDiagnostics, "bmsMaxMosTemp", "bmsMosTemp"),
-		ACOutFreqHz:          firstFloatDiagnostic(status.EcoFlowDiagnostics, "acOutFreq"),
-		ACOutDsgPowMaxW:      intDiagnostic(status.EcoFlowDiagnostics, "plugInInfoAcOutDsgPowMax"),
+		ACOutFreqHz:          acOutFreqHz,
+		ACOutDsgPowMaxW:      acOutDsgPowMaxW,
 		CreatedAt:            now,
 	}
 	if previous != nil {
@@ -57,7 +59,7 @@ func BuildPro3ACOutputEvent(status domain.Status, previous *domain.SurplusContro
 
 func Pro3ACOutputEventMessage(event domain.Pro3ACOutputEvent) string {
 	parts := []string{
-		"DELTA Pro 3 のAC出力OFF履歴を検知しました",
+		"DELTA Pro 3 のAC出力停止シグナルを検知しました",
 		fmt.Sprintf("SOC %d%%", event.BatterySoc),
 		fmt.Sprintf("AC出力 %dW", event.BatteryOutputW),
 		fmt.Sprintf("AC入力 %dW", event.BatteryInputW),
@@ -73,6 +75,16 @@ func Pro3ACOutputEventMessage(event domain.Pro3ACOutputEvent) string {
 		parts = append(parts, fmt.Sprintf("直前制御 %s sent=%t wouldWrite=%t", event.PreviousCommandKind, event.PreviousCommandSent, event.PreviousCommandWouldWrite))
 	}
 	return strings.Join(parts, " / ")
+}
+
+func isPro3ACOutputOffSignal(status domain.Status, acOutFreqHz *float64) bool {
+	if status.BatteryOutputW > 0 {
+		return false
+	}
+	if acOutputEnabled, ok := boolDiagnostic(status.EcoFlowDiagnostics, "acOutputEnabled"); ok {
+		return !acOutputEnabled
+	}
+	return acOutFreqHz != nil && *acOutFreqHz <= 0
 }
 
 func boolDiagnostic(values map[string]any, key string) (bool, bool) {

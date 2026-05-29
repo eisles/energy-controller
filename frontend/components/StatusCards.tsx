@@ -98,18 +98,19 @@ export function StatusCards({ status, fetchError }: StatusCardsProps) {
 }
 
 function Pro3ACOutputMonitor({ status }: { status: EnergyStatus }) {
-  const event = status.pro3AcOutputEvent;
-  const outputPowerOffMemory = event?.outputPowerOffMemory === true || booleanDiagnostic(status, "outputPowerOffMemory") === true;
-  if (!outputPowerOffMemory && !event) {
+  const event = status.pro3AcOutputEvent?.eventType ? status.pro3AcOutputEvent : null;
+  const outputStateRestoreEnabled = status.pro3AcOutputEvent?.outputPowerOffMemory === true || booleanDiagnostic(status, "outputPowerOffMemory") === true;
+  if (!outputStateRestoreEnabled && !event) {
     return null;
   }
   return (
-    <Alert variant={outputPowerOffMemory ? "destructive" : "default"} className="section">
+    <Alert variant={event ? "destructive" : "default"} className="section">
       <AlertTitle>DELTA Pro 3 AC出力監視</AlertTitle>
       <AlertDescription>
         <div className="detail-strip planner-secondary" aria-label="DELTA Pro 3 AC output event">
-          <Detail label="AC出力OFF履歴" value={outputPowerOffMemory ? "検知" : "未検知"} />
-          <Detail label="検知時刻" value={formatDateTime(event?.measuredAt || status.updatedAt)} />
+          <Detail label="AC出力停止シグナル" value={event ? "検知" : "未検知"} />
+          <Detail label="出力状態復帰設定" value={outputStateRestoreEnabled ? "有効" : "無効"} />
+          <Detail label="確認時刻" value={formatDateTime(event?.measuredAt || status.updatedAt)} />
           <Detail label="SOC" value={nullablePercent(event?.batterySoc ?? status.batterySoc)} />
           <Detail label="AC入力" value={nullableWatt(event?.batteryInputW ?? status.batteryInputW)} />
           <Detail label="AC出力" value={nullableWatt(event?.batteryOutputW ?? status.batteryOutputW)} />
