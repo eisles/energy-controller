@@ -92,12 +92,12 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 	}
 	if !input.Delta3.Available {
 		plan.StrategyState = "UNAVAILABLE"
-		plan.Reason = firstNonEmpty(input.Delta3.LastError, "DELTA 3 Plus status unavailable")
+		plan.Reason = firstNonEmpty(input.Delta3.LastError, "auxiliary battery status unavailable")
 		return plan
 	}
 	if input.Delta3.SOC == nil || input.Delta3.ACChargeLimitW == nil {
 		plan.StrategyState = "UNAVAILABLE"
-		plan.Reason = "DELTA 3 Plus SOC or AC charge limit is unavailable"
+		plan.Reason = "auxiliary battery SOC or AC charge limit is unavailable"
 		return plan
 	}
 	currentLimitW := *input.Delta3.ACChargeLimitW
@@ -119,18 +119,18 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 		maybeSetDelta3DischargeReserve(&plan, input.Delta3, settings)
 		plan.WouldWrite = plan.ShouldAdjustACChargeLimit || plan.ShouldSetBackupReserve
 		if currentLimitW > safeChargeLimitW {
-			plan.Reason = fmt.Sprintf("AC charge limit exceeds output-aware safe limit while importing from grid; reduce DELTA 3 Plus auxiliary charge (%dW = max %dW - AC output %dW)", safeChargeLimitW, settings.MaxChargeW, delta3ACOutputLoadW(input.Delta3))
+			plan.Reason = fmt.Sprintf("AC charge limit exceeds output-aware safe limit while importing from grid; reduce auxiliary battery charge (%dW = max %dW - AC output %dW)", safeChargeLimitW, settings.MaxChargeW, delta3ACOutputLoadW(input.Delta3))
 			return plan
 		}
 		if plan.ShouldSetBackupReserve {
-			plan.Reason = "importing from grid; lower DELTA 3 Plus backup reserve to the master minimum so it can discharge"
+			plan.Reason = "importing from grid; lower auxiliary battery backup reserve to the master minimum so it can discharge"
 			return plan
 		}
 		if !plan.ShouldAdjustACChargeLimit && !backupReserveEnabled(input.Delta3.BackupReserveEnabled) {
 			plan.Reason = "importing from grid; backup reserve is already disabled; use existing discharge behavior"
 			return plan
 		}
-		plan.Reason = "importing from grid; reduce DELTA 3 Plus auxiliary charge toward safe minimum"
+		plan.Reason = "importing from grid; reduce auxiliary battery charge toward safe minimum"
 		return plan
 	}
 
@@ -140,16 +140,16 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 		plan.ShouldAdjustACChargeLimit = true
 		maybeDisableDelta3BackupReserve(&plan, input.Delta3)
 		plan.WouldWrite = plan.ShouldAdjustACChargeLimit || plan.ShouldDisableBackupReserve
-		plan.Reason = fmt.Sprintf("DELTA 3 Plus AC charge limit exceeds output-aware safe limit (%dW = max %dW - AC output %dW)", safeChargeLimitW, settings.MaxChargeW, delta3ACOutputLoadW(input.Delta3))
+		plan.Reason = fmt.Sprintf("auxiliary battery AC charge limit exceeds output-aware safe limit (%dW = max %dW - AC output %dW)", safeChargeLimitW, settings.MaxChargeW, delta3ACOutputLoadW(input.Delta3))
 		return plan
 	}
 
 	if input.Delta3.ACOutputEnabled != nil && !*input.Delta3.ACOutputEnabled {
 		plan.StrategyState = "AC_OUTPUT_OFF"
 		if settings.AutoRecoverACOutput {
-			plan.Reason = "DELTA 3 Plus AC output is OFF; auto recovery is allowed for this device, but AC output write payload is not verified yet"
+			plan.Reason = "auxiliary battery AC output is OFF; auto recovery is allowed for this device, but AC output write payload is not verified yet"
 		} else {
-			plan.Reason = "DELTA 3 Plus AC output is OFF; auto recovery is not allowed for this device"
+			plan.Reason = "auxiliary battery AC output is OFF; auto recovery is not allowed for this device"
 		}
 		return plan
 	}
@@ -158,7 +158,7 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 		plan.StrategyState = "FULL"
 		maybeDisableDelta3BackupReserve(&plan, input.Delta3)
 		plan.WouldWrite = plan.ShouldDisableBackupReserve
-		plan.Reason = fmt.Sprintf("DELTA 3 Plus SOC %d%% is near max charge SOC %d%%", *input.Delta3.SOC, maxChargeSoc)
+		plan.Reason = fmt.Sprintf("auxiliary battery SOC %d%% is near max charge SOC %d%%", *input.Delta3.SOC, maxChargeSoc)
 		return plan
 	}
 
@@ -180,7 +180,7 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 		plan.StrategyState = "HOLD"
 		maybeDisableDelta3BackupReserve(&plan, input.Delta3)
 		plan.WouldWrite = plan.ShouldDisableBackupReserve
-		plan.Reason = "residual export is below DELTA 3 Plus auxiliary adjustment threshold"
+		plan.Reason = "residual export is below auxiliary battery adjustment threshold"
 		return plan
 	}
 
@@ -200,19 +200,19 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 	plan.WouldWrite = plan.ShouldAdjustACChargeLimit || plan.ShouldSetBackupReserve
 	if !plan.ShouldAdjustACChargeLimit {
 		if plan.ShouldSetBackupReserve {
-			plan.Reason = "DELTA 3 Plus AC charge is maxed but passthrough; raise backup reserve above current SOC"
+			plan.Reason = "auxiliary battery AC charge is maxed but passthrough; raise backup reserve above current SOC"
 			return plan
 		}
 		plan.StrategyState = "HOLD"
 		plan.WouldWrite = false
-		plan.Reason = "DELTA 3 Plus auxiliary target is within command diff threshold"
+		plan.Reason = "auxiliary battery target is within command diff threshold"
 		return plan
 	}
 	if plan.ShouldSetBackupReserve {
-		plan.Reason = "DELTA Pro 3 priority is satisfied; set DELTA 3 Plus AC charge and backup reserve to absorb export"
+		plan.Reason = "DELTA Pro 3 priority is satisfied; set auxiliary battery AC charge and backup reserve to absorb export"
 		return plan
 	}
-	plan.Reason = "DELTA Pro 3 priority is satisfied; use DELTA 3 Plus to absorb residual export"
+	plan.Reason = "DELTA Pro 3 priority is satisfied; use auxiliary battery to absorb residual export"
 	return plan
 }
 

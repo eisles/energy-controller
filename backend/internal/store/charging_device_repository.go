@@ -228,7 +228,9 @@ func (r *ChargingDeviceRepository) delta3Target(ctx context.Context, requireWrit
 		WHERE enabled = 1
 		  AND provider = 'ecoflow'
 		  AND kind = 'ecoflow_delta3_plus'
-		  AND device_sn <> ''
+		  AND status_source = 'ecoflow_private_mqtt'
+		  AND UPPER(TRIM(device_type)) IN ('DELTA_3', 'DELTA_3_PLUS', 'DELTA_3_1500', 'DELTA_3_MAX_PLUS')
+		  AND TRIM(device_sn) <> ''
 		  AND supports_soc_read = 1`
 	if requireWriteSupport {
 		query += ` AND control_enabled = 1 AND supports_ac_charge_limit = 1`
@@ -258,7 +260,9 @@ func (r *ChargingDeviceRepository) delta3Targets(ctx context.Context, requireWri
 		WHERE enabled = 1
 		  AND provider = 'ecoflow'
 		  AND kind = 'ecoflow_delta3_plus'
-		  AND device_sn <> ''
+		  AND status_source = 'ecoflow_private_mqtt'
+		  AND UPPER(TRIM(device_type)) IN ('DELTA_3', 'DELTA_3_PLUS', 'DELTA_3_1500', 'DELTA_3_MAX_PLUS')
+		  AND TRIM(device_sn) <> ''
 		  AND supports_soc_read = 1`
 	if requireWriteSupport {
 		query += ` AND control_enabled = 1 AND supports_ac_charge_limit = 1`

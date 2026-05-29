@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>DELTA 3 Max Plus 制御対象化 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.65; margin: 40px; color: #1f2937; }
+    h1, h2, h3 { color: #111827; }
+    code { background: #f3f4f6; padding: 0.1rem 0.25rem; border-radius: 4px; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th, td { border: 1px solid #d1d5db; padding: 0.5rem; text-align: left; }
+    th { background: #f9fafb; }
+    .note { border-left: 4px solid #2563eb; padding-left: 1rem; background: #eff6ff; }
+  </style>
+</head>
+<body>
+  <h1>DELTA 3 Max Plus 制御対象化 実装計画</h1>
+
+  <h2>Goal</h2>
+  <p>DELTA 3 Max Plus を EcoFlow private MQTT の補助充電機器として、既存の機器マスターと安全ゲートに従って制御対象にできるようにする。</p>
+  <p>まずは安全な第一段階として、既存の「補助充電制御は1台を選択して制御する」構造を維持し、DELTA 3 Plus だけでなく DELTA 3 Max Plus も候補に入るようにする。複数台へ同時に売電を配分する制御は今回の範囲外とする。</p>
+
+  <h2>Non-Goals</h2>
+  <ul>
+    <li>複数補助バッテリーへの同時AC充電W配分は実装しない。</li>
+    <li>AC出力ON/OFFの実writeは実装しない。</li>
+    <li>RIVER 2 の private MQTT デコード対応は実装しない。</li>
+    <li><code>.env</code> に新しい機器SNや認証情報を追加しない。機器マスターを正とする。</li>
+    <li>実機writeの安全ゲートを緩めない。</li>
+  </ul>
+
+  <h2>Current State</h2>
+  <ul>
+    <li>DELTA 3 Max Plus は機器マスターに登録済み。</li>
+    <li>実機検証では AC充電上限、最大充電残量、最低放電残量、バックアップリザーブ、gridBypassDisabled の変更と復帰が成功済み。</li>
+    <li><code>ChargingDeviceRepository.Delta3WriteTarget</code> は <code>kind='ecoflow_delta3_plus'</code> かつ <code>control_enabled=1</code> の最優先1台を返す。</li>
+    <li><code>Delta3StatusReader.CurrentDeviceStatuses</code> は private MQTT 機器を一覧取得できるが、成功応答もキャッシュされるため、実機検証直後に画面で古い値が見える場合がある。</li>
+  </ul>
+
+  <h2>Data/API Contracts</h2>
+  <h3>Charging Device Master</h3>
+  <ul>
+    <li><code>kind</code>: <code>ecoflow_delta3_plus</code></li>
+    <li><code>device_type</code>: <code>DELTA_3_MAX_PLUS</code></li>
+    <li><code>status_source</code>: <code>ecoflow_private_mqtt</code></li>
+    <li><code>supports_soc_read</code>: <code>true</code></li>
+    <li><code>supports_ac_charge_limit</code>: <code>true</code></li>
+    <li><code>control_enabled</code>: UIまたはDB設定で制御対象化</li>
+  </ul>
+
+  <h3>Control Target Selection</h3>
+  <p>第一段階では、補助充電制御のwrite targetは1台のみとする。</p>
+  <ul>
+    <li><code>enabled=1</code></li>
+    <li><code>provider='ecoflow'</code></li>
+    <li>private MQTT対象</li>
+    <li><code>supports_soc_read=1</code></li>
+    <li><code>control_enabled=1</code></li>
+    <li><code>supports_ac_charge_limit=1</code></li>
+    <li><code>priority ASC, id ASC</code> の先頭</li>
+  </ul>
+  <p>DELTA 3 Plus 2 と DELTA 3 Max Plus の両方を <code>control_enabled=1</code> にした場合、優先順位が小さい方だけが補助充電制御の対象になる。</p>
+
+  <h2>Safety Boundaries</h2>
+  <ul>
+    <li>実機writeは既存の <code>ENABLE_REAL_CONTROL=true</code>、<code>SIMULATION_MODE=false</code>、<code>MOCK_MODE=false</code>、<code>AUTO_CONTROL_ENABLED=true</code>、確認値、private write許可、auto-control/private MQTT write overlap許可を満たす場合だけ行う。</li>
+    <li>コマンド間隔、差分しきい値、ヒステリシスは既存の <code>Delta3AuxSettings</code> を使う。</li>
+    <li>DELTA 3 Max Plus のAC充電下限は <code>200W</code> として扱う。</li>
+    <li>画面やログでは「DELTA 3 Plus」固定表記を避け、選択された補助充電機器名を表示できるようにする。</li>
+  </ul>
+
+  <h2>Files Likely to Change</h2>
+  <ul>
+    <li><code>backend/internal/store/charging_device_repository.go</code>: private MQTT補助機器の対象判定を <code>ecoflow_delta3_plus</code> 固定から汎用化する。</li>
+    <li><code>backend/internal/store/charging_device_repository_test.go</code>: DELTA 3 Max Plus がread/write target候補になるテストを追加する。</li>
+    <li><code>backend/internal/api/delta3_status_handler.go</code>: private MQTT対象判定とキャッシュTTLの扱いを見直す。</li>
+    <li><code>backend/internal/api/delta3_status_handler_test.go</code>: DELTA 3 Max Plus の一覧取得・キャッシュ動作を確認する。</li>
+    <li><code>backend/cmd/server/main.go</code>: 補助充電計画に対象機器名を入れられるようにする。</li>
+    <li><code>backend/internal/domain/status.go</code>: <code>Delta3AuxPlan</code> に device id/name/type を追加する。</li>
+    <li><code>backend/internal/control/auxiliary_battery_planner.go</code>: 文言を機器固定から補助充電機器へ寄せる。制御ロジック自体は既存を維持する。</li>
+    <li><code>frontend/components/StatusCards.tsx</code>: 補助計画表示に対象機器名を表示する。</li>
+    <li><code>frontend/lib/types.ts</code>: <code>Delta3AuxPlan</code> の型追加。</li>
+  </ul>
+
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li>対象判定の共通化。DELTA 3 Max Plus をprivate MQTT補助機器として許可する。</li>
+    <li>Write target selectionの確認。複数候補時は優先順位順に1台だけ選ぶ。</li>
+    <li><code>Delta3AuxPlan</code> へ <code>deviceId</code>、<code>deviceName</code>、<code>deviceType</code> を追加する。</li>
+    <li>画面の補助計画に対象機器名を表示し、固定表記を必要箇所だけ一般化する。</li>
+    <li>private MQTT成功キャッシュTTLを短縮し、画面の古い値表示を軽減する。</li>
+    <li>必要なら運用DBでDELTA 3 Max Plusの <code>control_enabled</code> と <code>priority</code> を調整する。</li>
+  </ol>
+
+  <h2>Review Points</h2>
+  <ul>
+    <li>DELTA 3 Max Plus を許可しても RIVER 2 がwrite targetにならないこと。</li>
+    <li><code>control_enabled=false</code> の機器にwriteしないこと。</li>
+    <li>実機writeガードが変わっていないこと。</li>
+    <li>既存のDELTA 3 Plus 2制御が壊れないこと。</li>
+    <li>UIで対象機器が分かること。</li>
+    <li>キャッシュ短縮がEcoFlow private APIの過剰アクセスにつながらないこと。</li>
+  </ul>
+
+  <h2>Verification Commands</h2>
+  <ul>
+    <li><code>cd backend &amp;&amp; rtk go test ./...</code></li>
+    <li><code>cd frontend &amp;&amp; rtk npm run build</code></li>
+    <li><code>docker compose up -d --build</code></li>
+    <li><code>curl -fsS http://localhost:8080/api/devices/statuses</code></li>
+    <li><code>curl -fsS http://localhost:8080/api/status</code></li>
+    <li><code>docker compose down</code></li>
+  </ul>
+  <p>ローカル実機確認環境では <code>HTTP_PORT=18085</code> で起動しているため、同じAPIを <code>http://localhost:18085/...</code> でも確認する。</p>
+
+  <h2>Operational Notes</h2>
+  <p class="note">実装直後は DELTA 3 Max Plus を <code>control_enabled=false</code> のままにし、read-only表示と選択ロジックのテストを先に確認する。制御対象化する場合は、DELTA 3 Plus 2 と DELTA 3 Max Plus の <code>priority</code> を明示的に決める。複数台同時配分は次フェーズで実装する。</p>
+</body>
+</html>

@@ -216,13 +216,14 @@ export function Delta3StatusCard({
                 );
               })}
             </div>
-            <div className="detail-strip planner-secondary" aria-label="DELTA 3 Plus auxiliary battery plan">
+            <div className="detail-strip planner-secondary" aria-label="auxiliary battery plan">
+              <Detail label="対象機器" value={auxiliaryTargetLabel(auxiliaryPlan)} />
               <Detail label="補助計画" value={strategyStateLabel(auxiliaryPlan?.strategyState || "UNAVAILABLE")} />
               <Detail label="推奨AC上限" value={nullableWatt(auxiliaryPlan?.recommendedAcChargeLimitW)} />
               <Detail label="現在AC上限" value={nullableWatt(auxiliaryPlan?.currentAcChargeLimitW)} />
               <Detail label="AC出力考慮上限" value={nullableWatt(auxiliaryPlan?.safeAcChargeLimitW)} />
-              <Detail label="DELTA 3 Plus出力" value={nullableWatt(auxiliaryPlan?.delta3AcOutputW)} />
-              <Detail label="DELTA 3 Plus AC出力" value={nullableOnOff(auxiliaryPlan?.delta3AcOutputEnabled)} />
+              <Detail label="補助機器出力" value={nullableWatt(auxiliaryPlan?.delta3AcOutputW)} />
+              <Detail label="補助機器AC出力" value={nullableOnOff(auxiliaryPlan?.delta3AcOutputEnabled)} />
               <Detail label="推奨リザーブ残量" value={nullablePercent(auxiliaryPlan?.recommendedBackupReserveSoc)} />
               <Detail label="現在リザーブ残量" value={nullablePercent(auxiliaryPlan?.currentBackupReserveSoc)} />
               <Detail label="リザーブ反映" value={backupReserveApplyLabel(auxiliaryPlan)} />
@@ -254,13 +255,14 @@ export function Delta3StatusCard({
               <Detail label="Device type" value={status.deviceType || "-"} />
               <Detail label="Updated" value={formatDateTime(status.updatedAt || "")} />
             </div>
-            <div className="detail-strip planner-secondary" aria-label="DELTA 3 Plus auxiliary battery plan">
+            <div className="detail-strip planner-secondary" aria-label="auxiliary battery plan">
+              <Detail label="対象機器" value={auxiliaryTargetLabel(auxiliaryPlan)} />
               <Detail label="補助計画" value={strategyStateLabel(auxiliaryPlan?.strategyState || "UNAVAILABLE")} />
               <Detail label="推奨AC上限" value={nullableWatt(auxiliaryPlan?.recommendedAcChargeLimitW)} />
               <Detail label="現在AC上限" value={nullableWatt(auxiliaryPlan?.currentAcChargeLimitW)} />
               <Detail label="AC出力考慮上限" value={nullableWatt(auxiliaryPlan?.safeAcChargeLimitW)} />
-              <Detail label="DELTA 3 Plus出力" value={nullableWatt(auxiliaryPlan?.delta3AcOutputW)} />
-              <Detail label="DELTA 3 Plus AC出力" value={nullableOnOff(auxiliaryPlan?.delta3AcOutputEnabled)} />
+              <Detail label="補助機器出力" value={nullableWatt(auxiliaryPlan?.delta3AcOutputW)} />
+              <Detail label="補助機器AC出力" value={nullableOnOff(auxiliaryPlan?.delta3AcOutputEnabled)} />
               <Detail label="推奨リザーブ残量" value={nullablePercent(auxiliaryPlan?.recommendedBackupReserveSoc)} />
               <Detail label="現在リザーブ残量" value={nullablePercent(auxiliaryPlan?.currentBackupReserveSoc)} />
               <Detail label="リザーブ反映" value={backupReserveApplyLabel(auxiliaryPlan)} />
@@ -755,6 +757,19 @@ function backupReserveApplyLabel(plan: EnergyStatus["delta3AuxPlan"] | null | un
   const state = stateLabels[plan.backupReserveApplyState] ?? plan.backupReserveApplyState;
   const target = plan.lastBackupReserveTargetSoc === null || plan.lastBackupReserveTargetSoc === undefined ? "" : ` / 目標 ${plan.lastBackupReserveTargetSoc}%`;
   return `${state}${target}`;
+}
+
+function auxiliaryTargetLabel(plan: EnergyStatus["delta3AuxPlan"] | null | undefined) {
+  if (!plan) {
+    return "-";
+  }
+  if (plan.deviceName) {
+    return plan.deviceName;
+  }
+  if (plan.deviceType) {
+    return plan.deviceType;
+  }
+  return plan.deviceId ? `#${plan.deviceId}` : "-";
 }
 
 function nullableWatt(value: number | null | undefined) {

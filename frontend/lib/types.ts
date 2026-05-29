@@ -123,6 +123,9 @@ export type SurplusPlan = {
 };
 
 export type Delta3AuxPlan = {
+  deviceId?: number;
+  deviceName?: string;
+  deviceType?: string;
   mode: string;
   strategyState: string;
   recommendedAcChargeLimitW: number;

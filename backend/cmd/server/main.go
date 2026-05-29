@@ -637,7 +637,7 @@ func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domai
 		}
 	}
 	delta3Settings := delta3AuxSettingsForDevice(cfg, delta3ControlDevice)
-	status.Delta3AuxPlan = ptrToDelta3AuxPlan(control.PlanDelta3AuxCharging(control.Delta3AuxPlanInput{
+	delta3Plan := control.PlanDelta3AuxCharging(control.Delta3AuxPlanInput{
 		Status: *status,
 		Delta3: control.Delta3AuxStatus{
 			Available:            delta3Status.Available,
@@ -654,7 +654,16 @@ func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domai
 		},
 		IgnorePro3Wait:      ignorePro3Wait,
 		Pro3PreviousCommand: previousPro3,
-	}, delta3Settings, cfg.ControlSettings))
+	}, delta3Settings, cfg.ControlSettings)
+	if delta3ControlDevice.ID != 0 {
+		delta3Plan.DeviceID = delta3ControlDevice.ID
+		delta3Plan.DeviceName = chargingDeviceName(delta3ControlDevice)
+		delta3Plan.DeviceType = delta3ControlDevice.DeviceType
+		if delta3Plan.DeviceType == "" {
+			delta3Plan.DeviceType = delta3Status.DeviceType
+		}
+	}
+	status.Delta3AuxPlan = ptrToDelta3AuxPlan(delta3Plan)
 
 	previous, err := delta3AuxControlCommandRepository.LatestDelta3AuxControlWriteCandidateLog(ctx)
 	if err != nil {
@@ -718,6 +727,14 @@ func delta3AuxSettingsForDevice(cfg config.Config, device domain.ChargingDevice)
 	}
 	if device.MaxChargeW > 0 {
 		settings.MaxChargeW = device.MaxChargeW
+	}
+	if deviceRange, ok := ecoflowprivate.RangeForDeviceType(device.DeviceType); ok {
+		if settings.MinChargeW < deviceRange.MinACChargeW {
+			settings.MinChargeW = deviceRange.MinACChargeW
+		}
+		if settings.MaxChargeW > deviceRange.MaxACChargeW {
+			settings.MaxChargeW = deviceRange.MaxACChargeW
+		}
 	}
 	if device.ReserveSoc > 0 {
 		settings.MinDischargeReserveSoc = device.ReserveSoc

@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	delta3StatusSuccessCacheTTL = 2 * time.Minute
+	delta3StatusSuccessCacheTTL = 30 * time.Second
 	delta3StatusErrorCacheTTL   = 5 * time.Minute
 	delta3StatusBusyBackoffTTL  = 10 * time.Minute
 )

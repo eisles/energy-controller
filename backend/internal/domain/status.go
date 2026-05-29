@@ -83,6 +83,9 @@ type SurplusPlan struct {
 }
 
 type Delta3AuxPlan struct {
+	DeviceID                    int64  `json:"deviceId,omitempty"`
+	DeviceName                  string `json:"deviceName,omitempty"`
+	DeviceType                  string `json:"deviceType,omitempty"`
 	Mode                        string `json:"mode"`
 	StrategyState               string `json:"strategyState"`
 	RecommendedACChargeLimitW   int    `json:"recommendedAcChargeLimitW"`

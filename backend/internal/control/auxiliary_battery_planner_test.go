@@ -190,7 +190,7 @@ func TestPlanDelta3AuxChargingLowersReserveToMasterFloorWhenImporting(t *testing
 	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 20 {
 		t.Fatalf("RecommendedBackupReserveSoc = %v, want 20", plan.RecommendedBackupReserveSoc)
 	}
-	if plan.Reason != "importing from grid; lower DELTA 3 Plus backup reserve to the master minimum so it can discharge" {
+	if plan.Reason != "importing from grid; lower auxiliary battery backup reserve to the master minimum so it can discharge" {
 		t.Fatalf("Reason = %q", plan.Reason)
 	}
 	if !plan.WouldWrite {

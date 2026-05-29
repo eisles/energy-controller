@@ -59,6 +59,16 @@ func (p fakeEcoFlowCloudWriteTargetProvider) EcoFlowCloudWriteTarget(context.Con
 	return p.device, p.ok, p.err
 }
 
+type fakeDelta3WriteTargetProvider struct {
+	device domain.ChargingDevice
+	ok     bool
+	err    error
+}
+
+func (p fakeDelta3WriteTargetProvider) Delta3WriteTarget(context.Context) (domain.ChargingDevice, bool, error) {
+	return p.device, p.ok, p.err
+}
+
 type recordingSurplusWriteClient struct {
 	acChargePowerW   *int
 	backupReserveSoc *int
@@ -577,6 +587,26 @@ func TestRecordStatusPersistsDelta3AuxSuppressionOnStatus(t *testing.T) {
 	currentLimitW := 100
 	soc := 50
 	maxSoc := 100
+	delta3MaxPlus := domain.ChargingDevice{
+		ID:                    42,
+		Name:                  "DELTA 3 Max Plus",
+		Kind:                  "ecoflow_delta3_plus",
+		Provider:              "ecoflow",
+		Role:                  "auxiliary",
+		DeviceSN:              "MAXPLUSSN",
+		DeviceType:            "DELTA_3_MAX_PLUS",
+		StatusSource:          "ecoflow_private_mqtt",
+		Enabled:               true,
+		ControlEnabled:        true,
+		Priority:              2,
+		MinChargeW:            200,
+		MaxChargeW:            1500,
+		ChargeStepW:           100,
+		BackupReserveMinSoc:   20,
+		BackupReserveMaxSoc:   90,
+		SupportsSocRead:       true,
+		SupportsACChargeLimit: true,
+	}
 	statusRepository := store.NewStatusRepository(db)
 
 	recordStatus(
@@ -617,7 +647,7 @@ func TestRecordStatusPersistsDelta3AuxSuppressionOnStatus(t *testing.T) {
 			MaxChargeSoc:   &maxSoc,
 		}},
 		nil,
-		nil,
+		fakeDelta3WriteTargetProvider{device: delta3MaxPlus, ok: true},
 		nil,
 		nil,
 		slog.Default(),
@@ -633,8 +663,32 @@ func TestRecordStatusPersistsDelta3AuxSuppressionOnStatus(t *testing.T) {
 	if got.Delta3AuxPlan.WouldWrite {
 		t.Fatal("Delta3AuxPlan.WouldWrite = true, want false under mock/simulation guard")
 	}
+	if got.Delta3AuxPlan.DeviceID != delta3MaxPlus.ID || got.Delta3AuxPlan.DeviceName != "DELTA 3 Max Plus" || got.Delta3AuxPlan.DeviceType != "DELTA_3_MAX_PLUS" {
+		t.Fatalf("Delta3AuxPlan device = %d/%q/%q, want %d/DELTA 3 Max Plus/DELTA_3_MAX_PLUS", got.Delta3AuxPlan.DeviceID, got.Delta3AuxPlan.DeviceName, got.Delta3AuxPlan.DeviceType, delta3MaxPlus.ID)
+	}
 	if !strings.Contains(got.Delta3AuxPlan.SuppressedReason, "mock mode") {
 		t.Fatalf("SuppressedReason = %q, want mock mode guard", got.Delta3AuxPlan.SuppressedReason)
+	}
+}
+
+func TestDelta3AuxSettingsForDeviceClampsPrivateProfileRange(t *testing.T) {
+	settings := delta3AuxSettingsForDevice(config.Config{
+		Delta3Aux: config.Delta3AuxConfig{
+			Enabled:    true,
+			MinChargeW: 100,
+			MaxChargeW: 1800,
+		},
+	}, domain.ChargingDevice{
+		DeviceType: "DELTA_3_MAX_PLUS",
+		MinChargeW: 100,
+		MaxChargeW: 1800,
+	})
+
+	if settings.MinChargeW != 200 {
+		t.Fatalf("MinChargeW = %d, want DELTA_3_MAX_PLUS profile minimum 200", settings.MinChargeW)
+	}
+	if settings.MaxChargeW != 1500 {
+		t.Fatalf("MaxChargeW = %d, want DELTA_3_MAX_PLUS profile maximum 1500", settings.MaxChargeW)
 	}
 }
 

@@ -174,6 +174,71 @@ func TestChargingDeviceRepositorySelectsDelta3Targets(t *testing.T) {
 	}
 }
 
+func TestChargingDeviceRepositorySelectsDelta3MaxPlusWriteTargetButNotRiver2(t *testing.T) {
+	db := newChargingDeviceTestDB(t)
+	repo := NewChargingDeviceRepository(db)
+	ctx := context.Background()
+
+	_, err := repo.UpsertChargingDevice(ctx, domain.ChargingDevice{
+		Name:                  "river2 unsupported write",
+		Kind:                  "ecoflow_river2",
+		Provider:              "ecoflow",
+		Role:                  "auxiliary",
+		CredentialRef:         "river2",
+		DeviceSN:              "RIVERSN",
+		DeviceType:            "RIVER_2",
+		StatusSource:          "ecoflow_private_mqtt",
+		Enabled:               true,
+		ControlEnabled:        true,
+		Priority:              1,
+		MinChargeW:            100,
+		MaxChargeW:            600,
+		ChargeStepW:           100,
+		CapacityWh:            256,
+		TargetSoc:             90,
+		ReserveSoc:            20,
+		SupportsSocRead:       true,
+		SupportsACChargeLimit: true,
+		SupportsOnOff:         true,
+	})
+	if err != nil {
+		t.Fatalf("save river2 target failed: %v", err)
+	}
+	_, err = repo.UpsertChargingDevice(ctx, domain.ChargingDevice{
+		Name:                  "delta3 max plus",
+		Kind:                  "ecoflow_delta3_plus",
+		Provider:              "ecoflow",
+		Role:                  "auxiliary",
+		CredentialRef:         "delta3_max_plus",
+		DeviceSN:              "MAXPLUSSNS",
+		DeviceType:            "DELTA_3_MAX_PLUS",
+		StatusSource:          "ecoflow_private_mqtt",
+		Enabled:               true,
+		ControlEnabled:        true,
+		Priority:              2,
+		MinChargeW:            200,
+		MaxChargeW:            1500,
+		ChargeStepW:           100,
+		CapacityWh:            2048,
+		TargetSoc:             90,
+		ReserveSoc:            20,
+		SupportsSocRead:       true,
+		SupportsACChargeLimit: true,
+		SupportsOnOff:         true,
+	})
+	if err != nil {
+		t.Fatalf("save delta3 max plus target failed: %v", err)
+	}
+
+	writeTarget, ok, err := repo.Delta3WriteTarget(ctx)
+	if err != nil || !ok {
+		t.Fatalf("Delta3WriteTarget = ok %v err %v", ok, err)
+	}
+	if writeTarget.DeviceSN != "MAXPLUSSNS" || writeTarget.DeviceType != "DELTA_3_MAX_PLUS" {
+		t.Fatalf("write target = %q/%q, want MAXPLUSSNS/DELTA_3_MAX_PLUS", writeTarget.DeviceSN, writeTarget.DeviceType)
+	}
+}
+
 func TestChargingDeviceRepositorySelectsEcoFlowCloudTargets(t *testing.T) {
 	db := newChargingDeviceTestDB(t)
 	repo := NewChargingDeviceRepository(db)
