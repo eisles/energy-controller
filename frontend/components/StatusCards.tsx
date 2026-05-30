@@ -161,7 +161,6 @@ export function Delta3StatusCard({
             <div className="delta3-device-status-list">
               {sortedDeviceStatuses.map((device) => {
                 const flowState = deviceFlowState(device);
-                const modeSummary = deviceModeSummary(device);
                 return (
                   <div className="delta3-device-status-item" key={device.id || device.credentialRef}>
                     <div className="panel-title-row">
@@ -188,7 +187,6 @@ export function Delta3StatusCard({
                           <Detail label="AC充電上限" value={nullableWatt(device.status.acChargeLimitW)} />
                           <Detail label="容量" value={formatWhCapacity(device.capacityWh)} />
                           <Detail label="設定範囲" value={`${device.minChargeW}-${device.maxChargeW} W`} />
-                          <Detail label="モード" value={modeSummary} />
                         </div>
                         <div className="detail-strip planner-secondary" aria-label={`${device.name} configuration status`}>
                           <Detail label="運転モード" value={operationModeLabel(device.status)} />
@@ -877,21 +875,6 @@ function formatDeviceNetFlow(value: number | null) {
     return `実質放電 ${Math.abs(value)} W`;
   }
   return "差分 0 W";
-}
-
-function deviceModeSummary(device: DeviceStatus) {
-  const parts = [
-    `運転モード ${operationModeLabel(device.status)}`,
-    `リザーブ関連モード ${reserveRelatedModeLabel(device.status)}`,
-    `バックアップリザーブ残量 ${nullablePercent(device.status.backupReserveSoc)}`,
-    `Energy Backup ${nullableOnOff(device.status.backupReserveEnabled)}`,
-    `AC出力 ${nullableOnOff(device.status.acOutputEnabled)}`,
-    `リザーブ制御範囲 ${formatReserveRange(device.backupReserveMinSoc, device.backupReserveMaxSoc)}`,
-    `グリッドバイパス無効化 ${nullableOnOff(device.status.gridBypassDisabled)}`,
-    `最大充電残量 ${nullablePercent(device.status.maxChargeSoc)}`,
-    `最低放電残量 ${nullablePercent(device.status.minDischargeSoc)}`
-  ];
-  return parts.join(" / ");
 }
 
 function operationModeLabel(status: DeviceModeStatus) {

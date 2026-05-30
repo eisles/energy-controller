@@ -765,7 +765,22 @@ input {
 .delta3-device-status-item {
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 12px;
+  padding: 10px;
+}
+
+.delta3-device-status-item .detail-strip {
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 8px;
+}
+
+.delta3-device-status-item .detail-item {
+  gap: 3px;
+  padding-top: 8px;
+}
+
+.delta3-device-status-item .detail-item strong {
+  font-size: 12.5px;
+  line-height: 1.3;
 }
 
 .delta3-device-status-item .readonly-note {

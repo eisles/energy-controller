@@ -148,9 +148,9 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 		plan.StrategyState = "AC_OUTPUT_OFF"
 		if settings.AutoRecoverACOutput {
 			plan.Reason = "auxiliary battery AC output is OFF; auto recovery is allowed for this device, but AC output write payload is not verified yet"
-		} else {
-			plan.Reason = "auxiliary battery AC output is OFF; auto recovery is not allowed for this device"
+			return plan
 		}
+		plan.Reason = "auxiliary battery AC output is OFF; auto recovery is not allowed for this device"
 		return plan
 	}
 

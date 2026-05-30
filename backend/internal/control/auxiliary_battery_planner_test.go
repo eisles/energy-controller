@@ -44,6 +44,52 @@ func TestPlanDelta3AuxChargingTracksResidualExportFromCurrentLimit(t *testing.T)
 	}
 }
 
+func TestPlanDelta3AuxChargingBlocksNormalWritesWhenACOutputOffAndAutoRecoverAllowed(t *testing.T) {
+	currentLimit := 700
+	soc := 70
+	maxSoc := 100
+	acOutputEnabled := false
+	plan := PlanDelta3AuxCharging(Delta3AuxPlanInput{
+		Status: domain.Status{
+			ExportW:        210,
+			ACChargeLimitW: 1500,
+			BatterySoc:     95,
+			SurplusPlan:    &domain.SurplusPlan{StrategyState: "RECOVERING"},
+			UpdatedAt:      time.Date(2026, 5, 30, 10, 0, 0, 0, time.UTC),
+		},
+		Delta3: Delta3AuxStatus{
+			Available:       true,
+			SOC:             &soc,
+			ACChargeLimitW:  &currentLimit,
+			MaxChargeSoc:    &maxSoc,
+			ACOutputEnabled: &acOutputEnabled,
+		},
+	}, Delta3AuxSettings{
+		Enabled:             true,
+		MinChargeW:          100,
+		MaxChargeW:          1500,
+		SafetyMarginW:       50,
+		MinCommandDiffW:     100,
+		MaxIncreaseStepW:    300,
+		MaxDecreaseStepW:    500,
+		BackupReserveMinSoc: 5,
+		AutoRecoverACOutput: true,
+	}, DefaultSettings())
+
+	if plan.StrategyState != "AC_OUTPUT_OFF" {
+		t.Fatalf("StrategyState = %q, want AC_OUTPUT_OFF", plan.StrategyState)
+	}
+	if plan.ShouldAdjustACChargeLimit {
+		t.Fatal("ShouldAdjustACChargeLimit = true, want false until AC output recovery write is verified")
+	}
+	if plan.WouldWrite {
+		t.Fatal("WouldWrite = true, want false")
+	}
+	if plan.Reason != "auxiliary battery AC output is OFF; auto recovery is allowed for this device, but AC output write payload is not verified yet" {
+		t.Fatalf("Reason = %q", plan.Reason)
+	}
+}
+
 func TestPlanDelta3AuxChargingReducesTowardMinimumWhenImporting(t *testing.T) {
 	currentLimit := 700
 	soc := 70

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tariff Optimized Control Implementation Plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.65; margin: 32px auto; max-width: 960px; padding: 0 20px; color: #17202a; }
+    h1, h2, h3 { line-height: 1.25; }
+    h1 { border-bottom: 2px solid #0f766e; padding-bottom: 8px; }
+    h2 { margin-top: 28px; border-bottom: 1px solid #d8dee4; padding-bottom: 4px; }
+    code { background: #f6f8fa; padding: 2px 4px; border-radius: 4px; }
+    ul, ol { padding-left: 1.5rem; }
+    .note { border-left: 4px solid #0f766e; background: #f0fdfa; padding: 12px 16px; }
+  </style>
+</head>
+<body>
+  <h1>Tariff Optimized Control Implementation Plan</h1>
+
+  <h2>Goal</h2>
+  <p>料金時間帯を固定時刻ではなく料金マスタから解決し、平日/休日/祝日で異なる単価を考慮して、高単価時間帯は放電優先、低単価時間帯は必要最小限の深夜充電、売電中は余剰吸収を優先する。</p>
+
+  <h2>Non-Goals</h2>
+  <ul>
+    <li>実機write gateを緩めない。</li>
+    <li>EcoFlow/Natureの認証情報やデバイスSNを計画・ログに出さない。</li>
+    <li>祝日APIのネットワーク依存は追加しない。初期実装は既存の簡易祝日判定を使う。</li>
+    <li>燃料調整費や再エネ賦課金の完全再現は対象外。</li>
+  </ul>
+
+  <h2>Current State</h2>
+  <ul>
+    <li><code>tariff_plans</code> は <code>day_rate_yen</code>、<code>home_rate_yen</code>、<code>night_rate_yen</code>、<code>export_rate_yen</code> を持つ。</li>
+    <li>料金区分は <code>tariffPeriod</code> で固定判定している。</li>
+    <li>制御ロジックは主に売電/買電ベースで、料金帯を直接の制御入力として扱っていない。</li>
+    <li>既存の未コミット差分として、DELTA 3 Max Plus制御と機器ステータスUI調整がある。今回の実装ではこれを戻さない。</li>
+  </ul>
+
+  <h2>Proposed Data Contract</h2>
+  <p><code>TariffPeriodRule</code> を追加する。主な項目は <code>tariffPlanId</code>、<code>dayType</code>、<code>period</code>、<code>startMinute</code>、<code>endMinute</code>、<code>rateYen</code>、<code>priority</code>。ルール未設定時は既存の3単価から既定ルールを生成する。</p>
+  <p><code>TariffControlContext</code> を追加し、現在区分、現在単価、最低/最高単価、高単価/低単価判定、次の低単価切替時刻、日種別を制御へ渡す。</p>
+
+  <h2>Control Behavior</h2>
+  <h3>High Price Period</h3>
+  <p>高単価帯でSOCに余裕がある場合、AC充電上限を最小値へ下げ、バックアップリザーブを制御下限へ下げる。売電中は余剰吸収を優先し、買電中は放電優先にする。</p>
+  <h3>Low Price Period</h3>
+  <p>低単価帯では翌日PV予測と機器ごとの日中必要量を見て、不足分だけ深夜充電する。</p>
+  <h3>Mid Price Period</h3>
+  <p>売電があれば余剰吸収、買電なら無理な充電を抑制する。</p>
+
+  <h2>Files Likely To Change</h2>
+  <ul>
+    <li><code>backend/internal/domain/status.go</code></li>
+    <li><code>backend/internal/store/migrations.go</code></li>
+    <li><code>backend/internal/store/tariff_repository.go</code></li>
+    <li><code>backend/internal/api/tariff_plans_handler.go</code></li>
+    <li><code>backend/internal/control/surplus_planner.go</code></li>
+    <li><code>backend/internal/control/night_charge_planner.go</code></li>
+    <li><code>backend/cmd/server/main.go</code></li>
+    <li><code>frontend/lib/types.ts</code></li>
+    <li><code>frontend/lib/api.ts</code></li>
+    <li><code>frontend/components/TariffPlanPanel.tsx</code></li>
+    <li><code>frontend/components/StatusCards.tsx</code></li>
+  </ul>
+
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li>Add tariff period rule domain structs and SQLite migration.</li>
+    <li>Extend tariff repository to list/save period rules with backward-compatible defaults.</li>
+    <li>Replace fixed <code>tariffPeriod</code> usage with rule-based period resolution.</li>
+    <li>Add <code>TariffControlContext</code> generation for the current status timestamp.</li>
+    <li>Feed the context into surplus and night-charge planners.</li>
+    <li>Add high-price recovery behavior.</li>
+    <li>Add low-price night-charge behavior using existing forecast/device calculations.</li>
+    <li>Expose active tariff period and optimization reason in status JSON.</li>
+    <li>Update the tariff settings UI to show/edit weekday and holiday time bands.</li>
+    <li>Add tests for weekday, holiday, cross-midnight, high-price discharge, and low-price charge.</li>
+  </ol>
+
+  <h2>Safety Boundaries</h2>
+  <p class="note">Real EcoFlow writes remain behind existing gates: <code>ENABLE_REAL_CONTROL=true</code>, <code>SIMULATION_MODE=false</code>, auto-control, confirmation, trial window, and private-write gates. This change alters decision candidates, not the safety gates.</p>
+
+  <h2>Review Points</h2>
+  <ul>
+    <li>Migration is backward-compatible.</li>
+    <li>Rule resolution handles weekday/holiday, cross-midnight, overlaps, and missing rules.</li>
+    <li>High-price discharge never drops below reserve lower bounds.</li>
+    <li>Existing surplus absorption still wins during real export.</li>
+    <li>Frontend does not reveal credentials or secrets.</li>
+  </ul>
+
+  <h2>Verification Commands</h2>
+  <ul>
+    <li><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./...</code></li>
+    <li><code>cd frontend &amp;&amp; rtk npm run build</code></li>
+    <li><code>HTTP_PORT=8080 rtk docker compose up -d --build</code></li>
+    <li><code>rtk curl -s http://localhost:8080/api/status</code></li>
+    <li><code>rtk docker compose down</code></li>
+  </ul>
+
+  <h2>Rollback / Operational Notes</h2>
+  <p>If tariff rule resolution fails, fall back to the old 3-period default mapping. Back up SQLite before production migration.</p>
+</body>
+</html>
