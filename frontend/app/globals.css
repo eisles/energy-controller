@@ -377,6 +377,10 @@ input {
   width: min(1240px, calc(100% - 16px));
 }
 
+.tariff-plan-edit-drawer {
+  width: min(980px, calc(100% - 16px));
+}
+
 .charging-device-drawer {
   width: min(1180px, calc(100% - 16px));
 }
@@ -744,6 +748,12 @@ input {
 }
 
 .charging-device-list-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 16px 0 12px;
+}
+
+.tariff-plan-list-actions {
   display: flex;
   justify-content: flex-end;
   margin: 16px 0 12px;

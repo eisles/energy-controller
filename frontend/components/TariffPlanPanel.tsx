@@ -17,7 +17,8 @@ const tariffDayTypes: Array<TariffPeriodRule["dayType"]> = ["weekday", "holiday"
 const tariffPeriodOptions = ["night", "home", "day", "cheap", "expensive"];
 
 export function TariffPlanPanel({ onSaved }: TariffPlanPanelProps) {
-  const [open, setOpen] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [plans, setPlans] = useState<TariffPlan[]>([]);
   const [planName, setPlanName] = useState(defaultPlanName);
   const [dayRate, setDayRate] = useState("34.06");
@@ -45,6 +46,9 @@ export function TariffPlanPanel({ onSaved }: TariffPlanPanelProps) {
     if (!currentPlan) {
       return;
     }
+    if (editOpen) {
+      return;
+    }
     setPlanName(currentPlan.planName);
     setDayRate(String(currentPlan.dayRateYen));
     setHomeRate(String(currentPlan.homeRateYen));
@@ -53,7 +57,7 @@ export function TariffPlanPanel({ onSaved }: TariffPlanPanelProps) {
     setTimezone(currentPlan.timezone);
     setPeriodRules(clonePeriodRules(currentPlan.periodRules?.length ? currentPlan.periodRules : defaultTariffPeriodRules(currentPlan.dayRateYen, currentPlan.homeRateYen, currentPlan.nightRateYen)));
     setPeriodRuleMode(currentPlan.periodRuleSource === "custom" ? "custom" : "default");
-  }, [currentPlan]);
+  }, [currentPlan, editOpen]);
 
   async function loadPlans() {
     try {
@@ -95,6 +99,7 @@ export function TariffPlanPanel({ onSaved }: TariffPlanPanelProps) {
       await loadPlans();
       setMessage(periodRuleMode === "default" ? "料金プランを保存しました。料金時間帯は既定ルールを使います。" : "料金プランと料金時間帯を保存しました。");
       setEditingPlanId(null);
+      setEditOpen(false);
       onSaved?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "tariff plan update failed");
@@ -114,13 +119,21 @@ export function TariffPlanPanel({ onSaved }: TariffPlanPanelProps) {
     setPeriodRules(clonePeriodRules(plan.periodRules?.length ? plan.periodRules : defaultTariffPeriodRules(plan.dayRateYen, plan.homeRateYen, plan.nightRateYen)));
     setPeriodRuleMode(plan.periodRuleSource === "custom" ? "custom" : "default");
     setEditingPlanId(plan.id ?? null);
-    setMessage("選択した料金プランをフォームへ読み込みました。保存すると同じ適用開始日時の履歴を更新します。");
+    setEditOpen(true);
+    setMessage(null);
     setError(null);
   }
 
-  function resetFormToCurrentPlan() {
+  function startNewPlan() {
     if (currentPlan) {
-      editPlan(currentPlan);
+      setPlanName(currentPlan.planName);
+      setDayRate(String(currentPlan.dayRateYen));
+      setHomeRate(String(currentPlan.homeRateYen));
+      setNightRate(String(currentPlan.nightRateYen));
+      setExportRate(String(currentPlan.exportRateYen));
+      setTimezone(currentPlan.timezone);
+      setPeriodRules(clonePeriodRules(currentPlan.periodRules?.length ? currentPlan.periodRules : defaultTariffPeriodRules(currentPlan.dayRateYen, currentPlan.homeRateYen, currentPlan.nightRateYen)));
+      setPeriodRuleMode(currentPlan.periodRuleSource === "custom" ? "custom" : "default");
     } else {
       setPlanName(defaultPlanName);
       setDayRate("34.06");
@@ -131,10 +144,18 @@ export function TariffPlanPanel({ onSaved }: TariffPlanPanelProps) {
       setEffectiveFrom(toDatetimeLocal(new Date()));
       setPeriodRules(defaultTariffPeriodRules(34.06, 26, 16.11));
       setPeriodRuleMode("default");
-      setEditingPlanId(null);
-      setMessage(null);
-      setError(null);
     }
+    setEffectiveFrom(toDatetimeLocal(new Date()));
+    setEditingPlanId(null);
+    setMessage(null);
+    setError(null);
+    setEditOpen(true);
+  }
+
+  function closeListDrawer() {
+    setListOpen(false);
+    setEditOpen(false);
+    setEditingPlanId(null);
   }
 
   async function removePlan(plan: TariffPlan) {
@@ -247,194 +268,33 @@ export function TariffPlanPanel({ onSaved }: TariffPlanPanelProps) {
           </p>
           <p className="readonly-note">料金時間帯 {currentPlanPeriodRuleLabel}</p>
           <p className="readonly-note">履歴 {plans.length} 件</p>
-          <Button type="button" variant="outline" onClick={() => setOpen(true)}>
-            料金プランを編集
+          <Button type="button" variant="outline" onClick={() => setListOpen(true)}>
+            料金プラン一覧を開く
           </Button>
         </CardContent>
       </Card>
 
-      {open ? (
+      {listOpen ? (
         <div className="drawer-backdrop" role="presentation">
-          <aside className="settings-drawer tariff-plan-drawer" aria-label="tariff plan settings">
+          <aside className="settings-drawer tariff-plan-drawer" aria-label="tariff plan list">
             <div className="drawer-header">
               <div>
                 <p className="eyebrow">Tariff</p>
                 <h2>料金プラン</h2>
               </div>
-              <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              <Button type="button" variant="outline" onClick={closeListDrawer}>
                 閉じる
               </Button>
             </div>
 
             {error ? <p className="inline-error">{error}</p> : null}
             {message ? <p className="inline-success">{message}</p> : null}
-            <Form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void submitPlan();
-              }}
-            >
-              <div className="drawer-section-title">単価</div>
-              <div className="tariff-plan-form-grid">
-                <FormItem>
-                  <FormLabel htmlFor="tariff-plan-name">プラン名</FormLabel>
-                  <FormControl>
-                    <input id="tariff-plan-name" className="text-input" value={planName} onChange={(event) => setPlanName(event.target.value)} />
-                  </FormControl>
-                </FormItem>
-                <FormItem>
-                  <FormLabel htmlFor="tariff-effective-from">適用開始</FormLabel>
-                  <FormControl>
-                    <input
-                      id="tariff-effective-from"
-                      className="text-input"
-                      type="datetime-local"
-                      value={effectiveFrom}
-                      onChange={(event) => setEffectiveFrom(event.target.value)}
-                    />
-                  </FormControl>
-                </FormItem>
-                <FormItem>
-                  <FormLabel htmlFor="tariff-day-rate">デイタイム 円/kWh</FormLabel>
-                  <FormControl>
-                    <input id="tariff-day-rate" className="text-input" type="number" step="0.01" value={dayRate} onChange={(event) => setDayRate(event.target.value)} />
-                  </FormControl>
-                </FormItem>
-                <FormItem>
-                  <FormLabel htmlFor="tariff-home-rate">ホームタイム 円/kWh</FormLabel>
-                  <FormControl>
-                    <input id="tariff-home-rate" className="text-input" type="number" step="0.01" value={homeRate} onChange={(event) => setHomeRate(event.target.value)} />
-                  </FormControl>
-                </FormItem>
-                <FormItem>
-                  <FormLabel htmlFor="tariff-night-rate">ナイトタイム 円/kWh</FormLabel>
-                  <FormControl>
-                    <input id="tariff-night-rate" className="text-input" type="number" step="0.01" value={nightRate} onChange={(event) => setNightRate(event.target.value)} />
-                  </FormControl>
-                </FormItem>
-                <FormItem>
-                  <FormLabel htmlFor="tariff-export-rate">売電 円/kWh</FormLabel>
-                  <FormControl>
-                    <input id="tariff-export-rate" className="text-input" type="number" step="0.01" value={exportRate} onChange={(event) => setExportRate(event.target.value)} />
-                  </FormControl>
-                </FormItem>
-                <FormItem>
-                  <FormLabel htmlFor="tariff-timezone">Timezone</FormLabel>
-                  <FormControl>
-                    <input id="tariff-timezone" className="text-input" value={timezone} onChange={(event) => setTimezone(event.target.value)} />
-                  </FormControl>
-                </FormItem>
-              </div>
-              <FormDescription>
-                {editingPlanId ? "編集中の履歴行を同じ適用開始日時で更新します。" : "同じ適用開始日時で保存するとその行を更新します。新しい開始日時を入れると、それ以前のプランは自動的に終了日時が入ります。"}
-              </FormDescription>
-              <div className="drawer-section-title">料金時間帯</div>
-              <div className="tariff-period-toolbar">
-                <span className="readonly-note">現在の編集状態: {periodRuleMode === "custom" ? "カスタム" : "既定ルール"}</span>
-                <div className="tariff-plan-actions">
-                  <Button type="button" variant="outline" onClick={generateCustomPeriodRulesFromRates}>
-                    単価から標準行を作成
-                  </Button>
-                  <Button type="button" variant="outline" onClick={restoreDefaultPeriodRules}>
-                    既定ルールへ戻す
-                  </Button>
-                </div>
-              </div>
-              {tariffDayTypes.map((dayType) => (
-                <div className="tariff-period-group" key={dayType}>
-                  <div className="tariff-period-group-header">
-                    <h3>{dayType === "weekday" ? "平日" : "休日/祝日"}</h3>
-                    <Button type="button" variant="outline" onClick={() => addPeriodRule(dayType)}>
-                      行を追加
-                    </Button>
-                  </div>
-                  <div className="table-wrap tariff-period-table-wrap">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>区分</TableHead>
-                          <TableHead>開始</TableHead>
-                          <TableHead>終了</TableHead>
-                          <TableHead>単価</TableHead>
-                          <TableHead>優先度</TableHead>
-                          <TableHead>操作</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {periodRules
-                          .map((rule, index) => ({ rule, index }))
-                          .filter(({ rule }) => rule.dayType === dayType)
-                          .map(({ rule, index }) => (
-                            <TableRow key={`${dayType}-${index}`}>
-                              <TableCell>
-                                <input
-                                  className="text-input tariff-period-input"
-                                  list="tariff-period-options"
-                                  value={rule.period}
-                                  onChange={(event) => updatePeriodRule(index, { period: event.target.value })}
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <input
-                                  className="text-input tariff-time-input"
-                                  value={minuteToTime(rule.startMinute)}
-                                  onChange={(event) => updatePeriodRuleTime(index, "startMinute", event.target.value)}
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <input
-                                  className="text-input tariff-time-input"
-                                  value={minuteToTime(rule.endMinute)}
-                                  onChange={(event) => updatePeriodRuleTime(index, "endMinute", event.target.value)}
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <input
-                                  className="text-input tariff-rate-input"
-                                  type="number"
-                                  step="0.01"
-                                  value={rule.rateYen}
-                                  onChange={(event) => updatePeriodRule(index, { rateYen: Number(event.target.value) })}
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <input
-                                  className="text-input tariff-priority-input"
-                                  type="number"
-                                  step="1"
-                                  value={rule.priority}
-                                  onChange={(event) => updatePeriodRule(index, { priority: Number(event.target.value) })}
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <Button type="button" variant="outline" onClick={() => removePeriodRule(index)}>
-                                  削除
-                                </Button>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </div>
-              ))}
-              <datalist id="tariff-period-options">
-                {tariffPeriodOptions.map((period) => (
-                  <option value={period} key={period} />
-                ))}
-              </datalist>
-              <div className="tariff-plan-actions">
-                <Button type="submit" disabled={saving}>
-                  {saving ? "保存中" : editingPlanId ? "編集中の料金プランを保存" : "料金プランを保存"}
-                </Button>
-                {editingPlanId ? (
-                  <Button type="button" variant="outline" onClick={resetFormToCurrentPlan}>
-                    編集を解除
-                  </Button>
-                ) : null}
-              </div>
-            </Form>
-
+            <p className="readonly-note">一覧では料金プラン履歴と時間帯ルール概要だけを確認します。追加・編集は「新規追加」または行ごとの「編集」から別画面で開きます。</p>
+            <div className="tariff-plan-list-actions">
+              <Button type="button" onClick={startNewPlan}>
+                新規追加
+              </Button>
+            </div>
             <div className="drawer-section-title">履歴</div>
             <div className="table-wrap tariff-plan-table-wrap">
               <Table>
@@ -486,6 +346,191 @@ export function TariffPlanPanel({ onSaved }: TariffPlanPanelProps) {
               </Table>
             </div>
           </aside>
+
+          {editOpen ? (
+            <div className="drawer-backdrop drawer-backdrop-nested" role="presentation">
+              <aside className="settings-drawer tariff-plan-edit-drawer" aria-label="tariff plan editor">
+                <div className="drawer-header">
+                  <div>
+                    <p className="eyebrow">{editingPlanId ? `ID ${editingPlanId}` : "New tariff"}</p>
+                    <h2>{editingPlanId ? "料金プランを編集" : "料金プランを追加"}</h2>
+                  </div>
+                  <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
+                    一覧へ戻る
+                  </Button>
+                </div>
+
+                {error ? <p className="inline-error">{error}</p> : null}
+                {message ? <p className="inline-success">{message}</p> : null}
+                <Form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void submitPlan();
+                  }}
+                >
+                  <div className="drawer-section-title">単価</div>
+                  <div className="tariff-plan-form-grid">
+                    <FormItem>
+                      <FormLabel htmlFor="tariff-plan-name">プラン名</FormLabel>
+                      <FormControl>
+                        <input id="tariff-plan-name" className="text-input" value={planName} onChange={(event) => setPlanName(event.target.value)} />
+                      </FormControl>
+                    </FormItem>
+                    <FormItem>
+                      <FormLabel htmlFor="tariff-effective-from">適用開始</FormLabel>
+                      <FormControl>
+                        <input
+                          id="tariff-effective-from"
+                          className="text-input"
+                          type="datetime-local"
+                          value={effectiveFrom}
+                          onChange={(event) => setEffectiveFrom(event.target.value)}
+                        />
+                      </FormControl>
+                    </FormItem>
+                    <FormItem>
+                      <FormLabel htmlFor="tariff-day-rate">デイタイム 円/kWh</FormLabel>
+                      <FormControl>
+                        <input id="tariff-day-rate" className="text-input" type="number" step="0.01" value={dayRate} onChange={(event) => setDayRate(event.target.value)} />
+                      </FormControl>
+                    </FormItem>
+                    <FormItem>
+                      <FormLabel htmlFor="tariff-home-rate">ホームタイム 円/kWh</FormLabel>
+                      <FormControl>
+                        <input id="tariff-home-rate" className="text-input" type="number" step="0.01" value={homeRate} onChange={(event) => setHomeRate(event.target.value)} />
+                      </FormControl>
+                    </FormItem>
+                    <FormItem>
+                      <FormLabel htmlFor="tariff-night-rate">ナイトタイム 円/kWh</FormLabel>
+                      <FormControl>
+                        <input id="tariff-night-rate" className="text-input" type="number" step="0.01" value={nightRate} onChange={(event) => setNightRate(event.target.value)} />
+                      </FormControl>
+                    </FormItem>
+                    <FormItem>
+                      <FormLabel htmlFor="tariff-export-rate">売電 円/kWh</FormLabel>
+                      <FormControl>
+                        <input id="tariff-export-rate" className="text-input" type="number" step="0.01" value={exportRate} onChange={(event) => setExportRate(event.target.value)} />
+                      </FormControl>
+                    </FormItem>
+                    <FormItem>
+                      <FormLabel htmlFor="tariff-timezone">Timezone</FormLabel>
+                      <FormControl>
+                        <input id="tariff-timezone" className="text-input" value={timezone} onChange={(event) => setTimezone(event.target.value)} />
+                      </FormControl>
+                    </FormItem>
+                  </div>
+                  <FormDescription>
+                    {editingPlanId
+                      ? "編集中の履歴行を同じ適用開始日時で更新します。"
+                      : "同じ適用開始日時で保存するとその行を更新します。新しい開始日時を入れると、それ以前のプランは自動的に終了日時が入ります。"}
+                  </FormDescription>
+                  <div className="drawer-section-title">料金時間帯</div>
+                  <div className="tariff-period-toolbar">
+                    <span className="readonly-note">現在の編集状態: {periodRuleMode === "custom" ? "カスタム" : "既定ルール"}</span>
+                    <div className="tariff-plan-actions">
+                      <Button type="button" variant="outline" onClick={generateCustomPeriodRulesFromRates}>
+                        単価から標準行を作成
+                      </Button>
+                      <Button type="button" variant="outline" onClick={restoreDefaultPeriodRules}>
+                        既定ルールへ戻す
+                      </Button>
+                    </div>
+                  </div>
+                  {tariffDayTypes.map((dayType) => (
+                    <div className="tariff-period-group" key={dayType}>
+                      <div className="tariff-period-group-header">
+                        <h3>{dayType === "weekday" ? "平日" : "休日/祝日"}</h3>
+                        <Button type="button" variant="outline" onClick={() => addPeriodRule(dayType)}>
+                          行を追加
+                        </Button>
+                      </div>
+                      <div className="table-wrap tariff-period-table-wrap">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>区分</TableHead>
+                              <TableHead>開始</TableHead>
+                              <TableHead>終了</TableHead>
+                              <TableHead>単価</TableHead>
+                              <TableHead>優先度</TableHead>
+                              <TableHead>操作</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {periodRules
+                              .map((rule, index) => ({ rule, index }))
+                              .filter(({ rule }) => rule.dayType === dayType)
+                              .map(({ rule, index }) => (
+                                <TableRow key={`${dayType}-${index}`}>
+                                  <TableCell>
+                                    <input
+                                      className="text-input tariff-period-input"
+                                      list="tariff-period-options"
+                                      value={rule.period}
+                                      onChange={(event) => updatePeriodRule(index, { period: event.target.value })}
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <input
+                                      className="text-input tariff-time-input"
+                                      value={minuteToTime(rule.startMinute)}
+                                      onChange={(event) => updatePeriodRuleTime(index, "startMinute", event.target.value)}
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <input
+                                      className="text-input tariff-time-input"
+                                      value={minuteToTime(rule.endMinute)}
+                                      onChange={(event) => updatePeriodRuleTime(index, "endMinute", event.target.value)}
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <input
+                                      className="text-input tariff-rate-input"
+                                      type="number"
+                                      step="0.01"
+                                      value={rule.rateYen}
+                                      onChange={(event) => updatePeriodRule(index, { rateYen: Number(event.target.value) })}
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <input
+                                      className="text-input tariff-priority-input"
+                                      type="number"
+                                      step="1"
+                                      value={rule.priority}
+                                      onChange={(event) => updatePeriodRule(index, { priority: Number(event.target.value) })}
+                                    />
+                                  </TableCell>
+                                  <TableCell>
+                                    <Button type="button" variant="outline" onClick={() => removePeriodRule(index)}>
+                                      削除
+                                    </Button>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  ))}
+                  <datalist id="tariff-period-options">
+                    {tariffPeriodOptions.map((period) => (
+                      <option value={period} key={period} />
+                    ))}
+                  </datalist>
+                  <div className="drawer-actions">
+                    <Button type="submit" disabled={saving}>
+                      {saving ? "保存中" : editingPlanId ? "編集中の料金プランを保存" : "料金プランを保存"}
+                    </Button>
+                    <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>
+                      キャンセル
+                    </Button>
+                  </div>
+                </Form>
+              </aside>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </>
