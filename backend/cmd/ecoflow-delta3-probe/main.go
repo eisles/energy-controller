@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -37,15 +38,26 @@ type options struct {
 	maxChargeSocSet         bool
 	energyBackupEnabledSet  bool
 	energyBackupStartSocSet bool
+	rawOutputDir            string
+	inspectFields           bool
 	execute                 bool
 	allowPrivateAPIWrite    bool
 	allowAutoControlOverlap bool
 }
 
 type output struct {
-	Mode   string                 `json:"mode"`
-	Status ecoflowprivate.Status  `json:"status"`
-	Write  map[string]interface{} `json:"write"`
+	Mode   string                         `json:"mode"`
+	Status ecoflowprivate.Status          `json:"status"`
+	Write  map[string]interface{}         `json:"write"`
+	Raw    []rawCaptureFile               `json:"raw,omitempty"`
+	Fields []ecoflowprivate.SnapshotField `json:"fields,omitempty"`
+}
+
+type rawCaptureFile struct {
+	Index int    `json:"index"`
+	Kind  string `json:"kind"`
+	File  string `json:"file"`
+	Bytes int    `json:"bytes"`
 }
 
 func main() {
@@ -72,11 +84,44 @@ func run(ctx context.Context, args []string, getenv envGetter, out io.Writer) er
 		if err != nil {
 			return err
 		}
-		return writeJSON(out, output{Mode: "offline-fixture", Status: status, Write: map[string]interface{}{"wouldSend": false, "sent": false, "reason": "offline fixture decode"}})
+		fields, err := inspectRawFields(raw, opts.inspectFields)
+		if err != nil {
+			return err
+		}
+		return writeJSON(out, output{Mode: "offline-fixture", Status: status, Write: map[string]interface{}{"wouldSend": false, "sent": false, "reason": "offline fixture decode"}, Fields: fields})
 	}
 
 	if opts.hasWriteCandidate() {
 		return runWriteCandidate(ctx, opts, getenv, client, out)
+	}
+
+	if opts.rawOutputDir != "" || opts.inspectFields {
+		status, replies, err := client.ProbeRaw(ctx)
+		if err != nil {
+			return err
+		}
+		var rawFiles []rawCaptureFile
+		if opts.rawOutputDir != "" {
+			rawFiles, err = saveRawMessages(opts.rawOutputDir, replies, time.Now())
+			if err != nil {
+				return err
+			}
+		}
+		fields, err := inspectReplies(replies, opts.inspectFields)
+		if err != nil {
+			return err
+		}
+		reason := "read-only probe"
+		if opts.rawOutputDir != "" {
+			reason = "read-only probe; raw replies saved"
+		}
+		return writeJSON(out, output{
+			Mode:   "read-only",
+			Status: status,
+			Write:  map[string]interface{}{"wouldSend": false, "sent": false, "reason": reason},
+			Raw:    rawFiles,
+			Fields: fields,
+		})
 	}
 
 	status, err := client.Probe(ctx)
@@ -196,6 +241,8 @@ func parseOptions(args []string) (options, error) {
 	flags.IntVar(&opts.maxChargeSoc, "max-charge-soc", 0, "optional maximum charge SOC command for dry-run or one-shot execute")
 	flags.BoolVar(&opts.energyBackupEnabled, "energy-backup-enabled", false, "optional energy backup enable command for dry-run or one-shot execute")
 	flags.IntVar(&opts.energyBackupStartSoc, "energy-backup-start-soc", 0, "required backup start SOC when --energy-backup-enabled is set")
+	flags.StringVar(&opts.rawOutputDir, "raw-output-dir", "", "optional directory for saving read-only raw MQTT reply payloads")
+	flags.BoolVar(&opts.inspectFields, "inspect-fields", false, "include generic protobuf field observations for read-only or offline-fixture payloads")
 	flags.BoolVar(&opts.execute, "execute", false, "send one real private MQTT write command")
 	flags.BoolVar(&opts.allowPrivateAPIWrite, "allow-private-api-write", false, "required together with --execute for private MQTT write")
 	flags.BoolVar(&opts.allowAutoControlOverlap, "allow-auto-control-overlap", false, "allow one-shot EcoFlow private write while AUTO_CONTROL_ENABLED=true")
@@ -223,6 +270,58 @@ func parseOptions(args []string) (options, error) {
 		}
 	})
 	return opts, nil
+}
+
+func saveRawMessages(dir string, replies []ecoflowprivate.MQTTMessage, now time.Time) ([]rawCaptureFile, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	prefix := now.Format("20060102-150405")
+	files := make([]rawCaptureFile, 0, len(replies))
+	for index, reply := range replies {
+		kind := rawTopicKind(reply.Topic)
+		path := filepath.Join(dir, fmt.Sprintf("%s-%02d-%s.bin", prefix, index, kind))
+		if err := os.WriteFile(path, reply.Payload, 0o600); err != nil {
+			return nil, err
+		}
+		files = append(files, rawCaptureFile{Index: index, Kind: kind, File: path, Bytes: len(reply.Payload)})
+	}
+	return files, nil
+}
+
+func inspectReplies(replies []ecoflowprivate.MQTTMessage, enabled bool) ([]ecoflowprivate.SnapshotField, error) {
+	if !enabled {
+		return nil, nil
+	}
+	fields := []ecoflowprivate.SnapshotField{}
+	for _, reply := range replies {
+		inspected, err := ecoflowprivate.InspectSnapshotFields(reply.Payload)
+		if err != nil {
+			return fields, err
+		}
+		fields = append(fields, inspected...)
+	}
+	return fields, nil
+}
+
+func inspectRawFields(raw []byte, enabled bool) ([]ecoflowprivate.SnapshotField, error) {
+	if !enabled {
+		return nil, nil
+	}
+	return ecoflowprivate.InspectSnapshotFields(raw)
+}
+
+func rawTopicKind(topic string) string {
+	switch {
+	case strings.HasSuffix(topic, "/thing/property/get_reply"):
+		return "get-reply"
+	case strings.Contains(topic, "/device/property/"):
+		return "device-property"
+	case strings.HasSuffix(topic, "/thing/property/set_reply"):
+		return "set-reply"
+	default:
+		return "reply"
+	}
 }
 
 func (opts options) hasWriteCandidate() bool {

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>DELTA 3 Max Plus AC Group Control Plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; max-width: 920px; margin: 32px auto; padding: 0 20px; color: #111827; }
+    h1, h2 { line-height: 1.25; }
+    code { background: #f3f4f6; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    pre { background: #f3f4f6; padding: 12px; border-radius: 6px; overflow-x: auto; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #d1d5db; padding: 8px; text-align: left; }
+    th { background: #f9fafb; }
+  </style>
+</head>
+<body>
+  <h1>DELTA 3 Max Plus AC Group Control Plan</h1>
+
+  <h2>Goal</h2>
+  <p>DELTA 3 Max Plus の EcoFlow private MQTT ステータスを、実機調査で確認した AC1 / AC2 / AC出力保護チャンネルに対応させる。主目的は、AC2 だけ ON のときに既存ロジックが <code>AC出力OFF</code> と誤判定する問題を直し、制御判断・画面・ログで AC1/AC2 を区別できるようにすること。</p>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li>AC1 / AC2 の ON/OFF write command は今回実装しない。</li>
+    <li>AC出力保護チャンネルの write command は今回実装しない。</li>
+    <li><code>ENABLE_REAL_CONTROL=true</code> の実機書き込み条件や既存の最小コマンド間隔、安全ゲートは変更しない。</li>
+    <li>料金最適化や深夜充電配分の制御方針はこの作業では変更しない。</li>
+  </ul>
+
+  <h2>Current State</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Meaning</th><th>Observed values</th></tr></thead>
+    <tbody>
+      <tr><td><code>cmdFunc=254 cmdId=21 field=367</code></td><td>AC1 ON/OFF</td><td><code>4</code> OFF, <code>14</code> ON</td></tr>
+      <tr><td><code>cmdFunc=254 cmdId=21 field=971</code></td><td>AC2 ON/OFF</td><td><code>4</code> OFF, <code>14</code> ON</td></tr>
+      <tr><td><code>cmdFunc=254 cmdId=21 field=1539</code></td><td>AC出力保護チャンネル</td><td><code>1</code> AC1, <code>2</code> AC2</td></tr>
+      <tr><td><code>cmdFunc=254 cmdId=21 field=47</code></td><td>AC全体系サマリー</td><td><code>12</code> all OFF, <code>14</code> any ON</td></tr>
+    </tbody>
+  </table>
+  <p>既存実装は <code>field=367</code> を <code>ACOutputEnabled</code> に割り当てているため、AC2 だけ ON の場合に <code>ACOutputEnabled=false</code> となる。</p>
+
+  <h2>Files Likely To Change</h2>
+  <ul>
+    <li><code>backend/internal/ecoflowprivate/status.go</code></li>
+    <li><code>backend/internal/ecoflowprivate/codec.go</code></li>
+    <li><code>backend/internal/ecoflowprivate/codec_test.go</code></li>
+    <li><code>backend/internal/api/delta3_status_handler.go</code></li>
+    <li><code>backend/internal/api/delta3_status_handler_test.go</code></li>
+    <li><code>backend/cmd/server/main.go</code></li>
+    <li><code>frontend/lib/types.ts</code></li>
+    <li><code>frontend/components/StatusCards.tsx</code></li>
+  </ul>
+
+  <h2>Data / API Contract</h2>
+  <p><code>ecoflowprivate.Status</code> と API response に <code>acOutput1Enabled</code>, <code>acOutput2Enabled</code>, <code>acOutputProtectionChannel</code> を追加する。既存の <code>acOutputEnabled</code> は後方互換のため維持し、DELTA 3 Max Plus で AC1/AC2 のどちらかが取れている場合は <code>AC1 || AC2</code> として扱う。</p>
+
+  <h2>Safety Boundaries</h2>
+  <ul>
+    <li>今回は read/status と制御判断の誤判定修正が対象。</li>
+    <li>実機 write path は増やさない。</li>
+    <li>未確定の write payload を推測で送信しない。</li>
+    <li>既存の <code>ENABLE_REAL_CONTROL=true</code> かつ <code>SIMULATION_MODE=false</code> のゲートは維持する。</li>
+  </ul>
+
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li><code>ecoflowprivate.Status</code> に AC1/AC2/保護チャンネル項目を追加し、<code>merge</code> で保持する。</li>
+    <li><code>decodeDisplayUpload</code> で <code>field=367</code> を AC1、<code>field=971</code> を AC2、<code>field=1539</code> を保護チャンネルとして decode する。</li>
+    <li>decode 後に <code>ACOutputEnabled</code> を <code>ACOutput1Enabled || ACOutput2Enabled</code> へ正規化する。ただし個別フィールドが取れていない機種では既存値を維持する。</li>
+    <li>API response と device status response に新項目を通す。</li>
+    <li>制御判断で参照される <code>ACOutputEnabled</code> が AC2-only でも true になることをテストで固定する。</li>
+    <li>画面に DELTA 3 Max Plus の <code>AC1</code>、<code>AC2</code>、<code>AC出力保護</code> を表示する。</li>
+    <li>既存の単一 AC出力表示は残し、全体状態として <code>AC1 または AC2</code> を示す。</li>
+  </ol>
+
+  <h2>Review Points</h2>
+  <ul>
+    <li>AC2-only の誤判定が直っているか。</li>
+    <li>DELTA 3 Plus / DELTA 3 / DELTA Pro 3 の既存単一 AC 出力表示を壊していないか。</li>
+    <li><code>field=1539</code> を ON/OFF と混同していないか。</li>
+    <li>write command を増やしていないか。</li>
+    <li>secrets や device serial number を計画・テスト fixture に入れていないか。</li>
+  </ul>
+
+  <h2>Verification</h2>
+  <pre>cd backend &amp;&amp; rtk go test ./internal/ecoflowprivate ./internal/api ./internal/control
+cd backend &amp;&amp; rtk go test ./cmd/server ./cmd/ecoflow-delta3-probe
+cd backend &amp;&amp; rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build
+rtk git diff --check</pre>
+
+  <h2>Rollback / Operational Notes</h2>
+  <p>この変更はステータス decode と表示/API 契約の追加であり、実機 write は増えない。問題が出た場合は、新規 AC1/AC2/保護チャンネル項目の表示だけを隠しても既存制御は継続できる。AC2-only 誤判定を避けるため、<code>field=971</code> の decode は残す方が安全。</p>
+</body>
+</html>

@@ -388,9 +388,13 @@ func decodeDisplayUpload(raw []byte) Status {
 		case 361:
 			raw = assignFloat(raw, wire, &s.PVInW)
 		case 367:
-			raw = assignFlowEnabled(raw, wire, &s.ACOutputEnabled)
+			raw = assignFlowEnabled(raw, wire, &s.ACOutput1Enabled)
 		case 368:
 			raw = assignFloat(raw, wire, &s.ACOutW)
+		case 971:
+			raw = assignFlowEnabled(raw, wire, &s.ACOutput2Enabled)
+		case 1539:
+			raw = assignIntVarint(raw, wire, &s.ACOutputProtectionChannel)
 		default:
 			var skipped bool
 			raw, skipped = skipValue(wire, raw)
@@ -401,6 +405,7 @@ func decodeDisplayUpload(raw []byte) Status {
 		}
 	}
 	s.DecodedMessages = 1
+	s.normalizeACOutputEnabled()
 	return s
 }
 

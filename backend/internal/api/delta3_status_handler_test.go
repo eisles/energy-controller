@@ -44,14 +44,20 @@ func TestReadDelta3StatusMapsReadOnlyFields(t *testing.T) {
 	acLimitW := 100
 	gridBypassDisabled := false
 	acOutputEnabled := true
+	acOutput1Enabled := false
+	acOutput2Enabled := true
+	acOutputProtectionChannel := 2
 	response := readDelta3Status(context.Background(), validDelta3Config(), fakeDelta3Client{status: ecoflowprivate.Status{
-		DeviceType:         "DELTA_3",
-		CMSBatterySoc:      &soc,
-		ACInW:              &acInW,
-		ACOutW:             &acOutW,
-		ACChargeLimitW:     &acLimitW,
-		GridBypassDisabled: &gridBypassDisabled,
-		ACOutputEnabled:    &acOutputEnabled,
+		DeviceType:                "DELTA_3_MAX_PLUS",
+		CMSBatterySoc:             &soc,
+		ACInW:                     &acInW,
+		ACOutW:                    &acOutW,
+		ACChargeLimitW:            &acLimitW,
+		GridBypassDisabled:        &gridBypassDisabled,
+		ACOutputEnabled:           &acOutputEnabled,
+		ACOutput1Enabled:          &acOutput1Enabled,
+		ACOutput2Enabled:          &acOutput2Enabled,
+		ACOutputProtectionChannel: &acOutputProtectionChannel,
 	}}, nil)
 	if !response.Available {
 		t.Fatalf("Available = false, lastError=%q", response.LastError)
@@ -66,6 +72,13 @@ func TestReadDelta3StatusMapsReadOnlyFields(t *testing.T) {
 	if response.ACOutputEnabled == nil || !*response.ACOutputEnabled {
 		t.Fatalf("ACOutputEnabled = %v, want true", response.ACOutputEnabled)
 	}
+	if response.ACOutput1Enabled == nil || *response.ACOutput1Enabled {
+		t.Fatalf("ACOutput1Enabled = %v, want false", response.ACOutput1Enabled)
+	}
+	if response.ACOutput2Enabled == nil || !*response.ACOutput2Enabled {
+		t.Fatalf("ACOutput2Enabled = %v, want true", response.ACOutput2Enabled)
+	}
+	assertIntPtrResponse(t, "ACOutputProtectionChannel", response.ACOutputProtectionChannel, 2)
 }
 
 func TestDelta3StatusReaderCachesSuccessfulProbe(t *testing.T) {

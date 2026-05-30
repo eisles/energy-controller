@@ -34,12 +34,18 @@ export function TariffPlanPanel({ onSaved }: TariffPlanPanelProps) {
   const [editingPlanId, setEditingPlanId] = useState<number | null>(null);
   const [periodRules, setPeriodRules] = useState<TariffPeriodRule[]>(() => defaultTariffPeriodRules(34.06, 26, 16.11));
   const [periodRuleMode, setPeriodRuleMode] = useState<"default" | "custom">("default");
+  const [now, setNow] = useState(() => new Date());
 
-  const currentPlan = useMemo(() => plans.find((plan) => !plan.effectiveTo) ?? plans[0], [plans]);
+  const currentPlan = useMemo(() => currentEffectiveTariffPlan(plans, now), [plans, now]);
   const currentPlanPeriodRuleLabel = currentPlan ? tariffPeriodRuleLabel(currentPlan) : "未読込";
 
   useEffect(() => {
     void loadPlans();
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 60 * 1000);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -338,13 +344,15 @@ export function TariffPlanPanel({ onSaved }: TariffPlanPanelProps) {
                         <TableCell>{yenPerKwh(plan.homeRateYen)}</TableCell>
                         <TableCell>{yenPerKwh(plan.nightRateYen)}</TableCell>
                         <TableCell>{yenPerKwh(plan.exportRateYen)}</TableCell>
-                        <TableCell>{tariffPeriodRuleLabel(plan)}</TableCell>
+                        <TableCell>{tariffPeriodRuleSummary(plan)}</TableCell>
                       </TableRow>
                     ))
                   )}
                 </TableBody>
               </Table>
             </div>
+            <div className="drawer-section-title">料金時間帯プレビュー</div>
+            <TariffPeriodPreview plan={currentPlan} />
           </aside>
 
           {editOpen ? (
@@ -537,6 +545,73 @@ export function TariffPlanPanel({ onSaved }: TariffPlanPanelProps) {
   );
 }
 
+function TariffPeriodPreview({ plan }: { plan?: TariffPlan }) {
+  if (!plan) {
+    return <p className="readonly-note">料金プランを読み込んでいます。</p>;
+  }
+  const rules = tariffDisplayRules(plan);
+  if (rules.length === 0) {
+    return <p className="readonly-note">料金時間帯ルールは未取得です。</p>;
+  }
+  return (
+    <div className="tariff-period-preview" aria-label="tariff period preview">
+      <p className="readonly-note">
+        {plan.planName} / {tariffPeriodRuleLabel(plan)}
+      </p>
+      {tariffDayTypes.map((dayType) => (
+        <div className="tariff-period-preview-group" key={dayType}>
+          <h3>{dayType === "weekday" ? "平日" : "休日/祝日"}</h3>
+          <div className="table-wrap tariff-period-preview-table">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>時間</TableHead>
+                  <TableHead>区分</TableHead>
+                  <TableHead>単価</TableHead>
+                  <TableHead>優先度</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {tariffRulesForDay(rules, dayType).map((rule, index) => (
+                  <TableRow key={`${dayType}-${rule.period}-${rule.startMinute}-${rule.endMinute}-${index}`}>
+                    <TableCell>{tariffRuleTimeLabel(rule)}</TableCell>
+                    <TableCell>{tariffPeriodNameLabel(rule.period)}</TableCell>
+                    <TableCell>{yenPerKwh(rule.rateYen)}</TableCell>
+                    <TableCell>{rule.priority}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function currentEffectiveTariffPlan(plans: TariffPlan[], at: Date) {
+  if (plans.length === 0) {
+    return undefined;
+  }
+  const atMs = at.getTime();
+  const activePlan = plans.find((plan) => {
+    const fromMs = Date.parse(plan.effectiveFrom);
+    const toMs = plan.effectiveTo ? Date.parse(plan.effectiveTo) : Number.POSITIVE_INFINITY;
+    return Number.isFinite(fromMs) && Number.isFinite(toMs) && fromMs <= atMs && atMs < toMs;
+  });
+  if (activePlan) {
+    return activePlan;
+  }
+  return (
+    plans
+      .filter((plan) => {
+        const fromMs = Date.parse(plan.effectiveFrom);
+        return Number.isFinite(fromMs) && fromMs <= atMs;
+      })
+      .sort((a, b) => Date.parse(b.effectiveFrom) - Date.parse(a.effectiveFrom))[0] ?? plans[0]
+  );
+}
+
 function datetimeLocalToISOString(value: string) {
   if (!value) {
     return undefined;
@@ -594,6 +669,49 @@ function tariffPeriodRuleLabel(plan: TariffPlan) {
   const source = plan.periodRuleSource === "custom" ? "カスタム" : "既定ルール";
   const ruleCount = plan.periodRules?.length ?? 0;
   return `${source}${ruleCount > 0 ? ` / ${ruleCount}行` : ""}`;
+}
+
+function tariffPeriodRuleSummary(plan: TariffPlan) {
+  const rules = tariffDisplayRules(plan);
+  const weekdayCount = rules.filter((rule) => rule.dayType === "weekday").length;
+  const holidayCount = rules.filter((rule) => rule.dayType === "holiday").length;
+  const source = tariffPeriodRuleLabel(plan);
+  if (rules.length === 0) {
+    return source;
+  }
+  return `${source} / 平日${weekdayCount}行 / 休日${holidayCount}行`;
+}
+
+function tariffDisplayRules(plan: TariffPlan) {
+  return plan.periodRules?.length ? plan.periodRules : defaultTariffPeriodRules(plan.dayRateYen, plan.homeRateYen, plan.nightRateYen);
+}
+
+function tariffRulesForDay(rules: TariffPeriodRule[], dayType: TariffPeriodRule["dayType"]) {
+  return rules
+    .filter((rule) => rule.dayType === dayType)
+    .slice()
+    .sort((a, b) => a.startMinute - b.startMinute || a.endMinute - b.endMinute || b.priority - a.priority);
+}
+
+function tariffRuleTimeLabel(rule: Pick<TariffPeriodRule, "startMinute" | "endMinute">) {
+  return `${minuteToTime(rule.startMinute)}-${minuteToTime(rule.endMinute)}`;
+}
+
+function tariffPeriodNameLabel(period: string) {
+  switch (period) {
+    case "night":
+      return "ナイト";
+    case "home":
+      return "ホーム";
+    case "day":
+      return "デイ";
+    case "cheap":
+      return "低単価";
+    case "expensive":
+      return "高単価";
+    default:
+      return period;
+  }
 }
 
 function minuteToTime(value: number) {

@@ -93,14 +93,36 @@ export function StatusCards({ status, fetchError }: StatusCardsProps) {
       ) : null}
 
       <Pro3ACOutputMonitor status={status} />
-      <TariffControlCard tariff={status.tariffControl} />
+      <TariffControlCard status={status} />
     </>
   );
 }
 
-function TariffControlCard({ tariff }: { tariff?: TariffControlContext | null }) {
+function TariffControlCard({ status }: { status: EnergyStatus }) {
+  const tariff = status.tariffControl;
+  const guide = tariffControlGuide(status, tariff);
   if (!tariff) {
-    return null;
+    return (
+      <Card className="section">
+        <CardHeader>
+          <div className="panel-title-row">
+            <div>
+              <CardDescription>Tariff optimized control</CardDescription>
+              <CardTitle>料金最適化制御</CardTitle>
+            </div>
+            <Badge variant="secondary">未取得</Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="detail-strip planner-secondary" aria-label="tariff optimized control unavailable">
+            <Detail label="料金プラン" value="-" />
+            <Detail label="現在電力" value={tariffPowerLabel(status)} />
+            <Detail label="制御目安" value={guide.label} />
+          </div>
+          <p className="planner-reason">{guide.reason}</p>
+        </CardContent>
+      </Card>
+    );
   }
   const priceState = tariff.isLowPrice ? "低単価" : tariff.isHighPrice ? "高単価" : "中間単価";
   const priceVariant: BadgeVariant = tariff.isLowPrice ? "success" : tariff.isHighPrice ? "warning" : "secondary";
@@ -125,7 +147,10 @@ function TariffControlCard({ tariff }: { tariff?: TariffControlContext | null })
           <Detail label="最高単価" value={formatYenRate(tariff.highestRateYen)} />
           <Detail label="次の低単価" value={formatDateTime(tariff.nextLowPriceAt || "")} />
           <Detail label="解決元" value={tariff.source === "custom" ? "料金時間帯マスタ" : "既定ルール"} />
+          <Detail label="現在電力" value={tariffPowerLabel(status)} />
+          <Detail label="制御目安" value={guide.label} />
         </div>
+        <p className="planner-reason">{guide.reason}</p>
         {tariff.reason ? <p className="planner-reason">{tariff.reason}</p> : null}
       </CardContent>
     </Card>
@@ -233,6 +258,13 @@ export function Delta3StatusCard({
                           <Detail label="Energy Backup" value={nullableOnOff(device.status.backupReserveEnabled)} />
                           <Detail label="グリッドバイパス無効化" value={nullableOnOff(device.status.gridBypassDisabled)} />
                           <Detail label="AC出力" value={nullableOnOff(device.status.acOutputEnabled)} />
+                          {hasSplitACOutput(device.status) ? (
+                            <>
+                              <Detail label="AC1" value={nullableOnOff(device.status.acOutput1Enabled)} />
+                              <Detail label="AC2" value={nullableOnOff(device.status.acOutput2Enabled)} />
+                              <Detail label="AC出力保護" value={acOutputProtectionChannelLabel(device.status.acOutputProtectionChannel)} />
+                            </>
+                          ) : null}
                           <Detail label="Device type" value={device.status.deviceType || device.deviceType || "-"} />
                           <Detail label="Updated" value={formatDateTime(device.status.updatedAt || "")} />
                           <Detail label="制御候補" value={device.controlEnabled ? "有効" : "無効"} />
@@ -277,6 +309,13 @@ export function Delta3StatusCard({
               <Detail label="AC充電上限" value={nullableWatt(status.acChargeLimitW)} />
               <Detail label="グリッドバイパス無効化" value={nullableOnOff(status.gridBypassDisabled)} />
               <Detail label="AC output" value={nullableOnOff(status.acOutputEnabled)} />
+              {hasSplitACOutput(status) ? (
+                <>
+                  <Detail label="AC1" value={nullableOnOff(status.acOutput1Enabled)} />
+                  <Detail label="AC2" value={nullableOnOff(status.acOutput2Enabled)} />
+                  <Detail label="AC出力保護" value={acOutputProtectionChannelLabel(status.acOutputProtectionChannel)} />
+                </>
+              ) : null}
             </div>
             <div className="detail-strip planner-secondary" aria-label="DELTA 3 Plus configuration status">
               <Detail label="運転モード" value={operationModeLabel(status)} />
@@ -720,6 +759,65 @@ function chargeRecommendationDescription(exportW: number, targetChargeW: number)
   return "充電推奨なし";
 }
 
+function tariffPowerLabel(status: EnergyStatus) {
+  if (status.exportW > 0) {
+    return `売電 ${status.exportW} W`;
+  }
+  if (status.importW > 0) {
+    return `買電 ${status.importW} W`;
+  }
+  return "買電/売電 0 W";
+}
+
+function tariffControlGuide(status: EnergyStatus, tariff?: TariffControlContext | null) {
+  if (!tariff) {
+    return {
+      label: "料金判定未取得",
+      reason: "料金判定がステータスに含まれていないため、料金時間帯マスタに基づく制御目安は未確定です。既存の制御判断ログを優先します。"
+    };
+  }
+  if (status.exportW > 0 && status.targetChargeW > 0) {
+    return {
+      label: "余剰充電候補",
+      reason: `売電 ${status.exportW} W、充電推奨 ${status.targetChargeW} W。余剰吸収のため充電を優先する目安です。`
+    };
+  }
+  if (status.exportW > 0) {
+    return {
+      label: "余剰あり",
+      reason: `売電 ${status.exportW} W。最低開始Wや安全余白に届かない場合は、既存制御ゲートで充電を抑制します。`
+    };
+  }
+  if (tariff.isHighPrice && status.importW > 0) {
+    return {
+      label: "放電優先/充電抑制",
+      reason: `高単価時間帯に買電 ${status.importW} W。十分な残量があれば放電優先、充電は抑制する目安です。`
+    };
+  }
+  if (tariff.isHighPrice) {
+    return {
+      label: "高単価待機",
+      reason: "高単価時間帯です。売電や買電が小さい場合は、既存制御ログの判断を優先します。"
+    };
+  }
+  if (tariff.isLowPrice && status.importW > 0) {
+    return {
+      label: "不足分充電候補",
+      reason: `低単価時間帯に買電 ${status.importW} W。翌日日中不足やSOC下限を見て、必要分だけ充電する候補です。`
+    };
+  }
+  if (tariff.isLowPrice) {
+    return {
+      label: "低単価充電候補",
+      reason: "低単価時間帯です。深夜充電計画と各機器の制御範囲に従って必要分だけ充電する候補です。"
+    };
+  }
+  return {
+    label: "現行ルール維持",
+    reason: "中間単価時間帯です。売電/買電、SOC、既存の最小送信間隔と安全ゲートを優先します。"
+  };
+}
+
 function surplusActionLabel(plan: SurplusPlan) {
   if (plan.actionSummary) {
     return `未送信計画: ${plan.actionSummary}`;
@@ -774,6 +872,22 @@ function nullableOnOff(value: boolean | null | undefined) {
     return "-";
   }
   return value ? "ON" : "OFF";
+}
+
+function hasSplitACOutput(status: Delta3Status) {
+  return status.acOutput1Enabled !== null && status.acOutput1Enabled !== undefined ||
+    status.acOutput2Enabled !== null && status.acOutput2Enabled !== undefined ||
+    status.acOutputProtectionChannel !== null && status.acOutputProtectionChannel !== undefined;
+}
+
+function acOutputProtectionChannelLabel(value: number | null | undefined) {
+  if (value === 1) {
+    return "AC1";
+  }
+  if (value === 2) {
+    return "AC2";
+  }
+  return "-";
 }
 
 function backupReserveApplyLabel(plan: EnergyStatus["delta3AuxPlan"] | null | undefined) {

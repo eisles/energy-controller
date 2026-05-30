@@ -136,6 +136,8 @@ func TestDecodeSnapshotDisplayUpload(t *testing.T) {
 	display = appendFloatField(display, 361, 88.8)
 	display = appendIntField(display, 367, 14)
 	display = appendFloatField(display, 368, 401.1)
+	display = appendIntField(display, 971, 4)
+	display = appendIntField(display, 1539, 1)
 	payload := encodeHeaderMessage(delta3Header{PData: display, Src: 2, CmdFunc: 254, CmdID: 21, Seq: 1})
 
 	status, err := DecodeSnapshot("DELTA_3", "SN123", payload)
@@ -153,6 +155,7 @@ func TestDecodeSnapshotDisplayUpload(t *testing.T) {
 	assertIntPtr(t, "BackupReserveSoc", status.BackupReserveSoc, 30)
 	assertIntPtr(t, "MaxChargeSoc", status.MaxChargeSoc, 95)
 	assertIntPtr(t, "MinDischargeSoc", status.MinDischargeSoc, 10)
+	assertIntPtr(t, "ACOutputProtectionChannel", status.ACOutputProtectionChannel, 1)
 	assertIntPtr(t, "ChargingState", status.ChargingState, 2)
 	assertIntPtr(t, "BMSChargingState", status.BMSChargingState, 2)
 	assertIntPtr(t, "CMSChargingState", status.CMSChargingState, 3)
@@ -165,6 +168,8 @@ func TestDecodeSnapshotDisplayUpload(t *testing.T) {
 	if status.ACOutputEnabled == nil || !*status.ACOutputEnabled {
 		t.Fatalf("ACOutputEnabled = %v, want true", status.ACOutputEnabled)
 	}
+	assertBoolPtr(t, "ACOutput1Enabled", status.ACOutput1Enabled, true)
+	assertBoolPtr(t, "ACOutput2Enabled", status.ACOutput2Enabled, false)
 	if status.DCOutputEnabled == nil || *status.DCOutputEnabled {
 		t.Fatalf("DCOutputEnabled = %v, want false", status.DCOutputEnabled)
 	}
@@ -179,6 +184,55 @@ func TestDecodeSnapshotDisplayUpload(t *testing.T) {
 	}
 	if status.DecodedMessages != 1 {
 		t.Fatalf("DecodedMessages = %d, want 1", status.DecodedMessages)
+	}
+}
+
+func TestDecodeSnapshotDelta3MaxPlusACGroups(t *testing.T) {
+	tests := []struct {
+		name        string
+		ac1         int
+		ac2         int
+		protection  int
+		wantOverall bool
+		wantAC1     bool
+		wantAC2     bool
+	}{
+		{name: "all off", ac1: 4, ac2: 4, protection: 2, wantOverall: false, wantAC1: false, wantAC2: false},
+		{name: "ac1 on", ac1: 14, ac2: 4, protection: 1, wantOverall: true, wantAC1: true, wantAC2: false},
+		{name: "ac2 on", ac1: 4, ac2: 14, protection: 2, wantOverall: true, wantAC1: false, wantAC2: true},
+		{name: "both on", ac1: 14, ac2: 14, protection: 1, wantOverall: true, wantAC1: true, wantAC2: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			display := []byte{}
+			display = appendIntField(display, 367, tt.ac1)
+			display = appendIntField(display, 971, tt.ac2)
+			display = appendIntField(display, 1539, tt.protection)
+			payload := encodeHeaderMessage(delta3Header{PData: display, Src: 2, CmdFunc: 254, CmdID: 21, Seq: 1})
+
+			status, err := DecodeSnapshot("DELTA_3_MAX_PLUS", "SN123", payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertBoolPtr(t, "ACOutputEnabled", status.ACOutputEnabled, tt.wantOverall)
+			assertBoolPtr(t, "ACOutput1Enabled", status.ACOutput1Enabled, tt.wantAC1)
+			assertBoolPtr(t, "ACOutput2Enabled", status.ACOutput2Enabled, tt.wantAC2)
+			assertIntPtr(t, "ACOutputProtectionChannel", status.ACOutputProtectionChannel, tt.protection)
+		})
+	}
+}
+
+func TestDecodeSnapshotFallsBackToGenericACOutput(t *testing.T) {
+	display := appendIntField(nil, 76, 1)
+	payload := encodeHeaderMessage(delta3Header{PData: display, Src: 2, CmdFunc: 254, CmdID: 21, Seq: 1})
+
+	status, err := DecodeSnapshot("DELTA_3", "SN123", payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertBoolPtr(t, "ACOutputEnabled", status.ACOutputEnabled, true)
+	if status.ACOutput1Enabled != nil || status.ACOutput2Enabled != nil {
+		t.Fatalf("AC group fields = %v/%v, want nil without split AC telemetry", status.ACOutput1Enabled, status.ACOutput2Enabled)
 	}
 }
 
@@ -267,5 +321,15 @@ func assertIntPtr(t *testing.T, name string, got *int, want int) {
 			t.Fatalf("%s = nil, want %d", name, want)
 		}
 		t.Fatalf("%s = %d, want %d", name, *got, want)
+	}
+}
+
+func assertBoolPtr(t *testing.T, name string, got *bool, want bool) {
+	t.Helper()
+	if got == nil || *got != want {
+		if got == nil {
+			t.Fatalf("%s = nil, want %t", name, want)
+		}
+		t.Fatalf("%s = %t, want %t", name, *got, want)
 	}
 }

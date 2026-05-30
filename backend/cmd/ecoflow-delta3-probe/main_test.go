@@ -178,6 +178,59 @@ func TestRunOfflineFixtureDecodesSnapshot(t *testing.T) {
 	}
 }
 
+func TestRunOfflineFixtureCanInspectFields(t *testing.T) {
+	payload, err := ecoflowprivate.BuildSetACChargePowerPayload("SN123", 100, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.CreateTemp(t.TempDir(), "fixture-*.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err = run(context.Background(), []string{"--sn", "SN123", "--device-type", "DELTA_3", "--offline-fixture", file.Name(), "--inspect-fields"}, emptyEnv, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got output
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Mode != "offline-fixture" || len(got.Fields) == 0 {
+		t.Fatalf("output = %#v, want inspected fields", got)
+	}
+}
+
+func TestSaveRawMessagesWritesPayloadsWithoutTopicSecretsInFilename(t *testing.T) {
+	dir := t.TempDir()
+	files, err := saveRawMessages(dir, []ecoflowprivate.MQTTMessage{
+		{Topic: "/app/user-1/SN123/thing/property/get_reply", Payload: []byte{1, 2, 3}},
+		{Topic: "/app/device/property/SN123", Payload: []byte{4, 5}},
+	}, time.Date(2026, 5, 31, 8, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("files = %#v, want 2", files)
+	}
+	if !strings.Contains(files[0].File, "get-reply") || strings.Contains(files[0].File, "SN123") || files[0].Bytes != 3 {
+		t.Fatalf("first file metadata = %#v", files[0])
+	}
+	raw, err := os.ReadFile(files[1].File)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(raw, []byte{4, 5}) {
+		t.Fatalf("raw = %v, want [4 5]", raw)
+	}
+}
+
 func TestBuildConfigUsesDelta3TimeoutEnvUnlessFlagSet(t *testing.T) {
 	cfg := buildConfig(options{}, mapEnv(map[string]string{
 		"ECOFLOW_DELTA3_TIMEOUT_SEC": "12",

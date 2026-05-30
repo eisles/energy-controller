@@ -197,6 +197,30 @@ func TestProbeWaitsForFullGetReplyBeforeTelemetry(t *testing.T) {
 	}
 }
 
+func TestProbeRawReturnsCapturedMQTTReplies(t *testing.T) {
+	client := NewClientWithTransport(Config{
+		PrivateAPIHost: "api.test",
+		Email:          "user@example.com",
+		Password:       "secret",
+		DeviceSN:       "SN123",
+		DeviceType:     "DELTA_3",
+		HTTPClient:     newPrivateHTTPClient(t),
+		Timeout:        time.Second,
+	}, fakeTransport{
+		replies: []MQTTMessage{
+			{Topic: "/app/user-1/SN123/thing/property/get_reply", Payload: displayPayload(t, 30, true)},
+		},
+	})
+	status, replies, err := client.ProbeRaw(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertIntPtr(t, "BackupReserveSoc", status.BackupReserveSoc, 30)
+	if len(replies) != 1 || !strings.HasSuffix(replies[0].Topic, "/thing/property/get_reply") || len(replies[0].Payload) == 0 {
+		t.Fatalf("replies = %#v, want captured get_reply payload", replies)
+	}
+}
+
 func TestProbeReusesPrivateSession(t *testing.T) {
 	counts := &privateHTTPCallCounts{}
 	client := NewClientWithTransport(Config{

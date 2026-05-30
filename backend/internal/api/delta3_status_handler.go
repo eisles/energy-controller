@@ -38,25 +38,28 @@ type DeviceStatusStore interface {
 }
 
 type Delta3StatusResponse struct {
-	Available            bool   `json:"available"`
-	DeviceType           string `json:"deviceType,omitempty"`
-	SOC                  *int   `json:"soc,omitempty"`
-	ACInW                *int   `json:"acInW,omitempty"`
-	ACOutW               *int   `json:"acOutW,omitempty"`
-	ACChargeLimitW       *int   `json:"acChargeLimitW,omitempty"`
-	GridBypassDisabled   *bool  `json:"gridBypassDisabled,omitempty"`
-	ACOutputEnabled      *bool  `json:"acOutputEnabled,omitempty"`
-	MaxChargeSoc         *int   `json:"maxChargeSoc,omitempty"`
-	MinDischargeSoc      *int   `json:"minDischargeSoc,omitempty"`
-	BackupReserveSoc     *int   `json:"backupReserveSoc,omitempty"`
-	BackupReserveEnabled *bool  `json:"backupReserveEnabled,omitempty"`
-	TOUModeEnabled       *bool  `json:"touModeEnabled,omitempty"`
-	SelfPoweredEnabled   *bool  `json:"selfPoweredEnabled,omitempty"`
-	ScheduledEnabled     *bool  `json:"scheduledEnabled,omitempty"`
-	IntelligentEnabled   *bool  `json:"intelligentEnabled,omitempty"`
-	UpdatedAt            string `json:"updatedAt,omitempty"`
-	LastError            string `json:"lastError,omitempty"`
-	Cached               bool   `json:"cached,omitempty"`
+	Available                 bool   `json:"available"`
+	DeviceType                string `json:"deviceType,omitempty"`
+	SOC                       *int   `json:"soc,omitempty"`
+	ACInW                     *int   `json:"acInW,omitempty"`
+	ACOutW                    *int   `json:"acOutW,omitempty"`
+	ACChargeLimitW            *int   `json:"acChargeLimitW,omitempty"`
+	GridBypassDisabled        *bool  `json:"gridBypassDisabled,omitempty"`
+	ACOutputEnabled           *bool  `json:"acOutputEnabled,omitempty"`
+	ACOutput1Enabled          *bool  `json:"acOutput1Enabled,omitempty"`
+	ACOutput2Enabled          *bool  `json:"acOutput2Enabled,omitempty"`
+	ACOutputProtectionChannel *int   `json:"acOutputProtectionChannel,omitempty"`
+	MaxChargeSoc              *int   `json:"maxChargeSoc,omitempty"`
+	MinDischargeSoc           *int   `json:"minDischargeSoc,omitempty"`
+	BackupReserveSoc          *int   `json:"backupReserveSoc,omitempty"`
+	BackupReserveEnabled      *bool  `json:"backupReserveEnabled,omitempty"`
+	TOUModeEnabled            *bool  `json:"touModeEnabled,omitempty"`
+	SelfPoweredEnabled        *bool  `json:"selfPoweredEnabled,omitempty"`
+	ScheduledEnabled          *bool  `json:"scheduledEnabled,omitempty"`
+	IntelligentEnabled        *bool  `json:"intelligentEnabled,omitempty"`
+	UpdatedAt                 string `json:"updatedAt,omitempty"`
+	LastError                 string `json:"lastError,omitempty"`
+	Cached                    bool   `json:"cached,omitempty"`
 }
 
 type DeviceStatusResponse struct {
@@ -472,19 +475,22 @@ func intPtr(value int) *int {
 
 func mapDelta3Status(status ecoflowprivate.Status, now time.Time) Delta3StatusResponse {
 	return Delta3StatusResponse{
-		Available:            true,
-		DeviceType:           status.DeviceType,
-		SOC:                  firstIntPtr(status.CMSBatterySoc, status.BMSBatterySoc),
-		ACInW:                status.ACInW,
-		ACOutW:               positiveIntPtr(status.ACOutW),
-		ACChargeLimitW:       status.ACChargeLimitW,
-		GridBypassDisabled:   status.GridBypassDisabled,
-		ACOutputEnabled:      status.ACOutputEnabled,
-		MaxChargeSoc:         status.MaxChargeSoc,
-		MinDischargeSoc:      status.MinDischargeSoc,
-		BackupReserveSoc:     status.BackupReserveSoc,
-		BackupReserveEnabled: status.BackupReserveEnabled,
-		UpdatedAt:            now.Format(time.RFC3339),
+		Available:                 true,
+		DeviceType:                status.DeviceType,
+		SOC:                       firstIntPtr(status.CMSBatterySoc, status.BMSBatterySoc),
+		ACInW:                     status.ACInW,
+		ACOutW:                    positiveIntPtr(status.ACOutW),
+		ACChargeLimitW:            status.ACChargeLimitW,
+		GridBypassDisabled:        status.GridBypassDisabled,
+		ACOutputEnabled:           status.ACOutputEnabled,
+		ACOutput1Enabled:          status.ACOutput1Enabled,
+		ACOutput2Enabled:          status.ACOutput2Enabled,
+		ACOutputProtectionChannel: status.ACOutputProtectionChannel,
+		MaxChargeSoc:              status.MaxChargeSoc,
+		MinDischargeSoc:           status.MinDischargeSoc,
+		BackupReserveSoc:          status.BackupReserveSoc,
+		BackupReserveEnabled:      status.BackupReserveEnabled,
+		UpdatedAt:                 now.Format(time.RFC3339),
 	}
 }
 
@@ -496,6 +502,9 @@ func hasReadablePrivateMQTTTelemetry(status ecoflowprivate.Status) bool {
 		status.ACChargeLimitW != nil ||
 		status.GridBypassDisabled != nil ||
 		status.ACOutputEnabled != nil ||
+		status.ACOutput1Enabled != nil ||
+		status.ACOutput2Enabled != nil ||
+		status.ACOutputProtectionChannel != nil ||
 		status.MaxChargeSoc != nil ||
 		status.MinDischargeSoc != nil ||
 		status.BackupReserveSoc != nil ||

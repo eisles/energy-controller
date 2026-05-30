@@ -850,6 +850,27 @@ input {
   min-width: 760px;
 }
 
+.tariff-period-preview {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.tariff-period-preview-group {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.tariff-period-preview-group h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.tariff-period-preview-table .ui-table {
+  min-width: 560px;
+}
+
 .tariff-period-input {
   min-width: 120px;
 }

@@ -66,6 +66,9 @@ export type Delta3Status = {
   acChargeLimitW?: number | null;
   gridBypassDisabled?: boolean | null;
   acOutputEnabled?: boolean | null;
+  acOutput1Enabled?: boolean | null;
+  acOutput2Enabled?: boolean | null;
+  acOutputProtectionChannel?: number | null;
   maxChargeSoc?: number | null;
   minDischargeSoc?: number | null;
   backupReserveSoc?: number | null;

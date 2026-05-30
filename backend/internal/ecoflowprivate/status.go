@@ -17,6 +17,9 @@ type Status struct {
 	BackupReserveEnabled             *bool  `json:"backupReserveEnabled,omitempty"`
 	GridBypassDisabled               *bool  `json:"gridBypassDisabled,omitempty"`
 	ACOutputEnabled                  *bool  `json:"acOutputEnabled,omitempty"`
+	ACOutput1Enabled                 *bool  `json:"acOutput1Enabled,omitempty"`
+	ACOutput2Enabled                 *bool  `json:"acOutput2Enabled,omitempty"`
+	ACOutputProtectionChannel        *int   `json:"acOutputProtectionChannel,omitempty"`
 	DCOutputEnabled                  *bool  `json:"dcOutputEnabled,omitempty"`
 	USBOutputEnabled                 *bool  `json:"usbOutputEnabled,omitempty"`
 	XBoostEnabled                    *bool  `json:"xboostEnabled,omitempty"`
@@ -77,6 +80,15 @@ func (s *Status) merge(other Status) {
 	if other.ACOutputEnabled != nil {
 		s.ACOutputEnabled = other.ACOutputEnabled
 	}
+	if other.ACOutput1Enabled != nil {
+		s.ACOutput1Enabled = other.ACOutput1Enabled
+	}
+	if other.ACOutput2Enabled != nil {
+		s.ACOutput2Enabled = other.ACOutput2Enabled
+	}
+	if other.ACOutputProtectionChannel != nil {
+		s.ACOutputProtectionChannel = other.ACOutputProtectionChannel
+	}
 	if other.DCOutputEnabled != nil {
 		s.DCOutputEnabled = other.DCOutputEnabled
 	}
@@ -118,4 +130,14 @@ func (s *Status) merge(other Status) {
 	}
 	s.DecodedMessages += other.DecodedMessages
 	s.UnsupportedMessages += other.UnsupportedMessages
+	s.normalizeACOutputEnabled()
+}
+
+func (s *Status) normalizeACOutputEnabled() {
+	if s.ACOutput1Enabled == nil && s.ACOutput2Enabled == nil {
+		return
+	}
+	enabled := (s.ACOutput1Enabled != nil && *s.ACOutput1Enabled) ||
+		(s.ACOutput2Enabled != nil && *s.ACOutput2Enabled)
+	s.ACOutputEnabled = &enabled
 }

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>料金マスタ・料金判定表示強化 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; max-width: 960px; margin: 40px auto; padding: 0 24px; color: #172033; }
+    h1, h2, h3 { line-height: 1.3; }
+    code { background: #f1f5f9; padding: 0.1em 0.35em; border-radius: 4px; }
+    ul { padding-left: 1.4em; }
+    section { border-top: 1px solid #d8dee8; padding-top: 18px; margin-top: 22px; }
+  </style>
+</head>
+<body>
+  <h1>料金マスタ・料金判定表示強化 実装計画</h1>
+
+  <section>
+    <h2>Goal</h2>
+    <p>料金最適化制御を強める前に、オペレーターが画面上で次の2点を確認できるようにする。</p>
+    <ul>
+      <li>料金プランごとの平日・休日/祝日の料金時間帯ルールを、編集フォームを開かずに一覧で確認できる。</li>
+      <li>現在の料金判定が、買電/売電状態と合わせて「充電優先・放電優先・深夜待ち」のどれに寄っているか分かる。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Non-goals</h2>
+    <ul>
+      <li>EcoFlow 実機write、AC出力、バックアップリザーブ、AC充電上限の制御条件は変更しない。</li>
+      <li>料金プラン保存APIの契約は変更しない。</li>
+      <li>祝日カレンダーや電力会社料金体系の自動取得は追加しない。</li>
+      <li>料金単価・時間帯ルールを自動補正する処理は追加しない。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Current State</h2>
+    <ul>
+      <li><code>TariffPlanPanel</code> は料金プラン一覧と追加/編集フォームを分離済み。</li>
+      <li><code>TariffPlan</code> には <code>periodRules</code> と <code>periodRuleSource</code> があり、既定/カスタムを判別できる。</li>
+      <li><code>StatusCards</code> には <code>TariffControlCard</code> があり、現在区分・単価・次の低単価・解決元・理由を表示している。</li>
+      <li><code>EnergyStatus</code> には <code>importW</code> / <code>exportW</code> / <code>targetChargeW</code> / <code>tariffControl</code> が含まれる。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Data/API Contracts</h2>
+    <p>新しいAPIは追加しない。</p>
+    <p>利用する既存データ:</p>
+    <ul>
+      <li><code>TariffPlan.periodRules</code></li>
+      <li><code>TariffPlan.periodRuleSource</code></li>
+      <li><code>EnergyStatus.importW</code></li>
+      <li><code>EnergyStatus.exportW</code></li>
+      <li><code>EnergyStatus.targetChargeW</code></li>
+      <li><code>EnergyStatus.tariffControl</code></li>
+    </ul>
+    <p>フロントエンド内の表示用ヘルパーだけ追加する。</p>
+  </section>
+
+  <section>
+    <h2>UI Changes</h2>
+    <h3>料金プラン一覧</h3>
+    <p><code>TariffPlanPanel</code> の一覧ドロワーに、選択中または一覧行ごとの料金時間帯を読める表示を追加する。</p>
+    <ul>
+      <li>一覧行の「時間帯」は、既定/カスタムと行数だけでなく、平日/休日の概要が分かる文字列にする。</li>
+      <li>一覧の下に「料金時間帯プレビュー」を追加し、現在時刻で有効な料金プランの時間帯を平日・休日/祝日で表示する。</li>
+      <li>明示的な時間帯ルールが空の既定ルール運用では、画面側で既存のデイ/ホーム/ナイト単価から既定時間帯を展開して表示する。</li>
+      <li>プレビューは read-only とし、編集は既存どおり「新規追加」「編集」ドロワーでのみ行う。</li>
+    </ul>
+    <h3>料金判定表示</h3>
+    <p><code>StatusCards</code> の <code>TariffControlCard</code> を強化する。</p>
+    <ul>
+      <li>現在の買電/売電と料金判定を組み合わせた「制御目安」を表示する。</li>
+      <li>売電中は余剰吸収のため充電優先。</li>
+      <li>買電中かつ高単価なら充電抑制、可能なら放電優先。</li>
+      <li>買電中かつ低単価なら不足分の充電候補。</li>
+      <li>中間単価なら現在ルールに従う。</li>
+      <li><code>tariff.reason</code> は引き続き表示し、解決元が料金時間帯マスタか既定ルールかを明示する。</li>
+      <li><code>tariffControl</code> が未取得の場合もカードは表示し、料金判定未取得として現在電力と理由を表示する。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Safety Boundaries</h2>
+    <ul>
+      <li>実機write条件、<code>ENABLE_REAL_CONTROL</code>、<code>SIMULATION_MODE</code>、最小送信間隔、ヒステリシスは変更しない。</li>
+      <li>DB migration は追加しない。</li>
+      <li>秘密情報、SN、token、password は表示・保存しない。</li>
+      <li>今回は表示強化だけで、制御出力は変えない。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Implementation Steps</h2>
+    <ol>
+      <li><code>TariffPlanPanel</code> に料金時間帯の read-only プレビューを追加する。</li>
+      <li><code>TariffPlanPanel</code> に時間帯ルール概要の表示ヘルパーを追加する。</li>
+      <li><code>periodRules</code> が空の場合も、既定ルールを read-only 表示用に展開する。</li>
+      <li>未来開始のプランではなく、現在時刻で有効な料金プランをプレビュー対象にする。</li>
+      <li><code>StatusCards</code> の <code>TariffControlCard</code> を <code>EnergyStatus</code> 全体を受け取る形に変更する。</li>
+      <li><code>importW</code> / <code>exportW</code> / <code>targetChargeW</code> / <code>tariffControl</code> から制御目安文言を作る。</li>
+      <li><code>tariffControl</code> 未取得時もカードを表示し、料金判定が未確定であることを明示する。</li>
+      <li>必要なCSSを <code>globals.css</code> に追加する。</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Review Points</h2>
+    <ul>
+      <li>一覧画面に編集用 input が混ざらないこと。</li>
+      <li>料金時間帯プレビューは read-only であること。</li>
+      <li>表示文言が制御実行済みと誤読されないこと。</li>
+      <li>実機制御ロジックに差分がないこと。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <ul>
+      <li><code>cd frontend &amp;&amp; rtk npm run build</code></li>
+      <li><code>rtk git diff --check</code></li>
+      <li>ブラウザで、料金プラン一覧に編集フォームが出ないこと、料金時間帯プレビューが平日・休日/祝日で表示されること、料金最適化制御カードに制御目安が表示されることを確認する。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Rollback / Operational Notes</h2>
+    <ul>
+      <li>表示のみの変更なので、問題があれば該当フロントエンド差分を戻せば制御動作は元に戻る。</li>
+      <li>料金判定の文言はあくまで目安であり、実際のwriteは既存の安全ゲートと制御ログで判断する。</li>
+    </ul>
+  </section>
+</body>
+</html>

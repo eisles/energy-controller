@@ -51,12 +51,37 @@ func (c *Client) Probe(ctx context.Context) (Status, error) {
 	return status, err
 }
 
+func (c *Client) ProbeRaw(ctx context.Context) (Status, []MQTTMessage, error) {
+	if missing := c.cfg.MissingReadCredentials(); len(missing) > 0 {
+		return Status{DeviceType: c.cfg.DeviceType, DeviceSN: c.cfg.DeviceSN}, nil, fmt.Errorf("EcoFlow private probe missing required env: %v", missing)
+	}
+	session, fromCache, err := c.cachedSession(ctx)
+	if err != nil {
+		return Status{}, nil, err
+	}
+	status, replies, err := c.probeRawWithSession(ctx, session)
+	if err != nil && fromCache && isSessionAuthError(err) {
+		c.invalidateSession()
+		session, _, sessionErr := c.cachedSession(ctx)
+		if sessionErr != nil {
+			return Status{}, nil, sessionErr
+		}
+		return c.probeRawWithSession(ctx, session)
+	}
+	return status, replies, err
+}
+
 func (c *Client) probeWithSession(ctx context.Context, session Session) (Status, error) {
+	status, _, err := c.probeRawWithSession(ctx, session)
+	return status, err
+}
+
+func (c *Client) probeRawWithSession(ctx context.Context, session Session) (Status, []MQTTMessage, error) {
 	transport := c.transport
 	if transport == nil {
 		paho, err := NewPahoTransport(session.MQTT)
 		if err != nil {
-			return Status{}, err
+			return Status{}, nil, err
 		}
 		transport = paho
 		defer transport.Disconnect()
@@ -64,7 +89,7 @@ func (c *Client) probeWithSession(ctx context.Context, session Session) (Status,
 	topics := BuildTopics(session.UserID, c.cfg.DeviceSN)
 	replies, err := transport.Request(ctx, topics.Get, BuildGetSnapshotPayload(NextSeq()), []string{topics.GetReply, topics.Data}, c.cfg.Timeout)
 	if err != nil {
-		return Status{}, err
+		return Status{}, replies, err
 	}
 	status := Status{DeviceType: c.cfg.DeviceType, DeviceSN: c.cfg.DeviceSN}
 	for _, reply := range replies {
@@ -75,7 +100,7 @@ func (c *Client) probeWithSession(ctx context.Context, session Session) (Status,
 		}
 		status.merge(part)
 	}
-	return status, nil
+	return status, replies, nil
 }
 
 func (c *Client) BuildDryRunACChargePower(watts int) (CommandPayload, error) {
