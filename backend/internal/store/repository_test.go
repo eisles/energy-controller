@@ -1479,6 +1479,13 @@ func TestTariffRepositoryEmptyPeriodRulesClearsCustomRules(t *testing.T) {
 	if ctx.Source != "default" || ctx.CurrentPeriod != "day" || !ctx.IsHighPrice {
 		t.Fatalf("context = %#v, want default high-price day period after clearing custom rules", ctx)
 	}
+	plans, err := repo.ListTariffPlans(context.Background())
+	if err != nil {
+		t.Fatalf("ListTariffPlans failed: %v", err)
+	}
+	if len(plans) == 0 || plans[0].PeriodRuleSource != "default" {
+		t.Fatalf("PeriodRuleSource = %#v, want default after clearing custom rules", plans)
+	}
 }
 
 func TestTariffRepositoryOmittedPeriodRulesPreservesCustomRules(t *testing.T) {
@@ -1523,6 +1530,13 @@ func TestTariffRepositoryOmittedPeriodRulesPreservesCustomRules(t *testing.T) {
 	}
 	if ctx.Source != "custom" || ctx.CurrentPeriod != "cheap" || !ctx.IsLowPrice {
 		t.Fatalf("context = %#v, want omitted period rules to preserve custom cheap rule", ctx)
+	}
+	plans, err := repo.ListTariffPlans(context.Background())
+	if err != nil {
+		t.Fatalf("ListTariffPlans failed: %v", err)
+	}
+	if len(plans) == 0 || plans[0].PeriodRuleSource != "custom" {
+		t.Fatalf("PeriodRuleSource = %#v, want custom when custom rules are preserved", plans)
 	}
 }
 

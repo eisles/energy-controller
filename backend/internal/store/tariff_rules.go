@@ -197,11 +197,12 @@ func scanTariffPeriodRules(rows *sql.Rows) ([]domain.TariffPeriodRule, error) {
 
 func (r *TariffRepository) attachEffectiveTariffRules(ctx context.Context, plans []domain.TariffPlan) error {
 	for i := range plans {
-		rules, _, err := r.effectiveTariffRulesForPlan(ctx, plans[i])
+		rules, source, err := r.effectiveTariffRulesForPlan(ctx, plans[i])
 		if err != nil {
 			return err
 		}
 		plans[i].PeriodRules = rules
+		plans[i].PeriodRuleSource = source
 	}
 	return nil
 }

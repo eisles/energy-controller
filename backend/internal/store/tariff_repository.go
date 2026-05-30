@@ -126,7 +126,15 @@ func (r *TariffRepository) UpsertTariffPlan(ctx context.Context, plan domain.Tar
 	if err := tx.Commit(); err != nil {
 		return domain.TariffPlan{}, err
 	}
-	return r.tariffPlanAt(ctx, plan.EffectiveFrom)
+	saved, err := r.tariffPlanAt(ctx, plan.EffectiveFrom)
+	if err != nil {
+		return domain.TariffPlan{}, err
+	}
+	plans := []domain.TariffPlan{saved}
+	if err := r.attachEffectiveTariffRules(ctx, plans); err != nil {
+		return domain.TariffPlan{}, err
+	}
+	return plans[0], nil
 }
 
 func (r *TariffRepository) DeleteTariffPlan(ctx context.Context, id int64) error {

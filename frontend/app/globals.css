@@ -808,6 +808,51 @@ input {
   gap: 8px;
 }
 
+.tariff-period-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0 12px;
+}
+
+.tariff-period-group {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.tariff-period-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.tariff-period-group-header h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.tariff-period-table-wrap .ui-table {
+  min-width: 760px;
+}
+
+.tariff-period-input {
+  min-width: 120px;
+}
+
+.tariff-time-input {
+  min-width: 88px;
+}
+
+.tariff-rate-input,
+.tariff-priority-input {
+  min-width: 96px;
+}
+
 .tariff-plan-row-actions {
   display: flex;
   flex-wrap: nowrap;

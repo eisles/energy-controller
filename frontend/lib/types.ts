@@ -638,6 +638,7 @@ export type TariffPlan = {
   createdAt?: string;
   updatedAt?: string;
   periodRules?: TariffPeriodRule[];
+  periodRuleSource?: "default" | "custom";
 };
 
 export type TariffPeriodRule = {

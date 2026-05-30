@@ -594,18 +594,19 @@ type TariffControlContext struct {
 }
 
 type TariffPlan struct {
-	ID            int64              `json:"id"`
-	PlanName      string             `json:"planName"`
-	DayRateYen    float64            `json:"dayRateYen"`
-	HomeRateYen   float64            `json:"homeRateYen"`
-	NightRateYen  float64            `json:"nightRateYen"`
-	ExportRateYen float64            `json:"exportRateYen"`
-	Timezone      string             `json:"timezone"`
-	EffectiveFrom time.Time          `json:"effectiveFrom"`
-	EffectiveTo   *time.Time         `json:"effectiveTo,omitempty"`
-	CreatedAt     time.Time          `json:"createdAt"`
-	UpdatedAt     time.Time          `json:"updatedAt"`
-	PeriodRules   []TariffPeriodRule `json:"periodRules,omitempty"`
+	ID               int64              `json:"id"`
+	PlanName         string             `json:"planName"`
+	DayRateYen       float64            `json:"dayRateYen"`
+	HomeRateYen      float64            `json:"homeRateYen"`
+	NightRateYen     float64            `json:"nightRateYen"`
+	ExportRateYen    float64            `json:"exportRateYen"`
+	Timezone         string             `json:"timezone"`
+	EffectiveFrom    time.Time          `json:"effectiveFrom"`
+	EffectiveTo      *time.Time         `json:"effectiveTo,omitempty"`
+	CreatedAt        time.Time          `json:"createdAt"`
+	UpdatedAt        time.Time          `json:"updatedAt"`
+	PeriodRules      []TariffPeriodRule `json:"periodRules,omitempty"`
+	PeriodRuleSource string             `json:"periodRuleSource,omitempty"`
 }
 
 type TariffPeriodSummary struct {
