@@ -83,6 +83,25 @@ func TestPostTariffPlanHandlerSavesPlan(t *testing.T) {
 	if store.saved.EffectiveFrom.Format(time.RFC3339) != "2026-06-01T00:00:00+09:00" {
 		t.Fatalf("effectiveFrom = %s", store.saved.EffectiveFrom.Format(time.RFC3339))
 	}
+	if store.saved.PeriodRules != nil {
+		t.Fatalf("PeriodRules = %#v, want nil when omitted so existing rules are preserved", store.saved.PeriodRules)
+	}
+}
+
+func TestPostTariffPlanHandlerAllowsExplicitEmptyPeriodRules(t *testing.T) {
+	store := &stubTariffPlanStore{}
+	body := []byte(`{"planName":"next","dayRateYen":35,"homeRateYen":27,"nightRateYen":17,"exportRateYen":7,"timezone":"Asia/Tokyo","effectiveFrom":"2026-06-01T00:00:00+09:00","periodRules":[]}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/tariff-plans", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	postTariffPlanHandler(store, slog.Default())(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if store.saved.PeriodRules == nil || len(store.saved.PeriodRules) != 0 {
+		t.Fatalf("PeriodRules = %#v, want explicit empty slice for clearing custom rules", store.saved.PeriodRules)
+	}
 }
 
 func TestPostTariffPlanHandlerAllowsBaselinePlan(t *testing.T) {

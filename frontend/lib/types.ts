@@ -18,6 +18,7 @@ export type EnergyStatus = {
   nightChargePlan?: NightChargePlan | null;
   delta3AuxPlan?: Delta3AuxPlan | null;
   pro3AcOutputEvent?: Pro3ACOutputEvent | null;
+  tariffControl?: TariffControlContext | null;
   targetChargeW: number;
   state: string;
   mode: string;
@@ -120,6 +121,9 @@ export type SurplusPlan = {
   wouldWrite: boolean;
   actionSummary: string;
   reason: string;
+  tariffPeriod?: string;
+  tariffRateYen?: number;
+  tariffControlReason?: string;
 };
 
 export type Delta3AuxPlan = {
@@ -294,6 +298,9 @@ export type NightChargePlan = {
   wouldWrite: boolean;
   actionSummary: string;
   reason: string;
+  tariffPeriod?: string;
+  tariffRateYen?: number;
+  tariffControlReason?: string;
   targetForecast?: WeatherForecast | null;
   devicePlans?: NightChargeDevicePlan[];
 };
@@ -630,4 +637,33 @@ export type TariffPlan = {
   effectiveTo?: string;
   createdAt?: string;
   updatedAt?: string;
+  periodRules?: TariffPeriodRule[];
+};
+
+export type TariffPeriodRule = {
+  id?: number;
+  tariffPlanId?: number;
+  dayType: "weekday" | "holiday";
+  period: string;
+  startMinute: number;
+  endMinute: number;
+  rateYen: number;
+  priority: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type TariffControlContext = {
+  planName: string;
+  timezone: string;
+  dayType: string;
+  currentPeriod: string;
+  currentRateYen: number;
+  lowestRateYen: number;
+  highestRateYen: number;
+  isLowPrice: boolean;
+  isHighPrice: boolean;
+  nextLowPriceAt?: string | null;
+  source: string;
+  reason: string;
 };

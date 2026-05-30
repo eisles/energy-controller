@@ -210,6 +210,21 @@ func migrate(db *sql.DB) error {
 			updated_at TEXT NOT NULL,
 			UNIQUE(effective_from)
 		)`,
+		`CREATE TABLE IF NOT EXISTS tariff_period_rules (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			tariff_plan_id INTEGER NOT NULL,
+			day_type TEXT NOT NULL,
+			period TEXT NOT NULL,
+			start_minute INTEGER NOT NULL,
+			end_minute INTEGER NOT NULL,
+			rate_yen REAL NOT NULL,
+			priority INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(tariff_plan_id) REFERENCES tariff_plans(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_tariff_period_rules_plan_day_priority
+			ON tariff_period_rules(tariff_plan_id, day_type, priority DESC, start_minute ASC)`,
 		`CREATE TABLE IF NOT EXISTS current_status (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			grid_w INTEGER NOT NULL DEFAULT 0,
@@ -225,6 +240,7 @@ func migrate(db *sql.DB) error {
 			last_decision_reason TEXT NOT NULL,
 			last_error TEXT,
 			ecoflow_diagnostics_json TEXT,
+			tariff_control_json TEXT,
 			updated_at TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS delta3_aux_control_command_logs (
@@ -402,6 +418,7 @@ func migrate(db *sql.DB) error {
 		"night_charge_plan_json",
 		"delta3_aux_plan_json",
 		"pro3_ac_output_event_json",
+		"tariff_control_json",
 	} {
 		if err := addKnownColumnIfMissing(db, "current_status", column); err != nil {
 			return err
@@ -525,6 +542,7 @@ var knownMigrationColumns = map[string]map[string]string{
 		"night_charge_plan_json":    "TEXT",
 		"delta3_aux_plan_json":      "TEXT",
 		"pro3_ac_output_event_json": "TEXT",
+		"tariff_control_json":       "TEXT",
 	},
 	"tariff_plans": {
 		"export_rate_yen": "REAL NOT NULL DEFAULT 7.0",

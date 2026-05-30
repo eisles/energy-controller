@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/eisles/energy-controller/backend/internal/domain"
@@ -46,7 +48,14 @@ func (r *TariffRepository) ListTariffPlans(ctx context.Context) ([]domain.Tariff
 		return nil, err
 	}
 	defer rows.Close()
-	return scanTariffPlans(rows)
+	plans, err := scanTariffPlans(rows)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.attachEffectiveTariffRules(ctx, plans); err != nil {
+		return nil, err
+	}
+	return plans, nil
 }
 
 func (r *TariffRepository) UpsertTariffPlan(ctx context.Context, plan domain.TariffPlan) (domain.TariffPlan, error) {
@@ -105,6 +114,15 @@ func (r *TariffRepository) UpsertTariffPlan(ctx context.Context, plan domain.Tar
 	if err != nil {
 		return domain.TariffPlan{}, err
 	}
+	var savedID int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM tariff_plans WHERE effective_from = ?`, effectiveFrom).Scan(&savedID); err != nil {
+		return domain.TariffPlan{}, err
+	}
+	if plan.PeriodRules != nil {
+		if err := saveTariffPeriodRules(ctx, tx, savedID, plan.PeriodRules, now); err != nil {
+			return domain.TariffPlan{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.TariffPlan{}, err
 	}
@@ -157,6 +175,14 @@ func (r *TariffRepository) EnergyCostSummary(ctx context.Context, from *time.Tim
 	if err != nil {
 		return domain.TariffSummary{}, err
 	}
+	rulesByPlanID := make(map[int64][]domain.TariffPeriodRule, len(plans))
+	for _, plan := range plans {
+		rules, _, err := r.effectiveTariffRulesForPlan(ctx, plan)
+		if err != nil {
+			return domain.TariffSummary{}, err
+		}
+		rulesByPlanID[plan.ID] = rules
+	}
 	rows, err := r.queryEnergyMeterDeltas(ctx, from, to)
 	if err != nil {
 		return domain.TariffSummary{}, err
@@ -192,9 +218,15 @@ func (r *TariffRepository) EnergyCostSummary(ctx context.Context, from *time.Tim
 		if err != nil {
 			return domain.TariffSummary{}, err
 		}
-		period := tariffPeriod(parsedMeasuredAt.In(location))
-		rate := tariffRate(*plan, period)
-		key := plan.EffectiveFrom.Format(time.RFC3339Nano) + ":" + period
+		rules := rulesByPlanID[plan.ID]
+		rule := resolveTariffRule(rules, parsedMeasuredAt.In(location))
+		period := rule.Period
+		rate := rule.RateYen
+		if period == "" {
+			period = tariffPeriod(parsedMeasuredAt.In(location))
+			rate = tariffRate(*plan, period)
+		}
+		key := fmt.Sprintf("%s:%s:%.6f", plan.EffectiveFrom.Format(time.RFC3339Nano), period, rate)
 		periodSummary := periods[key]
 		if periodSummary == nil {
 			periodSummary = &domain.TariffPeriodSummary{
@@ -221,21 +253,20 @@ func (r *TariffRepository) EnergyCostSummary(ctx context.Context, from *time.Tim
 	if err := rows.Err(); err != nil {
 		return domain.TariffSummary{}, err
 	}
-	for _, plan := range plans {
-		for _, periodName := range []string{"day", "home", "night"} {
-			key := plan.EffectiveFrom.Format(time.RFC3339Nano) + ":" + periodName
-			period, ok := periods[key]
-			if !ok {
-				continue
-			}
-			period.ImportKWh = round4(period.ImportKWh)
-			period.ExportKWh = round4(period.ExportKWh)
-			period.ImportCostYen = round2(period.ImportKWh * period.RateYen)
-			period.ExportIncomeYen = round2(period.ExportIncomeYen)
-			summary.TotalImportCostYen += period.ImportCostYen
-			summary.TotalExportIncomeYen += period.ExportIncomeYen
-			summary.Periods = append(summary.Periods, *period)
-		}
+	keys := make([]string, 0, len(periods))
+	for key := range periods {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		period := periods[key]
+		period.ImportKWh = round4(period.ImportKWh)
+		period.ExportKWh = round4(period.ExportKWh)
+		period.ImportCostYen = round2(period.ImportKWh * period.RateYen)
+		period.ExportIncomeYen = round2(period.ExportIncomeYen)
+		summary.TotalImportCostYen += period.ImportCostYen
+		summary.TotalExportIncomeYen += period.ExportIncomeYen
+		summary.Periods = append(summary.Periods, *period)
 	}
 	summary.TotalImportKWh = round4(summary.TotalImportKWh)
 	summary.TotalExportKWh = round4(summary.TotalExportKWh)

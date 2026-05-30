@@ -33,53 +33,57 @@ type ControlDecision struct {
 }
 
 type Status struct {
-	GridW                            int                `json:"gridW"`
-	ImportW                          int                `json:"importW"`
-	ExportW                          int                `json:"exportW"`
-	BatterySoc                       int                `json:"batterySoc"`
-	BatteryInputW                    int                `json:"batteryInputW"`
-	BatteryOutputW                   int                `json:"batteryOutputW"`
-	ACChargeLimitW                   int                `json:"acChargeLimitW"`
-	BackupReserveSoc                 *int               `json:"backupReserveSoc,omitempty"`
-	EnergyBackupEnabled              *bool              `json:"energyBackupEnabled,omitempty"`
-	TOUModeEnabled                   *bool              `json:"touModeEnabled,omitempty"`
-	SelfPoweredEnabled               *bool              `json:"selfPoweredEnabled,omitempty"`
-	ScheduledEnabled                 *bool              `json:"scheduledEnabled,omitempty"`
-	IntelligentEnabled               *bool              `json:"intelligentEnabled,omitempty"`
-	BatteryFullEnergyWh              *int               `json:"batteryFullEnergyWh,omitempty"`
-	EcoFlowDiagnostics               map[string]any     `json:"ecoflowDiagnostics,omitempty"`
-	SurplusPlan                      *SurplusPlan       `json:"surplusPlan,omitempty"`
-	NightChargePlan                  *NightChargePlan   `json:"nightChargePlan,omitempty"`
-	Delta3AuxPlan                    *Delta3AuxPlan     `json:"delta3AuxPlan,omitempty"`
-	Pro3ACOutputEvent                *Pro3ACOutputEvent `json:"pro3AcOutputEvent,omitempty"`
-	TargetChargeW                    int                `json:"targetChargeW"`
-	State                            string             `json:"state"`
-	Mode                             string             `json:"mode"`
-	RealControlTrialUntil            *time.Time         `json:"realControlTrialUntil,omitempty"`
-	RealControlTrialActive           bool               `json:"realControlTrialActive"`
-	RealControlTrialRemainingSeconds int64              `json:"realControlTrialRemainingSeconds"`
-	LastDecisionReason               string             `json:"lastDecisionReason"`
-	LastError                        *string            `json:"lastError"`
-	UpdatedAt                        time.Time          `json:"updatedAt"`
+	GridW                            int                   `json:"gridW"`
+	ImportW                          int                   `json:"importW"`
+	ExportW                          int                   `json:"exportW"`
+	BatterySoc                       int                   `json:"batterySoc"`
+	BatteryInputW                    int                   `json:"batteryInputW"`
+	BatteryOutputW                   int                   `json:"batteryOutputW"`
+	ACChargeLimitW                   int                   `json:"acChargeLimitW"`
+	BackupReserveSoc                 *int                  `json:"backupReserveSoc,omitempty"`
+	EnergyBackupEnabled              *bool                 `json:"energyBackupEnabled,omitempty"`
+	TOUModeEnabled                   *bool                 `json:"touModeEnabled,omitempty"`
+	SelfPoweredEnabled               *bool                 `json:"selfPoweredEnabled,omitempty"`
+	ScheduledEnabled                 *bool                 `json:"scheduledEnabled,omitempty"`
+	IntelligentEnabled               *bool                 `json:"intelligentEnabled,omitempty"`
+	BatteryFullEnergyWh              *int                  `json:"batteryFullEnergyWh,omitempty"`
+	EcoFlowDiagnostics               map[string]any        `json:"ecoflowDiagnostics,omitempty"`
+	SurplusPlan                      *SurplusPlan          `json:"surplusPlan,omitempty"`
+	NightChargePlan                  *NightChargePlan      `json:"nightChargePlan,omitempty"`
+	Delta3AuxPlan                    *Delta3AuxPlan        `json:"delta3AuxPlan,omitempty"`
+	Pro3ACOutputEvent                *Pro3ACOutputEvent    `json:"pro3AcOutputEvent,omitempty"`
+	TariffControl                    *TariffControlContext `json:"tariffControl,omitempty"`
+	TargetChargeW                    int                   `json:"targetChargeW"`
+	State                            string                `json:"state"`
+	Mode                             string                `json:"mode"`
+	RealControlTrialUntil            *time.Time            `json:"realControlTrialUntil,omitempty"`
+	RealControlTrialActive           bool                  `json:"realControlTrialActive"`
+	RealControlTrialRemainingSeconds int64                 `json:"realControlTrialRemainingSeconds"`
+	LastDecisionReason               string                `json:"lastDecisionReason"`
+	LastError                        *string               `json:"lastError"`
+	UpdatedAt                        time.Time             `json:"updatedAt"`
 }
 
 type SurplusPlan struct {
-	Mode                        string `json:"mode"`
-	StrategyState               string `json:"strategyState"`
-	NetBatteryW                 int    `json:"netBatteryW"`
-	RequiredStartExportW        int    `json:"requiredStartExportW"`
-	AvailableStartMarginW       int    `json:"availableStartMarginW"`
-	RecommendedACChargeLimitW   int    `json:"recommendedAcChargeLimitW"`
-	RecommendedBackupReserveSoc *int   `json:"recommendedBackupReserveSoc,omitempty"`
-	ShouldRaiseBackupReserve    bool   `json:"shouldRaiseBackupReserve"`
-	ShouldLowerBackupReserve    bool   `json:"shouldLowerBackupReserve"`
-	ShouldAlignBackupReserve    bool   `json:"shouldAlignBackupReserve"`
-	ShouldAdjustACChargeLimit   bool   `json:"shouldAdjustAcChargeLimit"`
-	ShouldDisableEnergyModes    bool   `json:"shouldDisableEnergyModes"`
-	ShouldEnableTOUMode         bool   `json:"shouldEnableTouMode"`
-	WouldWrite                  bool   `json:"wouldWrite"`
-	ActionSummary               string `json:"actionSummary"`
-	Reason                      string `json:"reason"`
+	Mode                        string  `json:"mode"`
+	StrategyState               string  `json:"strategyState"`
+	NetBatteryW                 int     `json:"netBatteryW"`
+	RequiredStartExportW        int     `json:"requiredStartExportW"`
+	AvailableStartMarginW       int     `json:"availableStartMarginW"`
+	RecommendedACChargeLimitW   int     `json:"recommendedAcChargeLimitW"`
+	RecommendedBackupReserveSoc *int    `json:"recommendedBackupReserveSoc,omitempty"`
+	ShouldRaiseBackupReserve    bool    `json:"shouldRaiseBackupReserve"`
+	ShouldLowerBackupReserve    bool    `json:"shouldLowerBackupReserve"`
+	ShouldAlignBackupReserve    bool    `json:"shouldAlignBackupReserve"`
+	ShouldAdjustACChargeLimit   bool    `json:"shouldAdjustAcChargeLimit"`
+	ShouldDisableEnergyModes    bool    `json:"shouldDisableEnergyModes"`
+	ShouldEnableTOUMode         bool    `json:"shouldEnableTouMode"`
+	WouldWrite                  bool    `json:"wouldWrite"`
+	ActionSummary               string  `json:"actionSummary"`
+	Reason                      string  `json:"reason"`
+	TariffPeriod                string  `json:"tariffPeriod,omitempty"`
+	TariffRateYen               float64 `json:"tariffRateYen,omitempty"`
+	TariffControlReason         string  `json:"tariffControlReason,omitempty"`
 }
 
 type Delta3AuxPlan struct {
@@ -288,6 +292,9 @@ type NightChargePlan struct {
 	WouldWrite                       bool                              `json:"wouldWrite"`
 	ActionSummary                    string                            `json:"actionSummary"`
 	Reason                           string                            `json:"reason"`
+	TariffPeriod                     string                            `json:"tariffPeriod,omitempty"`
+	TariffRateYen                    float64                           `json:"tariffRateYen,omitempty"`
+	TariffControlReason              string                            `json:"tariffControlReason,omitempty"`
 	TargetForecast                   *WeatherForecast                  `json:"targetForecast,omitempty"`
 	DevicePlans                      []NightChargeDevicePlan           `json:"devicePlans,omitempty"`
 }
@@ -558,18 +565,47 @@ type TariffSettings struct {
 	UpdatedAt     time.Time  `json:"updatedAt"`
 }
 
+type TariffPeriodRule struct {
+	ID           int64     `json:"id,omitempty"`
+	TariffPlanID int64     `json:"tariffPlanId,omitempty"`
+	DayType      string    `json:"dayType"`
+	Period       string    `json:"period"`
+	StartMinute  int       `json:"startMinute"`
+	EndMinute    int       `json:"endMinute"`
+	RateYen      float64   `json:"rateYen"`
+	Priority     int       `json:"priority"`
+	CreatedAt    time.Time `json:"createdAt,omitempty"`
+	UpdatedAt    time.Time `json:"updatedAt,omitempty"`
+}
+
+type TariffControlContext struct {
+	PlanName       string     `json:"planName"`
+	Timezone       string     `json:"timezone"`
+	DayType        string     `json:"dayType"`
+	CurrentPeriod  string     `json:"currentPeriod"`
+	CurrentRateYen float64    `json:"currentRateYen"`
+	LowestRateYen  float64    `json:"lowestRateYen"`
+	HighestRateYen float64    `json:"highestRateYen"`
+	IsLowPrice     bool       `json:"isLowPrice"`
+	IsHighPrice    bool       `json:"isHighPrice"`
+	NextLowPriceAt *time.Time `json:"nextLowPriceAt,omitempty"`
+	Source         string     `json:"source"`
+	Reason         string     `json:"reason"`
+}
+
 type TariffPlan struct {
-	ID            int64      `json:"id"`
-	PlanName      string     `json:"planName"`
-	DayRateYen    float64    `json:"dayRateYen"`
-	HomeRateYen   float64    `json:"homeRateYen"`
-	NightRateYen  float64    `json:"nightRateYen"`
-	ExportRateYen float64    `json:"exportRateYen"`
-	Timezone      string     `json:"timezone"`
-	EffectiveFrom time.Time  `json:"effectiveFrom"`
-	EffectiveTo   *time.Time `json:"effectiveTo,omitempty"`
-	CreatedAt     time.Time  `json:"createdAt"`
-	UpdatedAt     time.Time  `json:"updatedAt"`
+	ID            int64              `json:"id"`
+	PlanName      string             `json:"planName"`
+	DayRateYen    float64            `json:"dayRateYen"`
+	HomeRateYen   float64            `json:"homeRateYen"`
+	NightRateYen  float64            `json:"nightRateYen"`
+	ExportRateYen float64            `json:"exportRateYen"`
+	Timezone      string             `json:"timezone"`
+	EffectiveFrom time.Time          `json:"effectiveFrom"`
+	EffectiveTo   *time.Time         `json:"effectiveTo,omitempty"`
+	CreatedAt     time.Time          `json:"createdAt"`
+	UpdatedAt     time.Time          `json:"updatedAt"`
+	PeriodRules   []TariffPeriodRule `json:"periodRules,omitempty"`
 }
 
 type TariffPeriodSummary struct {

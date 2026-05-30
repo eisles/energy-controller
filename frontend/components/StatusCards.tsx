@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CollapsibleSection } from "@/components/CollapsibleSection";
 import { decisionReasonLabel, decisionSummaryLabel, guardReasonLabel, strategyStateLabel, writeCandidateLabel } from "@/lib/display-labels";
-import type { Delta3Status, DeviceStatus, EnergyStatus, NightChargeDevicePlan, NightChargePlan, SurplusPlan } from "@/lib/types";
+import type { Delta3Status, DeviceStatus, EnergyStatus, NightChargeDevicePlan, NightChargePlan, SurplusPlan, TariffControlContext } from "@/lib/types";
 import type { ReactNode } from "react";
 
 type Metric = {
@@ -93,7 +93,42 @@ export function StatusCards({ status, fetchError }: StatusCardsProps) {
       ) : null}
 
       <Pro3ACOutputMonitor status={status} />
+      <TariffControlCard tariff={status.tariffControl} />
     </>
+  );
+}
+
+function TariffControlCard({ tariff }: { tariff?: TariffControlContext | null }) {
+  if (!tariff) {
+    return null;
+  }
+  const priceState = tariff.isLowPrice ? "低単価" : tariff.isHighPrice ? "高単価" : "中間単価";
+  const priceVariant: BadgeVariant = tariff.isLowPrice ? "success" : tariff.isHighPrice ? "warning" : "secondary";
+  return (
+    <Card className="section">
+      <CardHeader>
+        <div className="panel-title-row">
+          <div>
+            <CardDescription>Tariff optimized control</CardDescription>
+            <CardTitle>料金最適化制御</CardTitle>
+          </div>
+          <Badge variant={priceVariant}>{priceState}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="detail-strip planner-secondary" aria-label="tariff optimized control">
+          <Detail label="料金プラン" value={tariff.planName || "-"} />
+          <Detail label="日種別" value={tariff.dayType === "holiday" ? "休日/祝日" : "平日"} />
+          <Detail label="現在区分" value={tariff.currentPeriod || "-"} />
+          <Detail label="現在単価" value={formatYenRate(tariff.currentRateYen)} />
+          <Detail label="最低単価" value={formatYenRate(tariff.lowestRateYen)} />
+          <Detail label="最高単価" value={formatYenRate(tariff.highestRateYen)} />
+          <Detail label="次の低単価" value={formatDateTime(tariff.nextLowPriceAt || "")} />
+          <Detail label="解決元" value={tariff.source === "custom" ? "料金時間帯マスタ" : "既定ルール"} />
+        </div>
+        {tariff.reason ? <p className="planner-reason">{tariff.reason}</p> : null}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1089,4 +1124,11 @@ function formatDateTime(value: string) {
     return "-";
   }
   return new Date(value).toLocaleString("ja-JP");
+}
+
+function formatYenRate(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "-";
+  }
+  return `${value.toFixed(2)} 円/kWh`;
 }

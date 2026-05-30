@@ -26,6 +26,7 @@ type SurplusPlanInput struct {
 	SimulationMode         bool
 	EnableRealControl      bool
 	AutoControl            bool
+	TariffControl          *domain.TariffControlContext
 }
 
 func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.SurplusPlan {
@@ -40,6 +41,7 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		AvailableStartMarginW: gridPower.ExportW - conservativeStartExportW(input.BatteryOutputW, settings),
 		WouldWrite:            false,
 	}
+	applyTariffContextToSurplusPlan(&plan, input.TariffControl)
 
 	defaultReserveSoc := defaultReserveSoc(input, settings)
 	switch {
@@ -56,6 +58,10 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		}
 		plan.ActionSummary = surplusActionSummary(plan)
 		plan.Reason = "importing from grid; recover by stopping surplus charge and allowing discharge to reserve floor"
+		if input.TariffControl != nil && input.TariffControl.IsHighPrice {
+			plan.TariffControlReason = "high-price period; prioritize battery discharge and suppress grid charging"
+			plan.Reason += "; high-price period prioritizes battery discharge"
+		}
 		plan.WouldWrite = writeAllowed(input) && (plan.ShouldAdjustACChargeLimit || plan.ShouldLowerBackupReserve || plan.ShouldDisableEnergyModes || plan.ShouldEnableTOUMode)
 		return plan
 	case input.BatterySoc >= settings.TargetSoc:
@@ -130,6 +136,14 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		plan.Reason += "; EcoFlow energy strategy mode blocks surplus charging until disabled"
 	}
 	return plan
+}
+
+func applyTariffContextToSurplusPlan(plan *domain.SurplusPlan, tariff *domain.TariffControlContext) {
+	if plan == nil || tariff == nil {
+		return
+	}
+	plan.TariffPeriod = tariff.CurrentPeriod
+	plan.TariffRateYen = tariff.CurrentRateYen
 }
 
 func surplusPlanReason(strategyState string, suffix string) string {

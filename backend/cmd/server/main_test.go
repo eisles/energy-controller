@@ -792,6 +792,20 @@ func TestRealControlTrialActiveRequiresFutureDeadline(t *testing.T) {
 	}
 }
 
+func TestTariffLowPriceWindowActive(t *testing.T) {
+	if tariffLowPriceWindowActive(nil) {
+		t.Fatal("nil status should not activate tariff window")
+	}
+	status := &domain.Status{TariffControl: &domain.TariffControlContext{IsLowPrice: true}}
+	if !tariffLowPriceWindowActive(status) {
+		t.Fatal("low-price tariff context should activate tariff window")
+	}
+	status.TariffControl.IsLowPrice = false
+	if tariffLowPriceWindowActive(status) {
+		t.Fatal("non-low-price tariff context should not activate tariff window")
+	}
+}
+
 func TestRealControlTrialActiveUsesCurrentClockNotMeasuredAt(t *testing.T) {
 	deadline := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
 	cfg := config.Config{

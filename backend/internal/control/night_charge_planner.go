@@ -28,6 +28,7 @@ type NightChargePlanInput struct {
 	SimulationMode      bool
 	EnableRealControl   bool
 	AutoControl         bool
+	TariffControl       *domain.TariffControlContext
 }
 
 func PlanNightCharging(input NightChargePlanInput, settings Settings) domain.NightChargePlan {
@@ -44,6 +45,7 @@ func PlanNightCharging(input NightChargePlanInput, settings Settings) domain.Nig
 		WouldWrite:        false,
 		TargetForecast:    input.Forecast,
 	}
+	applyTariffContextToNightPlan(&plan, input.TariffControl)
 	if input.Forecast == nil {
 		plan.RecommendedNightTargetSoc = fallbackNightTargetSoc(input, plan, settings)
 		plan.ShouldChargeTonight = input.BatterySoc < plan.RecommendedNightTargetSoc
@@ -56,6 +58,9 @@ func PlanNightCharging(input NightChargePlanInput, settings Settings) domain.Nig
 		plan.CommandFingerprint = NightChargeCommandFingerprint(plan)
 		plan.ActionSummary = nightChargeActionSummary(plan)
 		plan.Reason = "weather forecast is not configured; keep a conservative night charge target"
+		if plan.TariffControlReason != "" {
+			plan.Reason += "; " + plan.TariffControlReason
+		}
 		applyNightChargeWriteGuard(&plan, input, settings)
 		return plan
 	}
@@ -88,6 +93,9 @@ func PlanNightCharging(input NightChargePlanInput, settings Settings) domain.Nig
 	if !plan.ShouldChargeTonight {
 		plan.Reason += "; current SOC is already above the recommended night target"
 	}
+	if plan.TariffControlReason != "" {
+		plan.Reason += "; " + plan.TariffControlReason
+	}
 
 	applyNightChargeWriteGuard(&plan, input, settings)
 	return plan
@@ -95,11 +103,46 @@ func PlanNightCharging(input NightChargePlanInput, settings Settings) domain.Nig
 
 func recalculateNightChargeState(plan *domain.NightChargePlan, input NightChargePlanInput) {
 	plan.ShouldChargeTonight = input.BatterySoc < plan.RecommendedNightTargetSoc
-	plan.StrategyState = nightChargeStrategyState(input.Now, plan.ShouldChargeTonight, input.BatterySoc, plan.RecommendedNightTargetSoc)
+	plan.StrategyState = nightChargeStrategyState(input.Now, plan.ShouldChargeTonight, input.BatterySoc, plan.RecommendedNightTargetSoc, input.TariffControl)
 }
 
-func nightChargeStrategyState(now time.Time, shouldChargeTonight bool, batterySoc int, targetSoc int) string {
+func applyTariffContextToNightPlan(plan *domain.NightChargePlan, tariff *domain.TariffControlContext) {
+	if plan == nil || tariff == nil {
+		return
+	}
+	plan.TariffPeriod = tariff.CurrentPeriod
+	plan.TariffRateYen = tariff.CurrentRateYen
+	if tariff.IsLowPrice {
+		plan.TariffControlReason = "low-price period; night charge commands may run if forecast target requires energy"
+		return
+	}
+	if tariff.IsHighPrice {
+		plan.TariffControlReason = "high-price period; suppress night charge and prefer battery discharge"
+		return
+	}
+	plan.TariffControlReason = "mid-price period; observe unless surplus or forecast target requires action"
+}
+
+func nightChargeStrategyState(now time.Time, shouldChargeTonight bool, batterySoc int, targetSoc int, tariff *domain.TariffControlContext) string {
 	if now.IsZero() {
+		return "DAYTIME_OBSERVE"
+	}
+	if tariff != nil {
+		if batterySoc >= targetSoc {
+			return "NIGHT_RECOVER"
+		}
+		if tariff.IsLowPrice {
+			if shouldChargeTonight {
+				return "NIGHT_CHARGE_WINDOW"
+			}
+			return "NIGHT_RECOVER"
+		}
+		if tariff.NextLowPriceAt != nil {
+			untilLowPrice := tariff.NextLowPriceAt.Sub(now)
+			if untilLowPrice > 0 && untilLowPrice <= 2*time.Hour {
+				return "NIGHT_PLAN_READY"
+			}
+		}
 		return "DAYTIME_OBSERVE"
 	}
 	hour := now.Hour()
@@ -335,7 +378,7 @@ func nightChargeActionSummary(plan domain.NightChargePlan) string {
 }
 
 func applyNightModeRecommendation(plan *domain.NightChargePlan, input NightChargePlanInput, settings Settings) {
-	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" && !(plan.StrategyState == "NIGHT_RECOVER" && isNightChargeTime(input.Now)) {
+	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" && !(plan.StrategyState == "NIGHT_RECOVER" && isNightChargeControlTime(input)) {
 		plan.RecommendedMode = "observe"
 		return
 	}
@@ -363,7 +406,7 @@ func touChargeIneffective(input NightChargePlanInput, settings Settings) bool {
 }
 
 func applyNightChargeCommandPlan(plan *domain.NightChargePlan, input NightChargePlanInput, settings Settings) {
-	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" && !(plan.StrategyState == "NIGHT_RECOVER" && isNightChargeTime(input.Now)) {
+	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" && !(plan.StrategyState == "NIGHT_RECOVER" && isNightChargeControlTime(input)) {
 		return
 	}
 	if plan.RecommendedMode == "self-powered" {
@@ -396,12 +439,19 @@ func isNightChargeTime(now time.Time) bool {
 	return hour >= 23 || hour < 7
 }
 
+func isNightChargeControlTime(input NightChargePlanInput) bool {
+	if input.TariffControl != nil {
+		return input.TariffControl.IsLowPrice
+	}
+	return isNightChargeTime(input.Now)
+}
+
 func applyNightChargeWriteGuard(plan *domain.NightChargePlan, input NightChargePlanInput, settings Settings) {
 	if !plan.ShouldChargeTonight && !nightChargeHasCandidateChange(*plan) {
 		plan.CommandBlockReason = "current SOC is already above the recommended night target"
 		return
 	}
-	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" && !(plan.StrategyState == "NIGHT_RECOVER" && isNightChargeTime(input.Now)) {
+	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" && !(plan.StrategyState == "NIGHT_RECOVER" && isNightChargeControlTime(input)) {
 		plan.CommandBlockReason = "outside night charge window"
 		return
 	}

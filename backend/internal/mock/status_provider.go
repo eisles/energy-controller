@@ -25,6 +25,7 @@ type StatusProvider struct {
 	batteryReader  BatteryReader
 	weatherReader  WeatherReader
 	loadEstimator  EcoFlowLoadEstimator
+	tariffProvider TariffControlProvider
 	writeClient    ecoflow.WriteClient
 	staleAfter     time.Duration
 	mu             sync.Mutex
@@ -48,6 +49,10 @@ type WeatherReader interface {
 
 type EcoFlowLoadEstimator interface {
 	EstimateEcoFlowLoad(ctx context.Context, now time.Time, days int) (domain.EcoFlowLoadEstimate, error)
+}
+
+type TariffControlProvider interface {
+	CurrentTariffControlContext(ctx context.Context, at time.Time) (domain.TariffControlContext, error)
 }
 
 func NewStatusProvider(clock config.Clock, settings control.Settings, mockMode bool, simulationMode bool, realControl bool, autoControl bool) *StatusProvider {
@@ -77,6 +82,10 @@ func NewStatusProviderWithReaders(clock config.Clock, settings control.Settings,
 
 func (p *StatusProvider) SetEcoFlowLoadEstimator(estimator EcoFlowLoadEstimator) {
 	p.loadEstimator = estimator
+}
+
+func (p *StatusProvider) SetTariffControlProvider(provider TariffControlProvider) {
+	p.tariffProvider = provider
 }
 
 func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, error) {
@@ -112,6 +121,8 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 	lastError = combineErrors(lastError, weatherError)
 	ecoflowLoadEstimate, loadEstimateError := p.currentEcoFlowLoadEstimate(ctx, now)
 	lastError = combineErrors(lastError, loadEstimateError)
+	tariffControl, tariffError := p.currentTariffControl(ctx, now)
+	lastError = combineErrors(lastError, tariffError)
 	p.setCommandStatus(commandSent, actualCommandW)
 	surplusPlan := control.PlanSurplusCharging(control.SurplusPlanInput{
 		GridW:              gridPower.GridW,
@@ -129,6 +140,7 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 		SimulationMode:     p.simulationMode,
 		EnableRealControl:  p.realControl,
 		AutoControl:        p.autoControl,
+		TariffControl:      tariffControl,
 	}, p.settings)
 	if result.CommandBlockReason != "" {
 		result.Decision.Reason += "; " + result.CommandBlockReason
@@ -162,6 +174,7 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 		SimulationMode:      p.simulationMode,
 		EnableRealControl:   p.realControl,
 		AutoControl:         p.autoControl,
+		TariffControl:       tariffControl,
 	}, p.settings)
 	if nightChargePlan.ActionSummary != "" {
 		result.Decision.Reason += "; night dry-run plan: " + nightChargePlan.ActionSummary
@@ -185,6 +198,7 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 		EcoFlowDiagnostics:  batteryStatus.EcoFlowDiagnostics,
 		SurplusPlan:         &surplusPlan,
 		NightChargePlan:     &nightChargePlan,
+		TariffControl:       tariffControl,
 		TargetChargeW:       result.Decision.TargetChargeW,
 		State:               p.state(),
 		Mode:                p.mode,
@@ -337,6 +351,18 @@ func (p *StatusProvider) currentEcoFlowLoadEstimate(ctx context.Context, now tim
 		return nil, &message
 	}
 	return &estimate, nil
+}
+
+func (p *StatusProvider) currentTariffControl(ctx context.Context, now time.Time) (*domain.TariffControlContext, *string) {
+	if p.tariffProvider == nil {
+		return nil, nil
+	}
+	tariffControl, err := p.tariffProvider.CurrentTariffControlContext(ctx, now)
+	if err != nil {
+		message := fmt.Sprintf("tariff control context failed: %v", err)
+		return nil, &message
+	}
+	return &tariffControl, nil
 }
 
 func combineErrors(first *string, second *string) *string {

@@ -22,13 +22,14 @@ type TariffPlanStore interface {
 }
 
 type tariffPlanPayload struct {
-	PlanName      string    `json:"planName"`
-	DayRateYen    *float64  `json:"dayRateYen"`
-	HomeRateYen   *float64  `json:"homeRateYen"`
-	NightRateYen  *float64  `json:"nightRateYen"`
-	ExportRateYen *float64  `json:"exportRateYen"`
-	Timezone      string    `json:"timezone"`
-	EffectiveFrom time.Time `json:"effectiveFrom"`
+	PlanName      string                     `json:"planName"`
+	DayRateYen    *float64                   `json:"dayRateYen"`
+	HomeRateYen   *float64                   `json:"homeRateYen"`
+	NightRateYen  *float64                   `json:"nightRateYen"`
+	ExportRateYen *float64                   `json:"exportRateYen"`
+	Timezone      string                     `json:"timezone"`
+	EffectiveFrom time.Time                  `json:"effectiveFrom"`
+	PeriodRules   *[]domain.TariffPeriodRule `json:"periodRules"`
 }
 
 func getTariffPlansHandler(store TariffPlanStore, logger *slog.Logger) http.HandlerFunc {
@@ -62,6 +63,9 @@ func postTariffPlanHandler(store TariffPlanStore, logger *slog.Logger) http.Hand
 			ExportRateYen: *payload.ExportRateYen,
 			Timezone:      payload.Timezone,
 			EffectiveFrom: payload.EffectiveFrom,
+		}
+		if payload.PeriodRules != nil {
+			plan.PeriodRules = *payload.PeriodRules
 		}
 		plan.PlanName = strings.TrimSpace(plan.PlanName)
 		plan.Timezone = normalizeWeatherTimezone(plan.Timezone)
@@ -108,7 +112,8 @@ func validTariffPlanPayload(payload tariffPlanPayload) bool {
 	return payload.DayRateYen != nil &&
 		payload.HomeRateYen != nil &&
 		payload.NightRateYen != nil &&
-		payload.ExportRateYen != nil
+		payload.ExportRateYen != nil &&
+		(payload.PeriodRules == nil || validTariffPeriodRules(*payload.PeriodRules))
 }
 
 func validTariffPlan(plan domain.TariffPlan) bool {
@@ -126,5 +131,55 @@ func validTariffPlan(plan domain.TariffPlan) bool {
 		plan.ExportRateYen <= 500 &&
 		plan.Timezone != "" &&
 		!plan.EffectiveFrom.IsZero() &&
-		!plan.EffectiveFrom.Before(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC))
+		!plan.EffectiveFrom.Before(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)) &&
+		validTariffPeriodRules(plan.PeriodRules)
+}
+
+func validTariffPeriodRules(rules []domain.TariffPeriodRule) bool {
+	coverage := map[string][]bool{
+		"weekday": make([]bool, 1440),
+		"holiday": make([]bool, 1440),
+	}
+	for _, rule := range rules {
+		if rule.DayType != "weekday" && rule.DayType != "holiday" {
+			return false
+		}
+		if strings.TrimSpace(rule.Period) == "" {
+			return false
+		}
+		if rule.StartMinute < 0 || rule.StartMinute > 1439 || rule.EndMinute < 1 || rule.EndMinute > 1440 {
+			return false
+		}
+		if rule.RateYen <= 0 || rule.RateYen > 500 {
+			return false
+		}
+		for minute := range coverage[rule.DayType] {
+			if tariffRuleContainsMinuteForAPI(rule, minute) {
+				coverage[rule.DayType][minute] = true
+			}
+		}
+	}
+	if len(rules) == 0 {
+		return true
+	}
+	for _, dayType := range []string{"weekday", "holiday"} {
+		for _, covered := range coverage[dayType] {
+			if !covered {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func tariffRuleContainsMinuteForAPI(rule domain.TariffPeriodRule, minute int) bool {
+	start := rule.StartMinute
+	end := rule.EndMinute
+	if start == end {
+		return true
+	}
+	if start < end {
+		return minute >= start && minute < end
+	}
+	return minute >= start || minute < end
 }

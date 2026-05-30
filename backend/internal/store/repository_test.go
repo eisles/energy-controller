@@ -1257,6 +1257,358 @@ func TestTariffRepositoryUsesHistoricalPlanAtMeasuredAt(t *testing.T) {
 	}
 }
 
+func TestTariffRepositoryBuildsDefaultTariffControlContext(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	at := time.Date(2026, 5, 18, 10, 0, 0, 0, jst)
+
+	ctx, err := repo.CurrentTariffControlContext(context.Background(), at)
+	if err != nil {
+		t.Fatalf("CurrentTariffControlContext failed: %v", err)
+	}
+	if ctx.CurrentPeriod != "day" || !ctx.IsHighPrice || ctx.IsLowPrice {
+		t.Fatalf("context = %#v, want high-price day period", ctx)
+	}
+	if ctx.NextLowPriceAt == nil || ctx.NextLowPriceAt.In(jst).Hour() != 23 {
+		t.Fatalf("NextLowPriceAt = %v, want 23:00 JST", ctx.NextLowPriceAt)
+	}
+}
+
+func TestTariffRepositoryTreatsFlatRateAsNeutral(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	at := time.Date(2026, 5, 18, 10, 0, 0, 0, jst)
+	_, err := repo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "flat",
+		DayRateYen:    25,
+		HomeRateYen:   25,
+		NightRateYen:  25,
+		ExportRateYen: 8,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: at.Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("UpsertTariffPlan failed: %v", err)
+	}
+
+	ctx, err := repo.CurrentTariffControlContext(context.Background(), at)
+	if err != nil {
+		t.Fatalf("CurrentTariffControlContext failed: %v", err)
+	}
+	if ctx.IsLowPrice || ctx.IsHighPrice {
+		t.Fatalf("context = %#v, want flat rate to be neutral", ctx)
+	}
+	if ctx.NextLowPriceAt != nil {
+		t.Fatalf("NextLowPriceAt = %v, want nil for flat rate", ctx.NextLowPriceAt)
+	}
+}
+
+func TestTariffRepositoryUsesCustomTariffPeriodRuleContext(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	at := time.Date(2026, 5, 18, 10, 0, 0, 0, jst)
+	_, err := repo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "custom",
+		DayRateYen:    40,
+		HomeRateYen:   30,
+		NightRateYen:  20,
+		ExportRateYen: 8,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: at.Add(-time.Hour),
+		PeriodRules: []domain.TariffPeriodRule{
+			{DayType: "weekday", Period: "cheap", StartMinute: 0, EndMinute: 12 * 60, RateYen: 10, Priority: 100},
+			{DayType: "weekday", Period: "expensive", StartMinute: 12 * 60, EndMinute: 1440, RateYen: 30, Priority: 100},
+			{DayType: "holiday", Period: "cheap", StartMinute: 0, EndMinute: 12 * 60, RateYen: 10, Priority: 100},
+			{DayType: "holiday", Period: "expensive", StartMinute: 12 * 60, EndMinute: 1440, RateYen: 30, Priority: 100},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpsertTariffPlan failed: %v", err)
+	}
+
+	ctx, err := repo.CurrentTariffControlContext(context.Background(), at)
+	if err != nil {
+		t.Fatalf("CurrentTariffControlContext failed: %v", err)
+	}
+	if ctx.CurrentPeriod != "cheap" || !ctx.IsLowPrice || ctx.Source != "custom" {
+		t.Fatalf("context = %#v, want custom low-price cheap period", ctx)
+	}
+}
+
+func TestTariffRepositoryUsesActiveDayTypeForLowPriceBounds(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	at := time.Date(2026, 5, 18, 23, 30, 0, 0, jst)
+	_, err := repo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "weekday holiday split",
+		DayRateYen:    40,
+		HomeRateYen:   30,
+		NightRateYen:  20,
+		ExportRateYen: 8,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: at.Add(-time.Hour),
+		PeriodRules: []domain.TariffPeriodRule{
+			{DayType: "weekday", Period: "night", StartMinute: 23 * 60, EndMinute: 7 * 60, RateYen: 20, Priority: 100},
+			{DayType: "weekday", Period: "day", StartMinute: 7 * 60, EndMinute: 23 * 60, RateYen: 30, Priority: 100},
+			{DayType: "holiday", Period: "holiday", StartMinute: 0, EndMinute: 1440, RateYen: 10, Priority: 100},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpsertTariffPlan failed: %v", err)
+	}
+
+	ctx, err := repo.CurrentTariffControlContext(context.Background(), at)
+	if err != nil {
+		t.Fatalf("CurrentTariffControlContext failed: %v", err)
+	}
+	if ctx.DayType != "weekday" || ctx.CurrentPeriod != "night" || !ctx.IsLowPrice {
+		t.Fatalf("context = %#v, want weekday night to be low-price despite cheaper holiday rule", ctx)
+	}
+	if !floatAlmostEqual(ctx.LowestRateYen, 20) || !floatAlmostEqual(ctx.HighestRateYen, 30) {
+		t.Fatalf("rate bounds = %v/%v, want weekday-only 20/30: %#v", ctx.LowestRateYen, ctx.HighestRateYen, ctx)
+	}
+}
+
+func TestTariffRepositoryDetectsLowPriceAfterHighPriorityOverlayEnds(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	at := time.Date(2026, 5, 18, 21, 30, 0, 0, jst)
+	_, err := repo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "overlay",
+		DayRateYen:    40,
+		HomeRateYen:   30,
+		NightRateYen:  20,
+		ExportRateYen: 8,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: at.Add(-time.Hour),
+		PeriodRules: []domain.TariffPeriodRule{
+			{DayType: "weekday", Period: "low-base", StartMinute: 0, EndMinute: 1440, RateYen: 10, Priority: 10},
+			{DayType: "weekday", Period: "high-overlay", StartMinute: 8 * 60, EndMinute: 22 * 60, RateYen: 40, Priority: 100},
+			{DayType: "holiday", Period: "low-base", StartMinute: 0, EndMinute: 1440, RateYen: 10, Priority: 10},
+			{DayType: "holiday", Period: "high-overlay", StartMinute: 8 * 60, EndMinute: 22 * 60, RateYen: 40, Priority: 100},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpsertTariffPlan failed: %v", err)
+	}
+
+	ctx, err := repo.CurrentTariffControlContext(context.Background(), at)
+	if err != nil {
+		t.Fatalf("CurrentTariffControlContext failed: %v", err)
+	}
+	if ctx.CurrentPeriod != "high-overlay" || !ctx.IsHighPrice || ctx.IsLowPrice {
+		t.Fatalf("context = %#v, want high-priority high-price overlay at 21:30", ctx)
+	}
+	if ctx.NextLowPriceAt == nil {
+		t.Fatalf("NextLowPriceAt = nil, want 22:00 JST: %#v", ctx)
+	}
+	nextLow := ctx.NextLowPriceAt.In(jst)
+	if nextLow.Hour() != 22 || nextLow.Minute() != 0 {
+		t.Fatalf("NextLowPriceAt = %v, want 22:00 JST after high overlay ends", nextLow)
+	}
+}
+
+func TestTariffRepositoryRejectsPartialCustomTariffRules(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	at := time.Date(2026, 5, 18, 10, 0, 0, 0, jst)
+	_, err := repo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "partial custom",
+		DayRateYen:    40,
+		HomeRateYen:   30,
+		NightRateYen:  20,
+		ExportRateYen: 8,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: at.Add(-time.Hour),
+		PeriodRules: []domain.TariffPeriodRule{
+			{DayType: "weekday", Period: "cheap", StartMinute: 0, EndMinute: 1440, RateYen: 10, Priority: 100},
+		},
+	})
+	if err == nil {
+		t.Fatal("UpsertTariffPlan error = nil, want partial custom coverage rejected")
+	}
+}
+
+func TestTariffRepositoryEmptyPeriodRulesClearsCustomRules(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	at := time.Date(2026, 5, 18, 10, 0, 0, 0, jst)
+	effectiveFrom := at.Add(-time.Hour)
+	_, err := repo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "custom",
+		DayRateYen:    40,
+		HomeRateYen:   30,
+		NightRateYen:  20,
+		ExportRateYen: 8,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: effectiveFrom,
+		PeriodRules: []domain.TariffPeriodRule{
+			{DayType: "weekday", Period: "cheap", StartMinute: 0, EndMinute: 12 * 60, RateYen: 10, Priority: 100},
+			{DayType: "weekday", Period: "expensive", StartMinute: 12 * 60, EndMinute: 1440, RateYen: 30, Priority: 100},
+			{DayType: "holiday", Period: "cheap", StartMinute: 0, EndMinute: 12 * 60, RateYen: 10, Priority: 100},
+			{DayType: "holiday", Period: "expensive", StartMinute: 12 * 60, EndMinute: 1440, RateYen: 30, Priority: 100},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpsertTariffPlan custom failed: %v", err)
+	}
+	_, err = repo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "default",
+		DayRateYen:    40,
+		HomeRateYen:   30,
+		NightRateYen:  20,
+		ExportRateYen: 8,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: effectiveFrom,
+		PeriodRules:   []domain.TariffPeriodRule{},
+	})
+	if err != nil {
+		t.Fatalf("UpsertTariffPlan clear failed: %v", err)
+	}
+	ctx, err := repo.CurrentTariffControlContext(context.Background(), at)
+	if err != nil {
+		t.Fatalf("CurrentTariffControlContext failed: %v", err)
+	}
+	if ctx.Source != "default" || ctx.CurrentPeriod != "day" || !ctx.IsHighPrice {
+		t.Fatalf("context = %#v, want default high-price day period after clearing custom rules", ctx)
+	}
+}
+
+func TestTariffRepositoryOmittedPeriodRulesPreservesCustomRules(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	at := time.Date(2026, 5, 18, 10, 0, 0, 0, jst)
+	effectiveFrom := at.Add(-time.Hour)
+	_, err := repo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "custom",
+		DayRateYen:    40,
+		HomeRateYen:   30,
+		NightRateYen:  20,
+		ExportRateYen: 8,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: effectiveFrom,
+		PeriodRules: []domain.TariffPeriodRule{
+			{DayType: "weekday", Period: "cheap", StartMinute: 0, EndMinute: 12 * 60, RateYen: 10, Priority: 100},
+			{DayType: "weekday", Period: "expensive", StartMinute: 12 * 60, EndMinute: 1440, RateYen: 30, Priority: 100},
+			{DayType: "holiday", Period: "cheap", StartMinute: 0, EndMinute: 12 * 60, RateYen: 10, Priority: 100},
+			{DayType: "holiday", Period: "expensive", StartMinute: 12 * 60, EndMinute: 1440, RateYen: 30, Priority: 100},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpsertTariffPlan custom failed: %v", err)
+	}
+	_, err = repo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "scalar update",
+		DayRateYen:    41,
+		HomeRateYen:   31,
+		NightRateYen:  21,
+		ExportRateYen: 8,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: effectiveFrom,
+	})
+	if err != nil {
+		t.Fatalf("UpsertTariffPlan scalar update failed: %v", err)
+	}
+	ctx, err := repo.CurrentTariffControlContext(context.Background(), at)
+	if err != nil {
+		t.Fatalf("CurrentTariffControlContext failed: %v", err)
+	}
+	if ctx.Source != "custom" || ctx.CurrentPeriod != "cheap" || !ctx.IsLowPrice {
+		t.Fatalf("context = %#v, want omitted period rules to preserve custom cheap rule", ctx)
+	}
+}
+
+func TestTariffRepositorySummarizesSamePeriodDifferentCustomRates(t *testing.T) {
+	db := openTestDB(t)
+	meterRepo := NewEnergyMeterRepository(db)
+	tariffRepo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	base := time.Date(2026, 6, 1, 9, 0, 0, 0, jst)
+	_, err := tariffRepo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "same period labels",
+		DayRateYen:    40,
+		HomeRateYen:   30,
+		NightRateYen:  20,
+		ExportRateYen: 8,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: base.Add(-time.Hour),
+		PeriodRules: []domain.TariffPeriodRule{
+			{DayType: "weekday", Period: "day", StartMinute: 0, EndMinute: 12 * 60, RateYen: 40, Priority: 100},
+			{DayType: "weekday", Period: "day", StartMinute: 12 * 60, EndMinute: 1440, RateYen: 20, Priority: 100},
+			{DayType: "holiday", Period: "day", StartMinute: 0, EndMinute: 1440, RateYen: 20, Priority: 100},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpsertTariffPlan failed: %v", err)
+	}
+	tariffAtSecondRate, err := tariffRepo.CurrentTariffControlContext(context.Background(), base.Add(4*time.Hour))
+	if err != nil {
+		t.Fatalf("CurrentTariffControlContext second rate failed: %v", err)
+	}
+	if !floatAlmostEqual(tariffAtSecondRate.CurrentRateYen, 20) {
+		t.Fatalf("CurrentRateYen at second rate = %v, want 20: %#v", tariffAtSecondRate.CurrentRateYen, tariffAtSecondRate)
+	}
+	readings := []domain.EnergyMeterReading{
+		{
+			MeasuredAt:           base,
+			ImportCumulativeKWh:  1000,
+			ExportCumulativeKWh:  500,
+			Coefficient:          1,
+			CumulativeUnit:       0.1,
+			RawImportCumulative:  "00002710",
+			RawExportCumulative:  "00001388",
+			ImportValueUpdatedAt: base,
+			ExportValueUpdatedAt: base,
+		},
+		{
+			MeasuredAt:           base.Add(time.Hour),
+			ImportCumulativeKWh:  1001,
+			ExportCumulativeKWh:  500,
+			Coefficient:          1,
+			CumulativeUnit:       0.1,
+			RawImportCumulative:  "0000271a",
+			RawExportCumulative:  "00001388",
+			ImportValueUpdatedAt: base.Add(time.Hour),
+			ExportValueUpdatedAt: base.Add(time.Hour),
+		},
+		{
+			MeasuredAt:           base.Add(4 * time.Hour),
+			ImportCumulativeKWh:  1002,
+			ExportCumulativeKWh:  500,
+			Coefficient:          1,
+			CumulativeUnit:       0.1,
+			RawImportCumulative:  "00002724",
+			RawExportCumulative:  "00001388",
+			ImportValueUpdatedAt: base.Add(4 * time.Hour),
+			ExportValueUpdatedAt: base.Add(4 * time.Hour),
+		},
+	}
+	for _, reading := range readings {
+		if err := meterRepo.InsertEnergyMeterReading(context.Background(), reading); err != nil {
+			t.Fatalf("InsertEnergyMeterReading failed: %v", err)
+		}
+	}
+
+	summary, err := tariffRepo.EnergyCostSummary(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("EnergyCostSummary failed: %v", err)
+	}
+	if !floatAlmostEqual(summary.TotalImportCostYen, 60) {
+		t.Fatalf("TotalImportCostYen = %v, want 60: %#v", summary.TotalImportCostYen, summary.Periods)
+	}
+	if len(summary.Periods) != 2 {
+		t.Fatalf("len(Periods) = %d, want split buckets for same label with different rates: %#v", len(summary.Periods), summary.Periods)
+	}
+}
+
 func TestTariffRepositoryDeletesPlanAndRecalculatesEffectiveTo(t *testing.T) {
 	db := openTestDB(t)
 	repo := NewTariffRepository(db)

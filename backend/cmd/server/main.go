@@ -215,12 +215,15 @@ type commandStatusProvider interface {
 
 func newStatusProvider(cfg config.Config, db *sql.DB, targetProvider ecoFlowCloudReadTargetProvider) (api.StatusProvider, energyMeterReader) {
 	if cfg.MockMode {
-		return mock.NewStatusProvider(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled), nil
+		provider := mock.NewStatusProvider(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled)
+		provider.SetTariffControlProvider(store.NewTariffRepository(db))
+		return provider, nil
 	}
 	ecoflowClient := ecoFlowCloudBatteryReader{cfg: cfg, targetProvider: targetProvider}
 	ecoflowWriteClient := ecoflow.NewMockWriteClient()
 	weatherReader := newWeatherReader(cfg, db)
 	loadEstimator := store.NewEcoFlowLoadRepository(db)
+	tariffRepository := store.NewTariffRepository(db)
 	if cfg.NatureMode == "cloud" {
 		natureClient := nature.NewCloudClient(nature.CloudConfig{
 			AccessToken: cfg.NatureAccessToken,
@@ -228,10 +231,12 @@ func newStatusProvider(cfg config.Config, db *sql.DB, targetProvider ecoFlowClou
 		})
 		provider := mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled, natureClient, ecoflowClient, ecoflowWriteClient, "nature-cloud+ecoflow-read", weatherReader)
 		provider.SetEcoFlowLoadEstimator(loadEstimator)
+		provider.SetTariffControlProvider(tariffRepository)
 		return provider, natureClient
 	}
 	provider := mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled, nil, ecoflowClient, ecoflowWriteClient, "ecoflow-read", weatherReader)
 	provider.SetEcoFlowLoadEstimator(loadEstimator)
+	provider.SetTariffControlProvider(tariffRepository)
 	return provider, nil
 }
 
@@ -778,6 +783,7 @@ func applyPro3MasterReserveToSurplusPlan(cfg config.Config, status *domain.Statu
 		SimulationMode:         cfg.SimulationMode,
 		EnableRealControl:      cfg.EnableRealControl,
 		AutoControl:            cfg.AutoControlEnabled,
+		TariffControl:          status.TariffControl,
 	}, cfg.ControlSettings)
 	status.SurplusPlan = &plan
 	if plan.ActionSummary != "" && !strings.Contains(status.LastDecisionReason, plan.ActionSummary) {
@@ -914,7 +920,7 @@ func applyNightChargeDevicePlans(ctx context.Context, cfg config.Config, status 
 		AutoControl:             cfg.AutoControlEnabled,
 		ConfirmEcoFlowWrite:     cfg.ConfirmEcoFlowWrite,
 		RealControlTrialActive:  realControlTrialActive(cfg),
-		IsNightChargeTime:       nightChargeDeviceWindowActive(now),
+		IsNightChargeTime:       nightChargeDeviceWindowActive(now) || tariffLowPriceWindowActive(status),
 		Delta3AllowAutoWrite:    cfg.Delta3AllowAutoWrite,
 		Delta3ExecuteWrite:      cfg.Delta3ExecuteWrite,
 		Delta3AllowPrivateWrite: cfg.Delta3AllowPrivateWrite,
@@ -979,6 +985,10 @@ func nightChargeDeviceWindowActive(now time.Time) bool {
 	}
 	hour := now.Hour()
 	return hour >= 23 || hour < 7
+}
+
+func tariffLowPriceWindowActive(status *domain.Status) bool {
+	return status != nil && status.TariffControl != nil && status.TariffControl.IsLowPrice
 }
 
 func nightPlanOwnsEnergyControl(plan domain.NightChargePlan, measuredAt time.Time) bool {

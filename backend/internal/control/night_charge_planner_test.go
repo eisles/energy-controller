@@ -551,6 +551,56 @@ func TestPlanNightChargingStrategyStatesByTime(t *testing.T) {
 	}
 }
 
+func TestPlanNightChargingUsesLowPriceTariffWindow(t *testing.T) {
+	lowPrice := &domain.TariffControlContext{
+		CurrentPeriod:  "custom-low",
+		CurrentRateYen: 12,
+		LowestRateYen:  12,
+		HighestRateYen: 40,
+		IsLowPrice:     true,
+	}
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:            time.Date(2026, 5, 18, 10, 0, 0, 0, time.FixedZone("JST", 9*60*60)),
+		BatterySoc:     30,
+		Forecast:       &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 3, SunshineDurationHours: 1, CloudCoverMeanPercent: 95, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 12},
+		TariffControl:  lowPrice,
+		SimulationMode: true,
+	}, DefaultSettings())
+
+	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" {
+		t.Fatalf("StrategyState = %q, want NIGHT_CHARGE_WINDOW", plan.StrategyState)
+	}
+	if plan.TariffPeriod != "custom-low" || plan.TariffControlReason == "" {
+		t.Fatalf("tariff fields were not applied: %#v", plan)
+	}
+}
+
+func TestPlanNightChargingSuppressesFixedNightWhenTariffIsHighPrice(t *testing.T) {
+	nextLow := time.Date(2026, 5, 19, 7, 0, 0, 0, time.UTC)
+	highPrice := &domain.TariffControlContext{
+		CurrentPeriod:  "custom-high",
+		CurrentRateYen: 40,
+		LowestRateYen:  12,
+		HighestRateYen: 40,
+		IsHighPrice:    true,
+		NextLowPriceAt: &nextLow,
+	}
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:            time.Date(2026, 5, 18, 23, 30, 0, 0, time.UTC),
+		BatterySoc:     30,
+		Forecast:       &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 3, SunshineDurationHours: 1, CloudCoverMeanPercent: 95, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 12},
+		TariffControl:  highPrice,
+		SimulationMode: true,
+	}, DefaultSettings())
+
+	if plan.StrategyState == "NIGHT_CHARGE_WINDOW" {
+		t.Fatalf("StrategyState = NIGHT_CHARGE_WINDOW, want tariff high-price period to suppress charging")
+	}
+	if plan.CommandBlockReason != "outside night charge window" {
+		t.Fatalf("CommandBlockReason = %q, want outside night charge window", plan.CommandBlockReason)
+	}
+}
+
 func TestPlanNightChargingWouldWriteOnlyInsideNightChargeWindow(t *testing.T) {
 	forecast := &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 3, SunshineDurationHours: 1, CloudCoverMeanPercent: 95, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 12}
 	baseInput := NightChargePlanInput{
