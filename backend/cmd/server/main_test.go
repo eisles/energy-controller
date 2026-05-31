@@ -69,6 +69,21 @@ func (p fakeDelta3WriteTargetProvider) Delta3WriteTarget(context.Context) (domai
 	return p.device, p.ok, p.err
 }
 
+type fakeChargingPriorityTargetProvider struct {
+	pro3     domain.ChargingDevice
+	pro3OK   bool
+	delta3   domain.ChargingDevice
+	delta3OK bool
+}
+
+func (p fakeChargingPriorityTargetProvider) EcoFlowCloudWriteTarget(context.Context) (domain.ChargingDevice, bool, error) {
+	return p.pro3, p.pro3OK, nil
+}
+
+func (p fakeChargingPriorityTargetProvider) Delta3WriteTarget(context.Context) (domain.ChargingDevice, bool, error) {
+	return p.delta3, p.delta3OK, nil
+}
+
 type recordingSurplusWriteClient struct {
 	acChargePowerW   *int
 	backupReserveSoc *int
@@ -668,6 +683,59 @@ func TestRecordStatusPersistsDelta3AuxSuppressionOnStatus(t *testing.T) {
 	}
 	if !strings.Contains(got.Delta3AuxPlan.SuppressedReason, "mock mode") {
 		t.Fatalf("SuppressedReason = %q, want mock mode guard", got.Delta3AuxPlan.SuppressedReason)
+	}
+}
+
+func TestNightChargeDeviceInputsMarksDelta3MaxPlusWriteTarget(t *testing.T) {
+	pro3 := domain.ChargingDevice{
+		ID:                    1,
+		Name:                  "DELTA Pro 3",
+		Kind:                  "ecoflow_delta_pro3",
+		DeviceType:            "DELTA_PRO3",
+		SupportsACChargeLimit: true,
+	}
+	delta3Plus := domain.ChargingDevice{
+		ID:                    2,
+		Name:                  "DELTA 3 Plus",
+		Kind:                  "ecoflow_delta3_plus",
+		DeviceType:            "DELTA_3_PLUS",
+		SupportsACChargeLimit: true,
+	}
+	delta3MaxPlus := domain.ChargingDevice{
+		ID:                    3,
+		Name:                  "DELTA 3 Max Plus",
+		Kind:                  "ecoflow_delta3_plus",
+		DeviceType:            "DELTA_3_MAX_PLUS",
+		SupportsACChargeLimit: true,
+	}
+	statuses := []api.DeviceStatusResponse{
+		{ID: pro3.ID, Name: pro3.Name, Kind: pro3.Kind, DeviceType: pro3.DeviceType, Enabled: true, ControlEnabled: true, Status: api.Delta3StatusResponse{Available: true}},
+		{ID: delta3Plus.ID, Name: delta3Plus.Name, Kind: delta3Plus.Kind, DeviceType: delta3Plus.DeviceType, Enabled: true, ControlEnabled: true, Status: api.Delta3StatusResponse{Available: true}},
+		{ID: delta3MaxPlus.ID, Name: delta3MaxPlus.Name, Kind: delta3MaxPlus.Kind, DeviceType: delta3MaxPlus.DeviceType, Enabled: true, ControlEnabled: true, Status: api.Delta3StatusResponse{Available: true}},
+	}
+
+	inputs := nightChargeDeviceInputs(
+		context.Background(),
+		fakeChargingPriorityTargetProvider{pro3: pro3, pro3OK: true, delta3: delta3MaxPlus, delta3OK: true},
+		statuses,
+		[]domain.ChargingDevice{pro3, delta3Plus, delta3MaxPlus},
+		slog.Default(),
+	)
+
+	if len(inputs) != 3 {
+		t.Fatalf("inputs len = %d, want 3", len(inputs))
+	}
+	if !inputs[0].WriteTarget {
+		t.Fatal("DELTA Pro 3 WriteTarget = false, want true")
+	}
+	if inputs[1].WriteTarget {
+		t.Fatal("DELTA 3 Plus WriteTarget = true, want false when Max Plus is selected")
+	}
+	if !inputs[2].WriteTarget {
+		t.Fatal("DELTA 3 Max Plus WriteTarget = false, want true")
+	}
+	if inputs[2].DeviceType != "DELTA_3_MAX_PLUS" {
+		t.Fatalf("DELTA 3 Max Plus DeviceType = %q, want DELTA_3_MAX_PLUS", inputs[2].DeviceType)
 	}
 }
 

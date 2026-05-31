@@ -320,8 +320,10 @@ export type NightChargeDevicePlan = {
   deviceId: number;
   name: string;
   kind: string;
+  deviceType?: string;
   priority: number;
   controlEnabled: boolean;
+  writeTarget: boolean;
   capacityKwh: number;
   currentSoc?: number | null;
   currentEnergyKwh: number;

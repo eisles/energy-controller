@@ -946,17 +946,38 @@ func nightChargeDeviceInputs(ctx context.Context, targetProvider delta3WriteTarg
 			pro3WriteTargetID = device.ID
 		}
 	}
+	var delta3WriteTargetID int64
+	if targetProvider != nil {
+		device, ok, err := targetProvider.Delta3WriteTarget(ctx)
+		if err != nil {
+			logger.Warn("failed to resolve DELTA 3 series write target for night charge device plan", "error", err)
+		} else if ok {
+			delta3WriteTargetID = device.ID
+		}
+	}
 	inputs := make([]control.NightChargeDeviceInput, 0, len(deviceStatuses))
 	for _, deviceStatus := range deviceStatuses {
 		device := deviceByID[deviceStatus.ID]
+		deviceType := deviceStatus.DeviceType
+		if deviceType == "" {
+			deviceType = device.DeviceType
+		}
+		writeTarget := false
+		switch deviceStatus.Kind {
+		case "ecoflow_delta_pro3":
+			writeTarget = deviceStatus.ID == pro3WriteTargetID
+		case "ecoflow_delta3_plus":
+			writeTarget = deviceStatus.ID == delta3WriteTargetID
+		}
 		inputs = append(inputs, control.NightChargeDeviceInput{
 			DeviceID:                  deviceStatus.ID,
 			Name:                      deviceStatus.Name,
 			Kind:                      deviceStatus.Kind,
+			DeviceType:                deviceType,
 			Priority:                  deviceStatus.Priority,
 			Enabled:                   deviceStatus.Enabled,
 			ControlEnabled:            deviceStatus.ControlEnabled,
-			WriteTarget:               deviceStatus.ID == pro3WriteTargetID,
+			WriteTarget:               writeTarget,
 			CapacityWh:                deviceStatus.CapacityWh,
 			CurrentSoc:                deviceStatus.Status.SOC,
 			CurrentACChargeLimitW:     deviceStatus.Status.ACChargeLimitW,

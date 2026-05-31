@@ -599,6 +599,7 @@ func TestApplyNightChargeDevicePlansAllowsAuxChargeDuringNightRecoverWindow(t *t
 		Kind:                  "ecoflow_delta3_plus",
 		Enabled:               true,
 		ControlEnabled:        true,
+		WriteTarget:           true,
 		CapacityWh:            2048,
 		CurrentSoc:            intPtr(20),
 		BackupReserveMinSoc:   20,
@@ -758,6 +759,7 @@ func TestApplyNightChargeDevicePlansKeepsDelta3WriteBehindPrivateAPIGates(t *tes
 		Kind:                  "ecoflow_delta3_plus",
 		Enabled:               true,
 		ControlEnabled:        true,
+		WriteTarget:           true,
 		CapacityWh:            2048,
 		CurrentSoc:            intPtr(20),
 		BackupReserveMinSoc:   20,
@@ -793,6 +795,7 @@ func TestApplyNightChargeDevicePlansKeepsDelta3WriteBehindAuxGate(t *testing.T) 
 		Kind:                  "ecoflow_delta3_plus",
 		Enabled:               true,
 		ControlEnabled:        true,
+		WriteTarget:           true,
 		CapacityWh:            2048,
 		CurrentSoc:            intPtr(20),
 		BackupReserveMinSoc:   20,
@@ -813,6 +816,45 @@ func TestApplyNightChargeDevicePlansKeepsDelta3WriteBehindAuxGate(t *testing.T) 
 	}
 }
 
+func TestApplyNightChargeDevicePlansBlocksDelta3WhenNotWriteTarget(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:             "NIGHT_CHARGE_WINDOW",
+		RecommendedNightTargetKWh: 2.0,
+		MinimumReserveSoc:         20,
+	}
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:              1,
+		Name:                  "DELTA 3 Max Plus",
+		Kind:                  "ecoflow_delta3_plus",
+		DeviceType:            "DELTA_3_MAX_PLUS",
+		Enabled:               true,
+		ControlEnabled:        true,
+		WriteTarget:           false,
+		CapacityWh:            2048,
+		CurrentSoc:            intPtr(20),
+		BackupReserveMinSoc:   20,
+		BackupReserveMaxSoc:   90,
+		MaxChargeW:            1200,
+		SupportsACChargeLimit: true,
+		StatusAvailable:       true,
+	}}, DefaultSettings(), allowedNightChargeDeviceWriteGuard())
+
+	got := plan.DevicePlans[0]
+	if got.ShouldCharge || got.WouldWrite {
+		t.Fatalf("ShouldCharge/WouldWrite = %v/%v, want false/false for non-write-target DELTA 3 series", got.ShouldCharge, got.WouldWrite)
+	}
+	if got.WriteTarget {
+		t.Fatal("WriteTarget = true, want false")
+	}
+	if got.DeviceType != "DELTA_3_MAX_PLUS" {
+		t.Fatalf("DeviceType = %q, want DELTA_3_MAX_PLUS", got.DeviceType)
+	}
+	if !strings.Contains(got.BlockReason, "write target") {
+		t.Fatalf("BlockReason = %q, want write target block", got.BlockReason)
+	}
+}
+
 func TestApplyNightChargeDevicePlansBlocksWhenDeviceSettingsAlreadyMatch(t *testing.T) {
 	plan := &domain.NightChargePlan{
 		StrategyState:             "NIGHT_CHARGE_WINDOW",
@@ -826,6 +868,7 @@ func TestApplyNightChargeDevicePlansBlocksWhenDeviceSettingsAlreadyMatch(t *test
 		Kind:                    "ecoflow_delta3_plus",
 		Enabled:                 true,
 		ControlEnabled:          true,
+		WriteTarget:             true,
 		CapacityWh:              2048,
 		CurrentSoc:              intPtr(20),
 		CurrentACChargeLimitW:   intPtr(1200),
@@ -868,6 +911,7 @@ func TestApplyNightChargeDevicePlansBlocksDuringMinimumCommandInterval(t *testin
 		Kind:                  "ecoflow_delta3_plus",
 		Enabled:               true,
 		ControlEnabled:        true,
+		WriteTarget:           true,
 		CapacityWh:            2048,
 		CurrentSoc:            intPtr(20),
 		BackupReserveMinSoc:   20,
@@ -909,6 +953,7 @@ func TestApplyNightChargeDevicePlansBlocksDelta3DuringAuxMinimumCommandInterval(
 		Kind:                  "ecoflow_delta3_plus",
 		Enabled:               true,
 		ControlEnabled:        true,
+		WriteTarget:           true,
 		CapacityWh:            2048,
 		CurrentSoc:            intPtr(20),
 		BackupReserveMinSoc:   20,
@@ -944,6 +989,7 @@ func TestApplyNightChargeDevicePlansUsesForecastPVWindowForExpectedLoad(t *testi
 		Kind:                  "ecoflow_delta3_plus",
 		Enabled:               true,
 		ControlEnabled:        true,
+		WriteTarget:           true,
 		CapacityWh:            2048,
 		CurrentSoc:            intPtr(20),
 		BackupReserveMinSoc:   20,
@@ -1099,6 +1145,7 @@ func TestApplyNightChargeDevicePlansDoesNotAllocatePVToBlockedDevice(t *testing.
 			Priority:              2,
 			Enabled:               true,
 			ControlEnabled:        true,
+			WriteTarget:           true,
 			CapacityWh:            2048,
 			CurrentSoc:            intPtr(20),
 			BackupReserveMinSoc:   20,
@@ -1137,6 +1184,7 @@ func TestApplyNightChargeDevicePlansUsesExistingAvailableEnergyBeforeRaisingTarg
 		Kind:                  "ecoflow_delta3_plus",
 		Enabled:               true,
 		ControlEnabled:        true,
+		WriteTarget:           true,
 		CapacityWh:            2048,
 		CurrentSoc:            intPtr(50),
 		BackupReserveMinSoc:   20,
@@ -1170,6 +1218,7 @@ func TestApplyNightChargeDevicePlansAddsResidualNeedToCurrentEnergy(t *testing.T
 		Kind:                  "ecoflow_delta3_plus",
 		Enabled:               true,
 		ControlEnabled:        true,
+		WriteTarget:           true,
 		CapacityWh:            2048,
 		CurrentSoc:            intPtr(50),
 		BackupReserveMinSoc:   20,
@@ -1201,6 +1250,7 @@ func TestApplyNightChargeDevicePlansUsesAvailableEnergyForPrePVLoad(t *testing.T
 		Kind:                  "ecoflow_delta3_plus",
 		Enabled:               true,
 		ControlEnabled:        true,
+		WriteTarget:           true,
 		CapacityWh:            2048,
 		CurrentSoc:            intPtr(50),
 		BackupReserveMinSoc:   20,

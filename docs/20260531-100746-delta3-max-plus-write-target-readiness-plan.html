@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>DELTA 3 Max Plus Write Target Readiness Plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; color: #111827; max-width: 960px; margin: 32px auto; padding: 0 20px; }
+    h1, h2 { line-height: 1.25; }
+    code { background: #f3f4f6; padding: 0.1rem 0.25rem; border-radius: 4px; }
+    ul, ol { padding-left: 1.4rem; }
+    section { border-top: 1px solid #d1d5db; padding-top: 16px; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h1>DELTA 3 Max Plus Write Target Readiness Plan</h1>
+
+  <section>
+    <h2>Goal</h2>
+    <p>DELTA 3 Max Plus を既存の EcoFlow private MQTT 補助バッテリー制御の対象として安全に扱えるようにする。</p>
+    <p>具体的には、充電機器マスタで <code>DELTA_3_MAX_PLUS</code> を <code>controlEnabled=true</code> にした場合、夜間充電/料金最適化の機器別計画で「どの DELTA 3 系デバイスが実際の write target か」を明示し、write target ではない DELTA 3 系デバイスを誤って write 候補として表示しない。</p>
+  </section>
+
+  <section>
+    <h2>Non-goals</h2>
+    <ul>
+      <li>AC1 / AC2 / AC出力保護チャンネルの ON/OFF write command は追加しない。</li>
+      <li>未確認の EcoFlow private MQTT payload を推測で送信しない。</li>
+      <li>実機 write gate、最小コマンド間隔、trial window、<code>CONFIRM_ECOFLOW_WRITE</code> 条件は変更しない。</li>
+      <li>充電機器マスタの DB schema は変更しない。</li>
+      <li><code>.env</code> に新しい SN や認証情報を追加しない。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Current State</h2>
+    <ul>
+      <li><code>DELTA_3_MAX_PLUS</code> は <code>ecoflow_delta3_plus</code> 系として機器マスタ、status reader、private MQTT profile に登録済み。</li>
+      <li><code>ChargingDeviceRepository.Delta3WriteTarget</code> は条件を満たす DELTA 3 系 write target を優先度順で1台選ぶ。</li>
+      <li><code>nightChargeDeviceInputs</code> は DELTA Pro 3 の write target は反映しているが、DELTA 3 系の write target は <code>WriteTarget</code> に反映していない。</li>
+      <li>そのため、複数の DELTA 3 系デバイスがある場合、実際には write target ではない機器も write 候補のように見える可能性がある。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Files Likely To Change</h2>
+    <ul>
+      <li><code>backend/cmd/server/main.go</code></li>
+      <li><code>backend/cmd/server/main_test.go</code></li>
+      <li><code>backend/internal/control/night_charge_device_planner.go</code></li>
+      <li><code>backend/internal/control/night_charge_device_planner_test.go</code></li>
+      <li><code>backend/internal/domain/status.go</code></li>
+      <li><code>frontend/lib/types.ts</code></li>
+      <li><code>frontend/components/StatusCards.tsx</code></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Data / API Contracts</h2>
+    <p><code>NightChargeDevicePlan</code> に表示用の任意/後方互換項目を追加する。</p>
+    <ul>
+      <li><code>deviceType</code></li>
+      <li><code>writeTarget</code></li>
+    </ul>
+    <p><code>writeTarget=false</code> の DELTA 3 系デバイスは、実機 write 候補から除外する。優先度を上げて Max Plus が <code>Delta3WriteTarget</code> になった場合だけ、Max Plus が write 候補として表示される。</p>
+  </section>
+
+  <section>
+    <h2>Safety Boundaries</h2>
+    <ul>
+      <li>実機 write の種類は増やさない。既存の AC充電上限/バックアップリザーブ write 経路だけを使う。</li>
+      <li><code>ENABLE_REAL_CONTROL=true</code>、<code>SIMULATION_MODE=false</code>、<code>MOCK_MODE=false</code>、<code>AUTO_CONTROL_ENABLED=true</code>、trial window、<code>CONFIRM_ECOFLOW_WRITE</code>、<code>ECOFLOW_DELTA3_*</code> gate は維持する。</li>
+      <li>複数 DELTA 3 系が登録されている場合も、write target は1台だけに限定する。</li>
+      <li>UI は「write target / 対象外」を表示するだけで、直接実機 write を起動しない。</li>
+      <li>認証情報、token、device SN は plan / UI / logs に追加表示しない。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Implementation Steps</h2>
+    <ol>
+      <li><code>NightChargeDeviceInput</code> と <code>NightChargeDevicePlan</code> に <code>DeviceType</code> と <code>WriteTarget</code> を追加する。</li>
+      <li><code>nightChargeDeviceInputs</code> で <code>Delta3WriteTarget</code> を解決し、DELTA 3 系デバイスの <code>WriteTarget</code> を設定する。</li>
+      <li>DELTA 3 系かつ <code>WriteTarget=false</code> の機器を抑制する。</li>
+      <li>plan と UI に device type / write target を表示する。</li>
+      <li>Max Plus が write target のときだけ <code>WouldWrite=true</code> になるテストを追加する。</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Verification</h2>
+    <ul>
+      <li><code>cd backend &amp;&amp; rtk go test ./cmd/server ./internal/control ./internal/store ./internal/api</code></li>
+      <li><code>cd frontend &amp;&amp; rtk npm run build</code></li>
+      <li><code>rtk git diff --check</code></li>
+      <li><code>rtk codex review --uncommitted</code></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Rollback / Operational Notes</h2>
+    <p>変更は計画表示と write target 判定の明確化が中心で、write command の種類は増えない。実運用では、充電機器マスタで DELTA 3 Max Plus の優先度を DELTA 3 Plus 2 より高くし、<code>controlEnabled=true</code>、<code>supportsAcChargeLimit=true</code>、<code>deviceType=DELTA_3_MAX_PLUS</code> にすることで Max Plus が write target になる。</p>
+  </section>
+</body>
+</html>

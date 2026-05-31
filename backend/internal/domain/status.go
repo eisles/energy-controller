@@ -311,8 +311,10 @@ type NightChargeDevicePlan struct {
 	DeviceID                  int64   `json:"deviceId"`
 	Name                      string  `json:"name"`
 	Kind                      string  `json:"kind"`
+	DeviceType                string  `json:"deviceType,omitempty"`
 	Priority                  int     `json:"priority"`
 	ControlEnabled            bool    `json:"controlEnabled"`
+	WriteTarget               bool    `json:"writeTarget"`
 	CapacityKWh               float64 `json:"capacityKwh"`
 	CurrentSoc                *int    `json:"currentSoc,omitempty"`
 	CurrentEnergyKWh          float64 `json:"currentEnergyKwh"`

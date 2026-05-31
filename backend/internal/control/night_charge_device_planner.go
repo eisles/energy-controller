@@ -11,6 +11,7 @@ type NightChargeDeviceInput struct {
 	DeviceID                  int64
 	Name                      string
 	Kind                      string
+	DeviceType                string
 	Priority                  int
 	Enabled                   bool
 	ControlEnabled            bool
@@ -155,6 +156,8 @@ func nightChargeDeviceAllocationBlockReason(devicePlan domain.NightChargeDeviceP
 		return "device AC charge control is unavailable"
 	case device.Kind == "ecoflow_delta_pro3" && !device.WriteTarget:
 		return "DELTA Pro 3 is not the write target"
+	case device.Kind == "ecoflow_delta3_plus" && !device.WriteTarget:
+		return "DELTA 3 series device is not the write target"
 	case nightChargeDeviceSpecificBlockReason(device.Kind, guard) != "":
 		return nightChargeDeviceSpecificBlockReason(device.Kind, guard)
 	default:
@@ -188,8 +191,10 @@ func initialNightChargeDevicePlan(plan domain.NightChargePlan, device NightCharg
 		DeviceID:                  device.DeviceID,
 		Name:                      device.Name,
 		Kind:                      device.Kind,
+		DeviceType:                device.DeviceType,
 		Priority:                  device.Priority,
 		ControlEnabled:            device.ControlEnabled,
+		WriteTarget:               device.WriteTarget,
 		ReserveSoc:                device.ReserveSoc,
 		TargetSoc:                 device.TargetSoc,
 		MinTargetSoc:              minTargetSoc,

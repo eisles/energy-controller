@@ -648,6 +648,8 @@ function NightChargeDevicePlanItem({ devicePlan }: { devicePlan: NightChargeDevi
         <Detail label="必要充電" value={`${formatDecimal(devicePlan.requiredChargeKwh)} kWh`} />
         <Detail label="リザーブ制御範囲" value={formatReserveRange(devicePlan.minTargetSoc, devicePlan.maxTargetSoc)} />
         <Detail label="候補AC上限" value={devicePlan.recommendedAcChargeLimitW > 0 ? `${devicePlan.recommendedAcChargeLimitW} W` : "-"} />
+        <Detail label="Device type" value={devicePlan.deviceType || "-"} />
+        <Detail label="書込対象" value={devicePlan.writeTarget ? "対象" : "対象外"} />
         <Detail label="制御候補" value={devicePlan.controlEnabled ? "有効" : "無効"} />
         <Detail label="取得元" value={statusSourceLabel(devicePlan.dataSource)} />
       </div>
@@ -1088,6 +1090,12 @@ function nightChargeDeviceBlockReasonLabel(value: string) {
   }
   if (value === "device AC charge control is unavailable") {
     return "AC充電上限の制御に未対応です";
+  }
+  if (value === "DELTA 3 series device is not the write target") {
+    return "DELTA 3 系の書き込み対象ではありません";
+  }
+  if (value === "DELTA Pro 3 is not the write target") {
+    return "DELTA Pro 3 の書き込み対象ではありません";
   }
   if (value === "outside night charge window") {
     return "深夜充電時間外です";
