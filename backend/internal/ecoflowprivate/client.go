@@ -12,6 +12,8 @@ type Client struct {
 	cfg        Config
 	auth       sessionAuthenticator
 	transport  MQTTTransport
+	sessionKey string
+	cache      *SessionCache
 	sessionMu  sync.Mutex
 	session    Session
 	hasSession bool
@@ -22,13 +24,21 @@ type sessionAuthenticator interface {
 }
 
 func NewClient(cfg Config) *Client {
+	useDefaultSessionCache := cfg.SessionCache == nil && cfg.HTTPClient == nil
 	cfg = cfg.normalized()
-	return &Client{cfg: cfg, auth: NewAuthClient(cfg)}
+	if useDefaultSessionCache {
+		cfg.SessionCache = defaultSessionCache
+	}
+	return &Client{cfg: cfg, auth: NewAuthClient(cfg), sessionKey: privateSessionCacheKey(cfg), cache: cfg.SessionCache}
 }
 
 func NewClientWithTransport(cfg Config, transport MQTTTransport) *Client {
+	useDefaultSessionCache := cfg.SessionCache == nil && cfg.HTTPClient == nil
 	cfg = cfg.normalized()
-	return &Client{cfg: cfg, auth: NewAuthClient(cfg), transport: transport}
+	if useDefaultSessionCache {
+		cfg.SessionCache = defaultSessionCache
+	}
+	return &Client{cfg: cfg, auth: NewAuthClient(cfg), transport: transport, sessionKey: privateSessionCacheKey(cfg), cache: cfg.SessionCache}
 }
 
 func (c *Client) Probe(ctx context.Context) (Status, error) {
@@ -364,13 +374,29 @@ func (c *Client) cachedSession(ctx context.Context) (Session, bool, error) {
 	if c.hasSession {
 		return c.session, true, nil
 	}
-	session, err := c.auth.Login(ctx)
+	session, fromCache, err := c.cache.getOrLogin(ctx, c.sessionKey, c.auth)
+	if err != nil {
+		return Session{}, false, err
+	}
+	session, err = c.sessionForClient(session, fromCache)
 	if err != nil {
 		return Session{}, false, err
 	}
 	c.session = session
 	c.hasSession = true
-	return session, false, nil
+	return session, fromCache, nil
+}
+
+func (c *Client) sessionForClient(session Session, fromSharedCache bool) (Session, error) {
+	if !fromSharedCache || c.cfg.MQTTClientID != "" {
+		return session, nil
+	}
+	clientID, err := newPrivateMQTTClientID(session.UserID)
+	if err != nil {
+		return Session{}, err
+	}
+	session.MQTT.ClientID = clientID
+	return session, nil
 }
 
 func (c *Client) invalidateSession() {
@@ -378,6 +404,7 @@ func (c *Client) invalidateSession() {
 	defer c.sessionMu.Unlock()
 	c.session = Session{}
 	c.hasSession = false
+	c.cache.invalidate(c.sessionKey)
 }
 
 func isSessionAuthError(err error) bool {

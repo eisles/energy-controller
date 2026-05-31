@@ -3,6 +3,7 @@ package ecoflowprivate
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -282,6 +283,146 @@ func TestProbeRefreshesPrivateSessionAfterAuthFailure(t *testing.T) {
 	}
 }
 
+func TestProbeSharesPrivateSessionAcrossClients(t *testing.T) {
+	counts := &privateHTTPCallCounts{}
+	cache := newSessionCache(time.Hour, time.Minute, time.Now)
+	cfg := Config{
+		PrivateAPIHost: "api.test",
+		Email:          "user@example.com",
+		Password:       "secret",
+		DeviceType:     "DELTA_3",
+		HTTPClient:     newCountingPrivateHTTPClientWithPort(t, `8883`, counts),
+		Timeout:        time.Second,
+		SessionCache:   cache,
+	}
+	client1 := NewClientWithTransport(withDeviceSN(cfg, "SN123"), fakeTransport{
+		replies: []MQTTMessage{{Topic: "/app/user-1/SN123/thing/property/get_reply", Payload: displayPayload(t, 30, true)}},
+	})
+	client2 := NewClientWithTransport(withDeviceSN(cfg, "SN456"), fakeTransport{
+		replies: []MQTTMessage{{Topic: "/app/user-1/SN456/thing/property/get_reply", Payload: displayPayload(t, 40, true)}},
+	})
+
+	if _, err := client1.Probe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client2.Probe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if counts.login != 1 || counts.certification != 1 {
+		t.Fatalf("login calls = %d certification calls = %d, want 1 each across clients", counts.login, counts.certification)
+	}
+}
+
+func TestProbeBacksOffBusyPrivateLoginAcrossClients(t *testing.T) {
+	counts := &privateHTTPCallCounts{}
+	cache := newSessionCache(time.Hour, time.Minute, time.Now)
+	cfg := Config{
+		PrivateAPIHost: "api.test",
+		Email:          "user@example.com",
+		Password:       "secret",
+		DeviceType:     "DELTA_3",
+		HTTPClient:     busyLoginHTTPClient(counts),
+		Timeout:        time.Second,
+		SessionCache:   cache,
+	}
+	client1 := NewClientWithTransport(withDeviceSN(cfg, "SN123"), fakeTransport{})
+	client2 := NewClientWithTransport(withDeviceSN(cfg, "SN456"), fakeTransport{})
+
+	if _, err := client1.Probe(context.Background()); err == nil || !strings.Contains(err.Error(), "Server is too busy") {
+		t.Fatalf("first Probe error = %v, want busy login error", err)
+	}
+	if _, err := client2.Probe(context.Background()); err == nil || !strings.Contains(err.Error(), "login suppressed") {
+		t.Fatalf("second Probe error = %v, want suppressed login error", err)
+	}
+
+	if counts.login != 1 {
+		t.Fatalf("login calls = %d, want 1 after busy backoff", counts.login)
+	}
+}
+
+func TestProbeInvalidatesSharedPrivateSessionAfterAuthFailure(t *testing.T) {
+	counts := &privateHTTPCallCounts{}
+	cache := newSessionCache(time.Hour, time.Minute, time.Now)
+	cfg := Config{
+		PrivateAPIHost: "api.test",
+		Email:          "user@example.com",
+		Password:       "secret",
+		DeviceSN:       "SN123",
+		DeviceType:     "DELTA_3",
+		HTTPClient:     newCountingPrivateHTTPClientWithPort(t, `8883`, counts),
+		Timeout:        time.Second,
+		SessionCache:   cache,
+	}
+	client1 := NewClientWithTransport(cfg, fakeTransport{
+		replies: []MQTTMessage{{Topic: "/app/user-1/SN123/thing/property/get_reply", Payload: displayPayload(t, 30, true)}},
+	})
+	if _, err := client1.Probe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	transport := &authRetryTransport{
+		failOnCall: 1,
+		replies: []MQTTMessage{
+			{Topic: "/app/user-1/SN123/thing/property/get_reply", Payload: displayPayload(t, 30, true)},
+		},
+	}
+	client2 := NewClientWithTransport(cfg, transport)
+	if _, err := client2.Probe(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if counts.login != 2 || counts.certification != 2 {
+		t.Fatalf("login calls = %d certification calls = %d, want 2 each after shared session refresh", counts.login, counts.certification)
+	}
+	if transport.calls != 2 {
+		t.Fatalf("transport calls = %d, want auth failure and retry success", transport.calls)
+	}
+}
+
+func TestSessionForClientRegeneratesAutoMQTTClientIDFromSharedCache(t *testing.T) {
+	client := &Client{cfg: Config{}.normalized()}
+	session := Session{
+		UserID: "user-1",
+		MQTT:   MQTTInfo{ClientID: "ANDROID_CACHED_user-1"},
+	}
+
+	got1, err := client.sessionForClient(session, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got2, err := client.sessionForClient(session, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got1.MQTT.ClientID == session.MQTT.ClientID || got2.MQTT.ClientID == session.MQTT.ClientID {
+		t.Fatalf("client IDs = %q, %q, want regenerated from shared cache", got1.MQTT.ClientID, got2.MQTT.ClientID)
+	}
+	if got1.MQTT.ClientID == got2.MQTT.ClientID {
+		t.Fatalf("client ID reused = %q, want per-client generated ID", got1.MQTT.ClientID)
+	}
+	if !strings.HasPrefix(got1.MQTT.ClientID, "ANDROID_") || !strings.HasSuffix(got1.MQTT.ClientID, "_user-1") {
+		t.Fatalf("client ID = %q, want EcoFlow Android style ID", got1.MQTT.ClientID)
+	}
+}
+
+func TestSessionForClientPreservesConfiguredMQTTClientIDFromSharedCache(t *testing.T) {
+	client := &Client{cfg: Config{MQTTClientID: "fixed-client-id"}.normalized()}
+	session := Session{
+		UserID: "user-1",
+		MQTT:   MQTTInfo{ClientID: "fixed-client-id"},
+	}
+
+	got, err := client.sessionForClient(session, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MQTT.ClientID != "fixed-client-id" {
+		t.Fatalf("client ID = %q, want configured ID preserved", got.MQTT.ClientID)
+	}
+}
+
 func newTestClientWithTransport(t *testing.T, transport fakeTransport) *Client {
 	t.Helper()
 	return NewClientWithTransport(Config{
@@ -293,6 +434,11 @@ func newTestClientWithTransport(t *testing.T, transport fakeTransport) *Client {
 		HTTPClient:     newPrivateHTTPClient(t),
 		Timeout:        time.Second,
 	}, transport)
+}
+
+func withDeviceSN(cfg Config, sn string) Config {
+	cfg.DeviceSN = sn
+	return cfg
 }
 
 func displayPayload(t *testing.T, backupReserveSoc int, backupReserveEnabled bool) []byte {
@@ -371,6 +517,25 @@ func (t *authRetryTransport) Publish(context.Context, string, []byte, time.Durat
 }
 
 func (t *authRetryTransport) Disconnect() {}
+
+func busyLoginHTTPClient(counts *privateHTTPCallCounts) *http.Client {
+	return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/auth/login":
+			if counts != nil {
+				counts.login++
+			}
+			return jsonResponse(`{"code":"1001","message":"Server is too busy","data":{}}`), nil
+		case "/iot-auth/app/certification":
+			if counts != nil {
+				counts.certification++
+			}
+			return jsonResponse(`{"code":"0","message":"Success","data":{"url":"mqtt.ecoflow.com","port":8883,"certificateAccount":"acct","certificatePassword":"pass"}}`), nil
+		default:
+			return nil, fmt.Errorf("unexpected path %s", r.URL.Path)
+		}
+	})}
+}
 
 func mustPayloadSeq(t *testing.T, payload []byte) int {
 	t.Helper()

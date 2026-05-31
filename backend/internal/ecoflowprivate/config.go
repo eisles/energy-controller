@@ -20,6 +20,7 @@ type Config struct {
 	MQTTClientID   string
 	HTTPClient     *http.Client
 	Timeout        time.Duration
+	SessionCache   *SessionCache
 }
 
 func (c Config) normalized() Config {

@@ -310,7 +310,7 @@ export function Dashboard() {
     const timer = window.setInterval(() => {
       loadStatus();
       loadLogs();
-    }, 5000);
+    }, 10000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -390,7 +390,7 @@ export function Dashboard() {
     }
 
     loadLogPage();
-    const timer = window.setInterval(loadLogPage, 5000);
+    const timer = window.setInterval(loadLogPage, 10000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);

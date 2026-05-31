@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>EcoFlow Private MQTT Auth Throttle Implementation Plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; max-width: 960px; margin: 32px auto; padding: 0 20px; color: #111827; }
+    h1, h2 { line-height: 1.25; }
+    code { background: #f3f4f6; padding: 0.1em 0.3em; border-radius: 4px; }
+    ul { padding-left: 1.5rem; }
+    section { border-top: 1px solid #d1d5db; padding-top: 14px; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h1>EcoFlow Private MQTT Auth Throttle Implementation Plan</h1>
+  <section>
+    <h2>Goal</h2>
+    <p>EcoFlow private MQTT read/probe paths should avoid repeated <code>/auth/login</code> calls that trigger <code>code=1001 message=Server is too busy</code>.</p>
+    <ul>
+      <li>Reuse a successful private MQTT session across clients in the same server process.</li>
+      <li>Add a minimum relogin interval after busy login failures.</li>
+      <li>Preserve existing real-device write safety gates.</li>
+      <li>Keep credentials and tokens out of logs, plans, and persisted repository files.</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Non-goals</h2>
+    <ul>
+      <li>Do not add new EcoFlow write commands.</li>
+      <li>Do not implement DELTA 3 Plus TOU/self-powered mode switching in this change.</li>
+      <li>Do not persist EcoFlow tokens to the repository or to SQLite.</li>
+      <li>Do not change Nature Remo polling behavior beyond existing uncommitted UI polling changes.</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Current State</h2>
+    <ul>
+      <li><code>backend/internal/ecoflowprivate.Client</code> already reuses a <code>Session</code> inside one client instance.</li>
+      <li>The server and probe tooling can still create multiple client instances, so repeated login can happen across devices, routes, control-loop reads, and short-lived probe runs.</li>
+      <li><code>/api/devices/statuses</code> shows normal private MQTT status reads are working, while raw probe CLI currently fails at private login with <code>Server is too busy</code>.</li>
+      <li>Existing uncommitted file before this task: <code>frontend/components/Dashboard.tsx</code>. It is out of scope for this backend auth-control change.</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Files Likely To Change</h2>
+    <ul>
+      <li><code>backend/internal/ecoflowprivate/client.go</code></li>
+      <li><code>backend/internal/ecoflowprivate/auth.go</code> or a new auth/session cache helper in the same package</li>
+      <li><code>backend/internal/ecoflowprivate/client_test.go</code> or a new test file</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Data And API Contracts</h2>
+    <ul>
+      <li>No public API response shape changes are required.</li>
+      <li>Internal <code>Config</code> may gain optional session-cache/backoff fields only if needed for tests.</li>
+      <li>Session cache keys must not include secrets. A key may use normalized API host, email, and MQTT client ID.</li>
+      <li>Cached session values must remain in memory by default.</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Safety Boundaries</h2>
+    <ul>
+      <li>No real-device write path is added.</li>
+      <li>Existing write guards remain unchanged.</li>
+      <li>Error messages must not include password, token, or MQTT certificate password.</li>
+      <li>If a cached session fails with an auth-like MQTT error, invalidate it and retry at most once.</li>
+      <li>If login returns busy, cache only the backoff state and error summary, not credentials.</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Implementation Steps</h2>
+    <ol>
+      <li>Add a package-level in-memory session cache for EcoFlow private auth.</li>
+      <li>Key cache entries by non-secret auth identity.</li>
+      <li>Store successful session, session expiry, and busy retry timing.</li>
+      <li>Teach <code>Client.cachedSession</code> to reuse, back off, publish, and invalidate shared sessions.</li>
+      <li>Keep test clients isolated.</li>
+      <li>Add unit tests for shared login, busy backoff, and invalidation.</li>
+    </ol>
+  </section>
+  <section>
+    <h2>Review Points</h2>
+    <ul>
+      <li>No secrets are logged or written.</li>
+      <li>Concurrency is protected with mutexes.</li>
+      <li>Backoff is scoped to auth identity, not device serial number.</li>
+      <li>Existing per-client session reuse tests still pass.</li>
+      <li>No write-command behavior changes.</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Verification</h2>
+    <ul>
+      <li><code>cd backend &amp;&amp; rtk go test ./internal/ecoflowprivate ./internal/api</code></li>
+      <li>If broad enough after implementation: <code>cd backend &amp;&amp; rtk go test ./...</code></li>
+    </ul>
+  </section>
+  <section>
+    <h2>Rollback Notes</h2>
+    <p>The change should be isolated to private MQTT auth caching. If unexpected MQTT client-ID conflicts appear in real operation, disable shared session reuse in config or revert the auth cache while keeping existing per-client session behavior.</p>
+  </section>
+</body>
+</html>
