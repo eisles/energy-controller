@@ -16,6 +16,8 @@ type TariffRepository struct {
 	db *sql.DB
 }
 
+const batteryComparisonMaxSampleInterval = 120 * time.Second
+
 func NewTariffRepository(db *sql.DB) *TariffRepository {
 	return &TariffRepository{db: db}
 }
@@ -281,7 +283,158 @@ func (r *TariffRepository) EnergyCostSummary(ctx context.Context, from *time.Tim
 	summary.TotalImportCostYen = round2(summary.TotalImportCostYen)
 	summary.TotalExportIncomeYen = round2(summary.TotalExportIncomeYen)
 	summary.NetCostYen = round2(summary.TotalImportCostYen - summary.TotalExportIncomeYen)
+	comparison, err := r.batteryCostComparison(ctx, plans, rulesByPlanID, from, to)
+	if err != nil {
+		return domain.TariffSummary{}, err
+	}
+	summary.BatteryComparison = &comparison
 	return summary, nil
+}
+
+func (r *TariffRepository) batteryCostComparison(ctx context.Context, plans []domain.TariffPlan, rulesByPlanID map[int64][]domain.TariffPeriodRule, from *time.Time, to *time.Time) (domain.BatteryCostComparison, error) {
+	comparison := domain.BatteryCostComparison{
+		Available:                false,
+		Method:                   "power_logs_no_battery_estimate",
+		Quality:                  "approximate",
+		MaxSampleIntervalSeconds: int(batteryComparisonMaxSampleInterval.Seconds()),
+		Note:                     "power_logs の DELTA Pro 3 入出力から、grid_w - battery_input_w + battery_output_w でポータブルバッテリー無しを近似します。機器別入出力ログが揃うまでは補助バッテリー分は限定的な推定です。",
+	}
+	rows, err := r.queryPowerLogBatterySamples(ctx, from, to)
+	if err != nil {
+		return comparison, err
+	}
+	defer rows.Close()
+
+	var previous *batteryCostSample
+	for rows.Next() {
+		current, err := scanBatteryCostSample(rows)
+		if err != nil {
+			return comparison, err
+		}
+		if previous != nil {
+			if err := addBatteryCostInterval(&comparison, plans, rulesByPlanID, *previous, current.measuredAt); err != nil {
+				return comparison, err
+			}
+		}
+		previous = &current
+	}
+	if err := rows.Err(); err != nil {
+		return comparison, err
+	}
+
+	if comparison.SampleCount > 0 {
+		comparison.Available = true
+	}
+	comparison.ActualImportKWh = round4(comparison.ActualImportKWh)
+	comparison.ActualExportKWh = round4(comparison.ActualExportKWh)
+	comparison.ActualImportCostYen = round2(comparison.ActualImportCostYen)
+	comparison.ActualExportIncomeYen = round2(comparison.ActualExportIncomeYen)
+	comparison.ActualNetCostYen = round2(comparison.ActualImportCostYen - comparison.ActualExportIncomeYen)
+	comparison.EstimatedNoBatteryImportKWh = round4(comparison.EstimatedNoBatteryImportKWh)
+	comparison.EstimatedNoBatteryExportKWh = round4(comparison.EstimatedNoBatteryExportKWh)
+	comparison.EstimatedNoBatteryImportCostYen = round2(comparison.EstimatedNoBatteryImportCostYen)
+	comparison.EstimatedNoBatteryExportIncomeYen = round2(comparison.EstimatedNoBatteryExportIncomeYen)
+	comparison.EstimatedNoBatteryNetCostYen = round2(comparison.EstimatedNoBatteryImportCostYen - comparison.EstimatedNoBatteryExportIncomeYen)
+	comparison.EstimatedSavingsYen = round2(comparison.EstimatedNoBatteryNetCostYen - comparison.ActualNetCostYen)
+	comparison.BatteryInputKWh = round4(comparison.BatteryInputKWh)
+	comparison.BatteryOutputKWh = round4(comparison.BatteryOutputKWh)
+	return comparison, nil
+}
+
+type batteryCostSample struct {
+	measuredAt     time.Time
+	gridW          int
+	batteryInputW  int
+	batteryOutputW int
+}
+
+func (r *TariffRepository) queryPowerLogBatterySamples(ctx context.Context, from *time.Time, to *time.Time) (*sql.Rows, error) {
+	filter := EnergyMeterLogPageFilter{From: from, To: to}
+	whereClause, args := energyMeterLogWhere(filter)
+	return r.db.QueryContext(ctx, `SELECT measured_at, grid_w,
+		COALESCE(battery_input_w, 0), COALESCE(battery_output_w, 0)
+		FROM power_logs
+		`+whereClause+`
+		ORDER BY measured_at ASC, id ASC`, args...)
+}
+
+func scanBatteryCostSample(rows *sql.Rows) (batteryCostSample, error) {
+	var sample batteryCostSample
+	var measuredAt string
+	if err := rows.Scan(&measuredAt, &sample.gridW, &sample.batteryInputW, &sample.batteryOutputW); err != nil {
+		return batteryCostSample{}, err
+	}
+	parsedMeasuredAt, err := parseTime(measuredAt)
+	if err != nil {
+		return batteryCostSample{}, err
+	}
+	sample.measuredAt = parsedMeasuredAt
+	return sample, nil
+}
+
+func addBatteryCostInterval(comparison *domain.BatteryCostComparison, plans []domain.TariffPlan, rulesByPlanID map[int64][]domain.TariffPeriodRule, sample batteryCostSample, nextMeasuredAt time.Time) error {
+	duration := nextMeasuredAt.Sub(sample.measuredAt)
+	if duration <= 0 {
+		comparison.SkippedSampleCount++
+		return nil
+	}
+	if duration > batteryComparisonMaxSampleInterval {
+		comparison.SkippedSampleCount++
+		return nil
+	}
+	plan, rule, err := tariffPlanAndRuleAt(plans, rulesByPlanID, sample.measuredAt)
+	if err != nil {
+		return err
+	}
+	if plan == nil {
+		comparison.SkippedSampleCount++
+		return nil
+	}
+
+	hours := duration.Hours()
+	actualKWh := float64(sample.gridW) * hours / 1000
+	noBatteryW := sample.gridW - sample.batteryInputW + sample.batteryOutputW
+	noBatteryKWh := float64(noBatteryW) * hours / 1000
+	batteryInputKWh := float64(sample.batteryInputW) * hours / 1000
+	batteryOutputKWh := float64(sample.batteryOutputW) * hours / 1000
+
+	addTariffEnergy(
+		&comparison.ActualImportKWh,
+		&comparison.ActualExportKWh,
+		&comparison.ActualImportCostYen,
+		&comparison.ActualExportIncomeYen,
+		actualKWh,
+		rule.RateYen,
+		plan.ExportRateYen,
+	)
+	addTariffEnergy(
+		&comparison.EstimatedNoBatteryImportKWh,
+		&comparison.EstimatedNoBatteryExportKWh,
+		&comparison.EstimatedNoBatteryImportCostYen,
+		&comparison.EstimatedNoBatteryExportIncomeYen,
+		noBatteryKWh,
+		rule.RateYen,
+		plan.ExportRateYen,
+	)
+	if batteryInputKWh > 0 {
+		comparison.BatteryInputKWh += batteryInputKWh
+	}
+	if batteryOutputKWh > 0 {
+		comparison.BatteryOutputKWh += batteryOutputKWh
+	}
+	comparison.SampleCount++
+	return nil
+}
+
+func addTariffEnergy(importKWh *float64, exportKWh *float64, importCostYen *float64, exportIncomeYen *float64, signedKWh float64, importRateYen float64, exportRateYen float64) {
+	if signedKWh >= 0 {
+		*importKWh += signedKWh
+		*importCostYen += signedKWh * importRateYen
+		return
+	}
+	exported := -signedKWh
+	*exportKWh += exported
+	*exportIncomeYen += exported * exportRateYen
 }
 
 var ErrCannotDeleteLastTariffPlan = errors.New("cannot delete the last tariff plan")
@@ -454,6 +607,27 @@ func effectiveTariffPlan(plans []domain.TariffPlan, at time.Time) *domain.Tariff
 		return &plans[i]
 	}
 	return nil
+}
+
+func tariffPlanAndRuleAt(plans []domain.TariffPlan, rulesByPlanID map[int64][]domain.TariffPeriodRule, at time.Time) (*domain.TariffPlan, domain.TariffPeriodRule, error) {
+	plan := effectiveTariffPlan(plans, at)
+	if plan == nil {
+		return nil, domain.TariffPeriodRule{}, nil
+	}
+	location, err := time.LoadLocation(plan.Timezone)
+	if err != nil {
+		return nil, domain.TariffPeriodRule{}, err
+	}
+	rule := resolveTariffRule(rulesByPlanID[plan.ID], at.In(location))
+	if rule.Period == "" {
+		period := tariffPeriod(at.In(location))
+		rule = domain.TariffPeriodRule{
+			TariffPlanID: plan.ID,
+			Period:       period,
+			RateYen:      tariffRate(*plan, period),
+		}
+	}
+	return plan, rule, nil
 }
 
 func tariffRate(plan domain.TariffPlan, period string) float64 {

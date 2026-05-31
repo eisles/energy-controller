@@ -96,6 +96,9 @@ export function TariffSummaryPanel({
             <strong>{summary?.timezone ?? "-"}</strong>
           </div>
         </div>
+        {summary?.batteryComparison ? (
+          <BatteryComparisonSummary summary={summary} />
+        ) : null}
         <div className="table-wrap tariff-table-wrap">
           <Table>
             <TableHeader>
@@ -139,6 +142,95 @@ export function TariffSummaryPanel({
         {summary?.note ? <p className="readonly-note">{summary.note}</p> : null}
       </CardContent>
     </Card>
+  );
+}
+
+function BatteryComparisonSummary({ summary }: { summary: TariffSummary }) {
+  const comparison = summary.batteryComparison;
+  if (!comparison) {
+    return null;
+  }
+
+  const savingsLabel = comparison.estimatedSavingsYen >= 0 ? "推定削減額" : "推定増加額";
+  const signedSavings = Math.abs(comparison.estimatedSavingsYen);
+
+  return (
+    <>
+      <div className="tariff-summary-grid" aria-label="battery cost comparison">
+        <div className="tariff-summary-item">
+          <span>比較データ</span>
+          <strong>{comparison.available ? `${comparison.sampleCount} 件` : "不足"}</strong>
+        </div>
+        <div className="tariff-summary-item">
+          <span>バッテリーあり</span>
+          <strong>{comparison.available ? yen(comparison.actualNetCostYen) : "-"}</strong>
+        </div>
+        <div className="tariff-summary-item">
+          <span>バッテリーなし推定</span>
+          <strong>{comparison.available ? yen(comparison.estimatedNoBatteryNetCostYen) : "-"}</strong>
+        </div>
+        <div className="tariff-summary-item">
+          <span>{savingsLabel}</span>
+          <strong>{comparison.available ? yen(signedSavings) : "-"}</strong>
+        </div>
+        <div className="tariff-summary-item">
+          <span>充電/放電</span>
+          <strong>{comparison.available ? `${kwh(comparison.batteryInputKwh)} / ${kwh(comparison.batteryOutputKwh)}` : "-"}</strong>
+        </div>
+        <div className="tariff-summary-item">
+          <span>推定品質</span>
+          <strong>{comparison.quality || "-"}</strong>
+        </div>
+      </div>
+      <div className="table-wrap tariff-table-wrap">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>比較</TableHead>
+              <TableHead>買電量</TableHead>
+              <TableHead>買電料金</TableHead>
+              <TableHead>売電量</TableHead>
+              <TableHead>売電料金</TableHead>
+              <TableHead>差引</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {!comparison.available ? (
+              <TableRow>
+                <TableCell colSpan={6} className="empty-cell">
+                  比較に使えるバッテリーログがまだ不足しています。
+                </TableCell>
+              </TableRow>
+            ) : (
+              <>
+                <TableRow>
+                  <TableCell>バッテリーあり</TableCell>
+                  <TableCell>{kwh(comparison.actualImportKwh)}</TableCell>
+                  <TableCell>{yen(comparison.actualImportCostYen)}</TableCell>
+                  <TableCell>{kwh(comparison.actualExportKwh)}</TableCell>
+                  <TableCell>{yen(comparison.actualExportIncomeYen)}</TableCell>
+                  <TableCell>{yen(comparison.actualNetCostYen)}</TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell>バッテリーなし推定</TableCell>
+                  <TableCell>{kwh(comparison.estimatedNoBatteryImportKwh)}</TableCell>
+                  <TableCell>{yen(comparison.estimatedNoBatteryImportCostYen)}</TableCell>
+                  <TableCell>{kwh(comparison.estimatedNoBatteryExportKwh)}</TableCell>
+                  <TableCell>{yen(comparison.estimatedNoBatteryExportIncomeYen)}</TableCell>
+                  <TableCell>{yen(comparison.estimatedNoBatteryNetCostYen)}</TableCell>
+                </TableRow>
+              </>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+      <p className="readonly-note">
+        {comparison.note}
+        {comparison.skippedSampleCount > 0
+          ? ` 欠損または${comparison.maxSampleIntervalSeconds}秒超の区間 ${comparison.skippedSampleCount} 件は除外しています。`
+          : ""}
+      </p>
+    </>
   );
 }
 

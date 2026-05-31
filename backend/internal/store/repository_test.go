@@ -1184,6 +1184,73 @@ func TestTariffRepositorySummarizesEnergyCost(t *testing.T) {
 	}
 }
 
+func TestTariffRepositoryEstimatesBatteryCostComparison(t *testing.T) {
+	db := openTestDB(t)
+	tariffRepo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	base := time.Date(2026, 5, 18, 10, 0, 0, 0, jst)
+	samples := []struct {
+		at             time.Time
+		gridW          int
+		batteryInputW  int
+		batteryOutputW int
+	}{
+		{at: base, gridW: 500, batteryInputW: 1000, batteryOutputW: 0},
+		{at: base.Add(time.Minute), gridW: -300, batteryInputW: 0, batteryOutputW: 600},
+		{at: base.Add(2 * time.Minute), gridW: 0, batteryInputW: 0, batteryOutputW: 0},
+	}
+	for _, sample := range samples {
+		if _, err := db.Exec(`INSERT INTO power_logs (
+			measured_at, grid_w, import_w, export_w, battery_soc, battery_input_w,
+			battery_output_w, ac_charge_limit_w, target_charge_w, decision_reason,
+			mode, command_sent, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			sample.at.Format(time.RFC3339Nano),
+			sample.gridW,
+			max(sample.gridW, 0),
+			max(-sample.gridW, 0),
+			50,
+			sample.batteryInputW,
+			sample.batteryOutputW,
+			400,
+			0,
+			"test",
+			"test",
+			0,
+			sample.at.Format(time.RFC3339Nano),
+		); err != nil {
+			t.Fatalf("insert power log failed: %v", err)
+		}
+	}
+
+	summary, err := tariffRepo.EnergyCostSummary(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("EnergyCostSummary failed: %v", err)
+	}
+	comparison := summary.BatteryComparison
+	if comparison == nil || !comparison.Available {
+		t.Fatalf("BatteryComparison = %#v, want available comparison", comparison)
+	}
+	if comparison.SampleCount != 2 || comparison.SkippedSampleCount != 0 {
+		t.Fatalf("comparison samples = %d skipped = %d, want 2 and 0", comparison.SampleCount, comparison.SkippedSampleCount)
+	}
+	if !floatAlmostEqual(comparison.ActualImportKWh, 0.0083) || !floatAlmostEqual(comparison.ActualExportKWh, 0.005) {
+		t.Fatalf("actual kWh = import %v export %v, want 0.0083 and 0.005", comparison.ActualImportKWh, comparison.ActualExportKWh)
+	}
+	if !floatAlmostEqual(comparison.EstimatedNoBatteryImportKWh, 0.005) || !floatAlmostEqual(comparison.EstimatedNoBatteryExportKWh, 0.0083) {
+		t.Fatalf("no battery kWh = import %v export %v, want 0.005 and 0.0083", comparison.EstimatedNoBatteryImportKWh, comparison.EstimatedNoBatteryExportKWh)
+	}
+	if !floatAlmostEqual(comparison.ActualNetCostYen, 0.24) || !floatAlmostEqual(comparison.EstimatedNoBatteryNetCostYen, 0.11) {
+		t.Fatalf("net cost = actual %v no-battery %v, want 0.24 and 0.11", comparison.ActualNetCostYen, comparison.EstimatedNoBatteryNetCostYen)
+	}
+	if !floatAlmostEqual(comparison.EstimatedSavingsYen, -0.13) {
+		t.Fatalf("EstimatedSavingsYen = %v, want -0.13", comparison.EstimatedSavingsYen)
+	}
+	if !floatAlmostEqual(comparison.BatteryInputKWh, 0.0167) || !floatAlmostEqual(comparison.BatteryOutputKWh, 0.01) {
+		t.Fatalf("battery kWh = input %v output %v, want 0.0167 and 0.01", comparison.BatteryInputKWh, comparison.BatteryOutputKWh)
+	}
+}
+
 func TestTariffRepositoryUsesHistoricalPlanAtMeasuredAt(t *testing.T) {
 	db := openTestDB(t)
 	meterRepo := NewEnergyMeterRepository(db)

@@ -19,7 +19,7 @@ type MetricKey = "gridW" | "importW" | "exportW" | "targetChargeW" | "state" | "
 
 const primaryMetrics: MetricKey[] = ["gridW", "importW", "exportW", "targetChargeW", "state", "updatedAt"];
 const passthroughToleranceW = 100;
-const activePowerThresholdW = 50;
+const activePowerThresholdW = 30;
 
 type BadgeVariant = "default" | "secondary" | "success" | "warning" | "destructive";
 

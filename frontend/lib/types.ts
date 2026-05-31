@@ -627,6 +627,30 @@ export type TariffSummary = {
   totalExportIncomeYen: number;
   netCostYen: number;
   periods: TariffPeriodSummary[];
+  batteryComparison?: BatteryCostComparison;
+  note: string;
+};
+
+export type BatteryCostComparison = {
+  available: boolean;
+  method: string;
+  quality: string;
+  sampleCount: number;
+  skippedSampleCount: number;
+  maxSampleIntervalSeconds: number;
+  actualImportKwh: number;
+  actualExportKwh: number;
+  actualImportCostYen: number;
+  actualExportIncomeYen: number;
+  actualNetCostYen: number;
+  estimatedNoBatteryImportKwh: number;
+  estimatedNoBatteryExportKwh: number;
+  estimatedNoBatteryImportCostYen: number;
+  estimatedNoBatteryExportIncomeYen: number;
+  estimatedNoBatteryNetCostYen: number;
+  estimatedSavingsYen: number;
+  batteryInputKwh: number;
+  batteryOutputKwh: number;
   note: string;
 };
 

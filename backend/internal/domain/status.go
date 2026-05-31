@@ -625,16 +625,40 @@ type TariffPeriodSummary struct {
 }
 
 type TariffSummary struct {
-	PlanName             string                `json:"planName"`
-	Timezone             string                `json:"timezone"`
-	From                 *time.Time            `json:"from,omitempty"`
-	To                   *time.Time            `json:"to,omitempty"`
-	SampleCount          int                   `json:"sampleCount"`
-	TotalImportKWh       float64               `json:"totalImportKwh"`
-	TotalExportKWh       float64               `json:"totalExportKwh"`
-	TotalImportCostYen   float64               `json:"totalImportCostYen"`
-	TotalExportIncomeYen float64               `json:"totalExportIncomeYen"`
-	NetCostYen           float64               `json:"netCostYen"`
-	Periods              []TariffPeriodSummary `json:"periods"`
-	Note                 string                `json:"note"`
+	PlanName             string                 `json:"planName"`
+	Timezone             string                 `json:"timezone"`
+	From                 *time.Time             `json:"from,omitempty"`
+	To                   *time.Time             `json:"to,omitempty"`
+	SampleCount          int                    `json:"sampleCount"`
+	TotalImportKWh       float64                `json:"totalImportKwh"`
+	TotalExportKWh       float64                `json:"totalExportKwh"`
+	TotalImportCostYen   float64                `json:"totalImportCostYen"`
+	TotalExportIncomeYen float64                `json:"totalExportIncomeYen"`
+	NetCostYen           float64                `json:"netCostYen"`
+	Periods              []TariffPeriodSummary  `json:"periods"`
+	BatteryComparison    *BatteryCostComparison `json:"batteryComparison,omitempty"`
+	Note                 string                 `json:"note"`
+}
+
+type BatteryCostComparison struct {
+	Available                         bool    `json:"available"`
+	Method                            string  `json:"method"`
+	Quality                           string  `json:"quality"`
+	SampleCount                       int     `json:"sampleCount"`
+	SkippedSampleCount                int     `json:"skippedSampleCount"`
+	MaxSampleIntervalSeconds          int     `json:"maxSampleIntervalSeconds"`
+	ActualImportKWh                   float64 `json:"actualImportKwh"`
+	ActualExportKWh                   float64 `json:"actualExportKwh"`
+	ActualImportCostYen               float64 `json:"actualImportCostYen"`
+	ActualExportIncomeYen             float64 `json:"actualExportIncomeYen"`
+	ActualNetCostYen                  float64 `json:"actualNetCostYen"`
+	EstimatedNoBatteryImportKWh       float64 `json:"estimatedNoBatteryImportKwh"`
+	EstimatedNoBatteryExportKWh       float64 `json:"estimatedNoBatteryExportKwh"`
+	EstimatedNoBatteryImportCostYen   float64 `json:"estimatedNoBatteryImportCostYen"`
+	EstimatedNoBatteryExportIncomeYen float64 `json:"estimatedNoBatteryExportIncomeYen"`
+	EstimatedNoBatteryNetCostYen      float64 `json:"estimatedNoBatteryNetCostYen"`
+	EstimatedSavingsYen               float64 `json:"estimatedSavingsYen"`
+	BatteryInputKWh                   float64 `json:"batteryInputKwh"`
+	BatteryOutputKWh                  float64 `json:"batteryOutputKwh"`
+	Note                              string  `json:"note"`
 }
