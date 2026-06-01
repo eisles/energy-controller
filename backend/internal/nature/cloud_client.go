@@ -6,26 +6,44 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/eisles/energy-controller/backend/internal/domain"
 )
 
 const defaultCloudBaseURL = "https://api.nature.global"
+const defaultCloudCacheTTL = 10 * time.Second
+const defaultCloudRateLimitBackoff = 60 * time.Second
+const defaultCloudRateLimitCacheMaxAge = 5 * time.Minute
 
 type CloudConfig struct {
-	AccessToken string
-	ApplianceID string
-	BaseURL     string
-	HTTPClient  *http.Client
+	AccessToken          string
+	ApplianceID          string
+	BaseURL              string
+	HTTPClient           *http.Client
+	CacheTTL             time.Duration
+	RateLimitBackoff     time.Duration
+	RateLimitCacheMaxAge time.Duration
+	Now                  func() time.Time
 }
 
 type CloudClient struct {
-	accessToken string
-	applianceID string
-	baseURL     string
-	httpClient  *http.Client
+	accessToken          string
+	applianceID          string
+	baseURL              string
+	httpClient           *http.Client
+	cacheTTL             time.Duration
+	rateLimitBackoff     time.Duration
+	rateLimitCacheMaxAge time.Duration
+	now                  func() time.Time
+	mu                   sync.Mutex
+	cachedPayload        *cloudAppliancesResponse
+	cachedAt             time.Time
+	rateLimitUntil       time.Time
+	lastWarning          string
 }
 
 func NewCloudClient(cfg CloudConfig) *CloudClient {
@@ -37,11 +55,31 @@ func NewCloudClient(cfg CloudConfig) *CloudClient {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 15 * time.Second}
 	}
+	cacheTTL := cfg.CacheTTL
+	if cacheTTL <= 0 {
+		cacheTTL = defaultCloudCacheTTL
+	}
+	rateLimitBackoff := cfg.RateLimitBackoff
+	if rateLimitBackoff <= 0 {
+		rateLimitBackoff = defaultCloudRateLimitBackoff
+	}
+	rateLimitCacheMaxAge := cfg.RateLimitCacheMaxAge
+	if rateLimitCacheMaxAge <= 0 {
+		rateLimitCacheMaxAge = defaultCloudRateLimitCacheMaxAge
+	}
+	now := cfg.Now
+	if now == nil {
+		now = time.Now
+	}
 	return &CloudClient{
-		accessToken: cfg.AccessToken,
-		applianceID: cfg.ApplianceID,
-		baseURL:     baseURL,
-		httpClient:  httpClient,
+		accessToken:          cfg.AccessToken,
+		applianceID:          cfg.ApplianceID,
+		baseURL:              baseURL,
+		httpClient:           httpClient,
+		cacheTTL:             cacheTTL,
+		rateLimitBackoff:     rateLimitBackoff,
+		rateLimitCacheMaxAge: rateLimitCacheMaxAge,
+		now:                  now,
 	}
 }
 
@@ -61,9 +99,32 @@ func (c *CloudClient) CurrentEnergyMeterReading(ctx context.Context) (domain.Ene
 	return selectEnergyMeterReading(payload.Appliances, c.applianceID)
 }
 
+func (c *CloudClient) LastGridReadWarning() *string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.lastWarning == "" {
+		return nil
+	}
+	warning := c.lastWarning
+	return &warning
+}
+
 func (c *CloudClient) fetchAppliances(ctx context.Context) (cloudAppliancesResponse, error) {
 	if c.accessToken == "" {
 		return cloudAppliancesResponse{}, fmt.Errorf("nature access token is empty")
+	}
+	now := c.now()
+	if payload, warning, ok, err := c.rateLimitedCachedAppliances(now); ok {
+		if err != nil {
+			c.setLastWarning("")
+			return cloudAppliancesResponse{}, err
+		}
+		c.setLastWarning(warning)
+		return payload, nil
+	}
+	if payload, ok := c.cachedAppliances(now); ok {
+		c.setLastWarning("")
+		return payload, nil
 	}
 	endpoint, err := url.JoinPath(c.baseURL, "/1/echonetlite/appliances")
 	if err != nil {
@@ -77,18 +138,110 @@ func (c *CloudClient) fetchAppliances(ctx context.Context) (cloudAppliancesRespo
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.setLastWarning("")
 		return cloudAppliancesResponse{}, fmt.Errorf("nature cloud request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return c.handleRateLimitedResponse(resp, now)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		c.setLastWarning("")
 		return cloudAppliancesResponse{}, fmt.Errorf("nature cloud returned HTTP %d", resp.StatusCode)
 	}
 
 	var payload cloudAppliancesResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		c.setLastWarning("")
 		return cloudAppliancesResponse{}, fmt.Errorf("decode nature cloud response: %w", err)
 	}
+	c.storeCachedAppliances(payload, now)
 	return payload, nil
+}
+
+func (c *CloudClient) cachedAppliances(now time.Time) (cloudAppliancesResponse, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cachedPayload == nil || c.cachedAt.IsZero() {
+		return cloudAppliancesResponse{}, false
+	}
+	if c.cacheTTL <= 0 || now.Sub(c.cachedAt) > c.cacheTTL {
+		return cloudAppliancesResponse{}, false
+	}
+	return *c.cachedPayload, true
+}
+
+func (c *CloudClient) rateLimitedCachedAppliances(now time.Time) (cloudAppliancesResponse, string, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.rateLimitUntil.IsZero() || !now.Before(c.rateLimitUntil) {
+		return cloudAppliancesResponse{}, "", false, nil
+	}
+	if c.cachedPayload == nil || !c.cachedPayloadValidForRateLimitLocked(now) {
+		return cloudAppliancesResponse{}, "", true, fmt.Errorf("nature cloud rate limited until %s and no recent cached value is available", c.rateLimitUntil.Format(time.RFC3339))
+	}
+	return *c.cachedPayload, c.rateLimitWarningLocked(), true, nil
+}
+
+func (c *CloudClient) handleRateLimitedResponse(resp *http.Response, now time.Time) (cloudAppliancesResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	backoff := parseRetryAfter(resp.Header.Get("Retry-After"), now, c.rateLimitBackoff)
+	c.rateLimitUntil = now.Add(backoff)
+	if c.cachedPayload != nil && c.cachedPayloadValidForRateLimitLocked(now) {
+		c.lastWarning = c.rateLimitWarningLocked()
+		return *c.cachedPayload, nil
+	}
+	c.lastWarning = ""
+	return cloudAppliancesResponse{}, fmt.Errorf("nature cloud returned HTTP %d; retry after %s", resp.StatusCode, c.rateLimitUntil.Format(time.RFC3339))
+}
+
+func (c *CloudClient) storeCachedAppliances(payload cloudAppliancesResponse, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cached := payload
+	c.cachedPayload = &cached
+	c.cachedAt = now
+	c.rateLimitUntil = time.Time{}
+	c.lastWarning = ""
+}
+
+func (c *CloudClient) setLastWarning(warning string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastWarning = warning
+}
+
+func (c *CloudClient) rateLimitWarningLocked() string {
+	return fmt.Sprintf("Nature Remo grid power used cached value because nature cloud is rate limited until %s", c.rateLimitUntil.Format(time.RFC3339))
+}
+
+func (c *CloudClient) cachedPayloadValidForRateLimitLocked(now time.Time) bool {
+	return c.cachedPayload != nil && !c.cachedAt.IsZero() && now.Sub(c.cachedAt) <= c.rateLimitCacheMaxAge
+}
+
+func parseRetryAfter(value string, now time.Time, fallback time.Duration) time.Duration {
+	if fallback <= 0 {
+		fallback = defaultCloudRateLimitBackoff
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		if seconds <= 0 {
+			return fallback
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	retryAt, err := http.ParseTime(value)
+	if err != nil {
+		return fallback
+	}
+	if !retryAt.After(now) {
+		return fallback
+	}
+	return retryAt.Sub(now)
 }
 
 type cloudAppliancesResponse struct {

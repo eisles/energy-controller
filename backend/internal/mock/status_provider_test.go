@@ -37,6 +37,15 @@ func (r staticGridReader) CurrentGridPower(context.Context) (domain.GridPower, t
 	return r.gridPower, r.updatedAt, nil
 }
 
+type warningGridReader struct {
+	staticGridReader
+	warning string
+}
+
+func (r warningGridReader) LastGridReadWarning() *string {
+	return &r.warning
+}
+
 type staticBatteryReader struct {
 	status domain.BatteryStatus
 }
@@ -191,5 +200,35 @@ func TestStatusProviderSuppressesRetryAfterWriteFailure(t *testing.T) {
 	}
 	if !strings.Contains(second.LastDecisionReason, "command suppressed") {
 		t.Fatalf("second LastDecisionReason = %q, want command suppressed", second.LastDecisionReason)
+	}
+}
+
+func TestStatusProviderReportsGridReaderWarningWithoutZeroingGridPower(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	provider := NewStatusProviderWithReaders(
+		fixedClock{now: now},
+		control.DefaultSettings(),
+		false,
+		true,
+		false,
+		false,
+		warningGridReader{
+			staticGridReader: staticGridReader{gridPower: domain.GridPower{GridW: -800, ImportW: 0, ExportW: 800}, updatedAt: now},
+			warning:          "Nature Remo grid power used cached value because nature cloud is rate limited until 2026-05-18T12:01:00Z",
+		},
+		staticBatteryReader{status: domain.BatteryStatus{Soc: 50, IsOnline: true}},
+		ecoflow.NewMockWriteClient(),
+		"ecoflow-read",
+	)
+
+	status, err := provider.CurrentStatus(context.Background())
+	if err != nil {
+		t.Fatalf("CurrentStatus failed: %v", err)
+	}
+	if status.GridW != -800 || status.ExportW != 800 {
+		t.Fatalf("grid = %d/%d, want cached export 800W", status.GridW, status.ExportW)
+	}
+	if status.LastError == nil || !strings.Contains(*status.LastError, "rate limited") {
+		t.Fatalf("LastError = %v, want rate-limit warning", status.LastError)
 	}
 }

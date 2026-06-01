@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Nature Remo 429 backoff and cache implementation plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #17202a; }
+    h1, h2, h3 { line-height: 1.25; }
+    code { background: #f3f4f6; padding: 0.1rem 0.25rem; border-radius: 4px; }
+    pre { background: #111827; color: #f9fafb; padding: 16px; border-radius: 8px; overflow-x: auto; }
+    ul, ol { padding-left: 1.4rem; }
+  </style>
+</head>
+<body>
+  <h1>Nature Remo 429 backoff and cache implementation plan</h1>
+  <h2>Goal</h2>
+  <p>Keep grid import/export control responsive while reducing Nature Cloud HTTP 429 risk.</p>
+  <p>The control loop should still be able to run at a short practical interval, but Nature Cloud reads must not be issued more often than necessary. When Nature Cloud returns HTTP 429, the system should back off and reuse the last successful smart-meter payload for a bounded period instead of treating grid power as 0 W.</p>
+  <h2>Non-goals</h2>
+  <ul>
+    <li>Do not change EcoFlow real-write safety gates.</li>
+    <li>Do not enable real control by default.</li>
+    <li>Do not add or expose Nature/EcoFlow credentials.</li>
+    <li>Do not change charge/discharge planner thresholds except for using cached Nature values when rate limited.</li>
+    <li>Do not replace Nature Cloud with local Nature Remo access in this change.</li>
+  </ul>
+  <h2>Current state</h2>
+  <ul>
+    <li><code>backend/internal/nature/cloud_client.go</code>: <code>CurrentGridPower</code> and <code>CurrentEnergyMeterReading</code> each call <code>fetchAppliances</code>.</li>
+    <li><code>backend/internal/mock/status_provider.go</code>: any Nature grid read error returns 0 W and sets <code>LastError</code>.</li>
+    <li><code>backend/cmd/server/main.go</code>: cumulative energy is recorded after each control decision, adding API pressure when the client does not cache.</li>
+  </ul>
+  <h2>Design</h2>
+  <h3>Nature Cloud response cache</h3>
+  <p>Add an in-memory cache inside <code>nature.CloudClient</code>. Cache the whole <code>/1/echonetlite/appliances</code> response. Default cache TTL is 10 seconds and can be overridden through <code>CloudConfig.CacheTTL</code>. Rate-limit fallback only uses cached payloads within a bounded max age. A single control cycle can parse both instantaneous power and cumulative energy from the same cached payload.</p>
+  <h3>HTTP 429 backoff</h3>
+  <p>When Nature Cloud returns HTTP 429, set <code>rateLimitUntil</code>. Use <code>Retry-After</code> seconds when present; otherwise use a default 60 second backoff. If a recent cached payload exists, return it and expose a warning. If no recent cached payload exists, return an error and keep backing off until the retry time.</p>
+  <h3>Warning propagation</h3>
+  <p>Add an optional warning interface from the Nature reader to the status provider. <code>StatusProvider.currentGridPower</code> should include <code>LastGridReadWarning</code> in <code>LastError</code>. Cached values remain visible while the UI/API reports that Nature Cloud is rate limited.</p>
+  <h3>Safety boundaries</h3>
+  <ul>
+    <li>Real EcoFlow write gates remain unchanged.</li>
+    <li>429 cached values do not bypass command hysteresis or minimum command intervals.</li>
+    <li>If cached data is too old, the existing stale warning remains visible.</li>
+    <li>If no cached data exists after 429, the existing fail-safe behavior remains: grid power becomes 0 W and <code>LastError</code> is set.</li>
+  </ul>
+  <h2>Files likely to change</h2>
+  <ul>
+    <li><code>backend/internal/nature/cloud_client.go</code></li>
+    <li><code>backend/internal/nature/cloud_client_test.go</code></li>
+    <li><code>backend/internal/mock/status_provider.go</code></li>
+    <li><code>backend/internal/mock/status_provider_test.go</code></li>
+  </ul>
+  <h2>Data and API contracts</h2>
+  <ul>
+    <li>No database migration.</li>
+    <li>No public API shape change is required.</li>
+    <li><code>lastError</code> may now contain a warning such as Nature Cloud rate-limited and cached response used.</li>
+    <li>Existing <code>gridW</code>, <code>importW</code>, and <code>exportW</code> remain numeric fields.</li>
+  </ul>
+  <h2>Implementation steps</h2>
+  <ol>
+    <li>Add cache and backoff fields to <code>nature.CloudClient</code>.</li>
+    <li>Add <code>CloudConfig.CacheTTL</code>, <code>CloudConfig.RateLimitBackoff</code>, and optional clock injection for deterministic tests.</li>
+    <li>Update <code>fetchAppliances</code> to reuse cache, avoid network calls during active backoff when cache exists, set backoff on HTTP 429, and update cache on success.</li>
+    <li>Add <code>LastGridReadWarning() *string</code> on <code>CloudClient</code>.</li>
+    <li>Update <code>mock.StatusProvider.currentGridPower</code> to merge optional reader warnings into <code>LastError</code>.</li>
+    <li>Add unit tests for cache reuse, 429 with cache, 429 without cache, and status-provider warning propagation.</li>
+  </ol>
+  <h2>Review points</h2>
+  <ul>
+    <li>The cache must not hide non-429 errors when no cached payload exists.</li>
+    <li>Backoff must not spin requests while rate limited.</li>
+    <li>Warning text must not include secrets or tokens.</li>
+    <li>Tests must not depend on real Nature Cloud.</li>
+  </ul>
+  <h2>Verification commands</h2>
+  <pre><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./internal/nature ./internal/mock
+cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./...
+rtk codex review --uncommitted</code></pre>
+  <h2>Operational notes</h2>
+  <ul>
+    <li>This change does not require increasing <code>POLL_INTERVAL_SEC</code> just to avoid double Nature Cloud calls.</li>
+    <li>If 429 continues after this change, the next operational step is to increase the cache TTL/backoff or increase the control loop interval from the environment to reduce Nature API frequency, not to weaken charge/discharge hysteresis.</li>
+    <li>The running local server must be rebuilt/restarted before the change affects <code>http://localhost:18085</code>.</li>
+  </ul>
+</body>
+</html>

@@ -38,6 +38,10 @@ type GridReader interface {
 	CurrentGridPower(ctx context.Context) (domain.GridPower, time.Time, error)
 }
 
+type GridReadWarningProvider interface {
+	LastGridReadWarning() *string
+}
+
 type BatteryReader interface {
 	GetBatteryStatus(ctx context.Context) (domain.BatteryStatus, error)
 }
@@ -393,15 +397,24 @@ func (p *StatusProvider) currentGridPower(ctx context.Context, now time.Time) (d
 		return control.CalculateGridPower(sampleGridW(now)), nil
 	}
 	gridPower, updatedAt, err := p.gridReader.CurrentGridPower(ctx)
+	warning := gridReadWarning(p.gridReader)
 	if err != nil {
 		message := fmt.Sprintf("Nature Remo grid power read failed: %v", err)
-		return control.CalculateGridPower(0), &message
+		return control.CalculateGridPower(0), combineErrors(&message, warning)
 	}
 	if !updatedAt.IsZero() && now.Sub(updatedAt) > p.staleAfter {
 		message := fmt.Sprintf("Nature Remo grid power is stale: updatedAt=%s", updatedAt.Format(time.RFC3339))
-		return gridPower, &message
+		return gridPower, combineErrors(warning, &message)
 	}
-	return gridPower, nil
+	return gridPower, warning
+}
+
+func gridReadWarning(reader GridReader) *string {
+	warningProvider, ok := reader.(GridReadWarningProvider)
+	if !ok || warningProvider == nil {
+		return nil
+	}
+	return warningProvider.LastGridReadWarning()
 }
 
 func sampleGridW(now time.Time) int {
