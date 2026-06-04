@@ -820,6 +820,105 @@ input {
   line-height: 1.4;
 }
 
+.control-diagnostics-card {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  background: var(--card);
+}
+
+.control-diagnostics-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.control-diagnostics-header h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.diagnostic-pill {
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.diagnostic-pill.is-ready {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.diagnostic-pill.is-blocked {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.control-diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.diagnostic-metric,
+.diagnostic-device-row {
+  min-width: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.diagnostic-metric {
+  display: grid;
+  gap: 3px;
+}
+
+.diagnostic-metric span,
+.diagnostic-metric small,
+.diagnostic-device-row span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.diagnostic-metric strong,
+.diagnostic-device-row strong {
+  overflow-wrap: anywhere;
+}
+
+.control-diagnostics-devices {
+  display: grid;
+  gap: 8px;
+}
+
+.diagnostic-device-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(220px, 1.2fr) minmax(260px, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.diagnostic-device-row > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.diagnostic-device-values {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.control-diagnostics-warning {
+  margin: 0;
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .tariff-plan-actions {
   display: flex;
   flex-wrap: wrap;

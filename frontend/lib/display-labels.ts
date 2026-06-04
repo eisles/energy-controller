@@ -109,6 +109,34 @@ const exactControlWriteReadinessReasonLabels: Record<string, string> = {
   "real control trial window inactive": "実制御の試験期限外です"
 };
 
+const controlDiagnosticsActionLabels: Record<string, string> = {
+  hold: "待機",
+  unavailable: "取得不可",
+  charging: "充電中",
+  discharging: "放電中",
+  passthrough: "パススルー",
+  recovering: "回復中",
+  full: "満充電付近",
+  night_charge_candidate: "深夜充電候補",
+  surplus_charge_candidate: "余剰充電候補",
+  discharge_recovery_candidate: "放電/回復候補"
+};
+
+const controlDiagnosticsGridStateLabels: Record<string, string> = {
+  importing: "買電中",
+  exporting: "売電中",
+  neutral: "中立"
+};
+
+const controlDiagnosticsSummaryLabels: Record<string, string> = {
+  status_error: "取得エラーあり",
+  stale_data: "データ更新遅延",
+  write_blocked: "実機writeブロック中",
+  export_absorb_candidate: "売電吸収候補あり",
+  import_discharge_candidate: "買電回復/放電候補あり",
+  observing: "観測中"
+};
+
 const partialReasonLabels: Array<[string, string]> = [
   ["surplus dry-run plan:", "余剰追従計画:"],
   ["night dry-run plan:", "夜間充電計画:"],
@@ -193,6 +221,27 @@ export function controlWriteReadinessReasonLabel(value: string | null | undefine
     return "-";
   }
   return translateReason(value, exactControlWriteReadinessReasonLabels);
+}
+
+export function controlDiagnosticsActionLabel(value: string | null | undefined) {
+  if (!value) {
+    return "-";
+  }
+  return controlDiagnosticsActionLabels[value] || value;
+}
+
+export function controlDiagnosticsGridStateLabel(value: string | null | undefined) {
+  if (!value) {
+    return "-";
+  }
+  return controlDiagnosticsGridStateLabels[value] || value;
+}
+
+export function controlDiagnosticsSummaryLabel(value: string | null | undefined) {
+  if (!value) {
+    return "-";
+  }
+  return controlDiagnosticsSummaryLabels[value] || value;
 }
 
 function translateReason(value: string, exactLabels: Record<string, string>) {

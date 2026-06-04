@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Control Decision Diagnostics Implementation Plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #111827; }
+    h1, h2 { line-height: 1.25; }
+    h1 { font-size: 28px; }
+    h2 { margin-top: 28px; font-size: 20px; border-bottom: 1px solid #d1d5db; padding-bottom: 4px; }
+    ul, ol { padding-left: 24px; }
+    code { background: #f3f4f6; padding: 1px 4px; border-radius: 4px; }
+    .note { background: #f8fafc; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px 16px; }
+  </style>
+</head>
+<body>
+  <h1>Control Decision Diagnostics Implementation Plan</h1>
+  <h2>Goal</h2>
+  <p>Add a read-only control diagnostics view so the dashboard can answer whether live data acquisition is healthy, which battery should charge/discharge/hold/skip, and why a charge/discharge write is not being attempted.</p>
+  <h2>Non-Goals</h2>
+  <ul>
+    <li>Do not add new EcoFlow write commands.</li>
+    <li>Do not loosen existing real-control gates, command intervals, retry suppression, or safety thresholds.</li>
+    <li>Do not expose API tokens, private MQTT credentials, device serial numbers beyond the existing device status surface, or confirmation strings.</li>
+    <li>Do not redesign the whole dashboard layout.</li>
+  </ul>
+  <h2>Current State</h2>
+  <p><code>GET /api/status</code> returns grid import/export, DELTA Pro 3 status, surplus plan, night charge plan, DELTA 3 auxiliary plan, tariff context, and control write readiness. <code>GET /api/devices/statuses</code> returns configured charging-device telemetry where supported. The dashboard polls status every 10 seconds and device statuses every 30 seconds, but users still infer the current control reason manually.</p>
+  <h2>Data/API Contract</h2>
+  <p>Extend <code>domain.Status</code> and <code>/api/status</code> with an optional <code>controlDiagnostics</code> object containing grid state, data freshness, write readiness, DELTA Pro 3 diagnostics, auxiliary battery diagnostics, and a short summary. The diagnostics are derived from existing status values only, do not call external APIs, and do not persist new data.</p>
+  <h2>Frontend Contract</h2>
+  <p>Add a compact <strong>制御診断</strong> section near the top of the dashboard with grid state, data freshness, write readiness, DELTA Pro 3 action/reason, auxiliary action/reason, and warnings for stale/error/blocked conditions.</p>
+  <h2>Safety Boundaries</h2>
+  <ul>
+    <li>Read-only only: no write APIs, no new command send paths, no real-device state changes.</li>
+    <li>Keep existing <code>ControlWriteReadiness</code> as the source of gate state.</li>
+    <li>Do not include secret-bearing config values in the diagnostics payload.</li>
+    <li>Treat missing telemetry as <code>unavailable</code> and show it as a blocker instead of guessing.</li>
+    <li>If grid/Nature data is stale or errored, diagnostics must say the control basis is uncertain.</li>
+  </ul>
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li>Add <code>ControlDiagnostics</code> domain structs.</li>
+    <li>Build diagnostics in <code>status_handler.go</code> after readiness is calculated.</li>
+    <li>Add backend tests for importing, exporting, stale/error, and sanitized blocker behavior.</li>
+    <li>Extend frontend TypeScript types.</li>
+    <li>Add display-label helpers for diagnostic actions/grid states.</li>
+    <li>Add a compact dashboard diagnostics card.</li>
+    <li>Add minimal CSS for compact rows.</li>
+  </ol>
+  <h2>Review Points</h2>
+  <p>Diagnostics must not leak secrets, imply writes were sent, hide stale/error state, or increase the device status row height. Missing telemetry should remain readable.</p>
+  <h2>Verification Commands</h2>
+  <ul>
+    <li><code>cd backend &amp;&amp; rtk go test ./internal/api -run TestStatusHandler</code></li>
+    <li><code>cd backend &amp;&amp; rtk go test ./...</code></li>
+    <li><code>cd frontend &amp;&amp; rtk npm run build</code></li>
+    <li><code>git diff --check</code></li>
+    <li>When practical: <code>docker compose up -d --build</code>, <code>curl -s http://localhost:${HTTP_PORT:-8080}/api/status</code> or the local <code>.env</code> port such as <code>18085</code>, and browser confirmation.</li>
+  </ul>
+  <h2>Rollback / Operational Notes</h2>
+  <p class="note">The change is read-only and additive. If diagnostics are misleading in operation, hide the card first rather than changing real-control thresholds.</p>
+</body>
+</html>

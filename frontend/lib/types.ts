@@ -20,6 +20,7 @@ export type EnergyStatus = {
   pro3AcOutputEvent?: Pro3ACOutputEvent | null;
   tariffControl?: TariffControlContext | null;
   controlWriteReadiness?: ControlWriteReadiness | null;
+  controlDiagnostics?: ControlDiagnostics | null;
   targetChargeW: number;
   state: string;
   mode: string;
@@ -51,6 +52,45 @@ export type ControlWriteGates = {
   delta3ExecuteWrite: boolean;
   delta3AllowPrivateWrite: boolean;
   delta3AllowAutoWrite: boolean;
+};
+
+export type ControlDiagnostics = {
+  gridState: string;
+  summary: string;
+  dataFreshness: ControlDataFreshness;
+  writeReadiness: ControlDiagnosticsReadiness;
+  pro3: ControlDeviceDiagnostics;
+  auxiliary: ControlDeviceDiagnostics;
+};
+
+export type ControlDataFreshness = {
+  updatedAt: string;
+  ageSeconds: number;
+  stale: boolean;
+  hasError: boolean;
+  lastError?: string | null;
+};
+
+export type ControlDiagnosticsReadiness = {
+  ready: boolean;
+  mode: string;
+  blockedReason?: string;
+  blockedReasons: number;
+};
+
+export type ControlDeviceDiagnostics = {
+  name: string;
+  deviceType?: string;
+  action: string;
+  reason: string;
+  controlSource?: string;
+  soc?: number | null;
+  acInputW?: number | null;
+  acOutputW?: number | null;
+  targetChargeW?: number | null;
+  recommendedAcChargeLimitW?: number | null;
+  recommendedBackupReserveSoc?: number | null;
+  writeCandidate: boolean;
 };
 
 export type Pro3ACOutputEvent = {

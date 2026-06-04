@@ -28,6 +28,13 @@ import { TariffSummaryPanel } from "@/components/TariffSummaryPanel";
 import { Button } from "@/components/ui/button";
 import { VerificationPanel } from "@/components/VerificationPanel";
 import {
+  controlDiagnosticsActionLabel,
+  controlDiagnosticsGridStateLabel,
+  controlDiagnosticsSummaryLabel,
+  controlWriteReadinessReasonLabel,
+  decisionReasonLabel
+} from "@/lib/display-labels";
+import {
   fetchEnergyMeterLogsPage,
   fetchDelta3Status,
   fetchDeviceStatuses,
@@ -43,6 +50,7 @@ import {
   fetchTariffSummary
 } from "@/lib/api";
 import type {
+  ControlDeviceDiagnostics,
   EnergyMeterLog,
   EnergyStatus,
   DeviceStatus,
@@ -1122,6 +1130,7 @@ export function Dashboard() {
     <main className="page-shell">
       <Header status={status} />
       <StatusCards status={status} fetchError={statusError} />
+      <ControlDiagnosticsCard status={status} fetchError={statusError} />
       <Delta3StatusCard status={delta3Status} deviceStatuses={deviceStatuses} sourceStatus={status} fetchError={delta3StatusError} />
       <section className="sortable-dashboard" aria-label="dashboard blocks">
         {visibleSectionOrder.map((section, index) => {
@@ -1186,6 +1195,90 @@ function SortableDashboardBlock({
       onDragEnd={onDragEnd}
     >
       {children}
+    </div>
+  );
+}
+
+function ControlDiagnosticsCard({ status, fetchError }: { status: EnergyStatus; fetchError: string | null }) {
+  const diagnostics = status.controlDiagnostics;
+  if (!diagnostics) {
+    return (
+      <section className="control-diagnostics-card">
+        <div>
+          <p className="section-eyebrow">Read-only control diagnostics</p>
+          <h2>制御診断</h2>
+        </div>
+        <p className="muted-text">{fetchError ? `取得エラー: ${fetchError}` : "診断情報を取得待ちです"}</p>
+      </section>
+    );
+  }
+  const freshness = diagnostics.dataFreshness;
+  const warning = fetchError || freshness.lastError || (!diagnostics.writeReadiness.ready ? diagnostics.writeReadiness.blockedReason : "");
+  const diagnosticsHealthy = diagnostics.writeReadiness.ready && !fetchError && !freshness.stale && !freshness.hasError;
+  return (
+    <section className="control-diagnostics-card">
+      <div className="control-diagnostics-header">
+        <div>
+          <p className="section-eyebrow">Read-only control diagnostics</p>
+          <h2>制御診断</h2>
+        </div>
+        <span className={`diagnostic-pill ${diagnosticsHealthy ? "is-ready" : "is-blocked"}`}>
+          {controlDiagnosticsSummaryLabel(diagnostics.summary)}
+        </span>
+      </div>
+      <div className="control-diagnostics-grid">
+        <DiagnosticMetric label="Grid" value={`${controlDiagnosticsGridStateLabel(diagnostics.gridState)} / ${status.importW > 0 ? `買電 ${status.importW} W` : status.exportW > 0 ? `売電 ${status.exportW} W` : `${status.gridW} W`}`} />
+        <DiagnosticMetric
+          label="更新鮮度"
+          value={`${freshness.stale ? "遅延" : "正常"} / ${formatAgeSeconds(freshness.ageSeconds)}`}
+          subValue={hasValidDateTime(freshness.updatedAt) ? formatDateTime(freshness.updatedAt) : "更新時刻なし"}
+        />
+        <DiagnosticMetric
+          label="実機write"
+          value={diagnostics.writeReadiness.ready ? "ready" : "blocked"}
+          subValue={
+            diagnostics.writeReadiness.ready
+              ? diagnostics.writeReadiness.mode
+              : controlWriteReadinessReasonLabel(diagnostics.writeReadiness.blockedReason)
+          }
+        />
+      </div>
+      <div className="control-diagnostics-devices">
+        <DiagnosticDeviceRow device={diagnostics.pro3} />
+        <DiagnosticDeviceRow device={diagnostics.auxiliary} />
+      </div>
+      {warning ? <p className="control-diagnostics-warning">{diagnosticWarningLabel(warning)}</p> : null}
+    </section>
+  );
+}
+
+function DiagnosticMetric({ label, value, subValue }: { label: string; value: string; subValue?: string }) {
+  return (
+    <div className="diagnostic-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      {subValue ? <small>{subValue}</small> : null}
+    </div>
+  );
+}
+
+function DiagnosticDeviceRow({ device }: { device: ControlDeviceDiagnostics }) {
+  return (
+    <div className="diagnostic-device-row">
+      <div>
+        <strong>{device.name}</strong>
+        <span>{device.deviceType || device.controlSource || "-"}</span>
+      </div>
+      <div>
+        <strong>{controlDiagnosticsActionLabel(device.action)}</strong>
+        <span>{decisionReasonLabel(device.reason)}</span>
+      </div>
+      <div className="diagnostic-device-values">
+        <span>SOC {formatOptionalPercent(device.soc)}</span>
+        <span>入力 {formatOptionalW(device.acInputW)}</span>
+        <span>出力 {formatOptionalW(device.acOutputW)}</span>
+        <span>候補 {device.writeCandidate ? "あり" : "なし"}</span>
+      </div>
     </div>
   );
 }
@@ -1375,6 +1468,50 @@ function formatDateTime(value: string) {
     return "-";
   }
   return new Date(value).toLocaleString("ja-JP");
+}
+
+function hasValidDateTime(value: string | null | undefined) {
+  if (!value || value.startsWith("0001-01-01")) {
+    return false;
+  }
+  return !Number.isNaN(new Date(value).getTime());
+}
+
+function formatAgeSeconds(value: number) {
+  if (!Number.isFinite(value)) {
+    return "-";
+  }
+  if (value < 60) {
+    return `${Math.max(0, Math.round(value))}秒前`;
+  }
+  return `${Math.round(value / 60)}分前`;
+}
+
+function formatOptionalW(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  return `${value} W`;
+}
+
+function formatOptionalPercent(value: number | null | undefined) {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  return `${value}%`;
+}
+
+function diagnosticWarningLabel(value: string) {
+  if (!value) {
+    return "";
+  }
+  if (value.startsWith("status request failed")) {
+    return value;
+  }
+  if (value.includes("Nature Remo")) {
+    return value;
+  }
+  return controlWriteReadinessReasonLabel(value);
 }
 
 function pagedLogSectionSummary(total: number, page: number, pageSize: number, error: string | null) {

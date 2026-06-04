@@ -54,6 +54,7 @@ type Status struct {
 	Pro3ACOutputEvent                *Pro3ACOutputEvent     `json:"pro3AcOutputEvent,omitempty"`
 	TariffControl                    *TariffControlContext  `json:"tariffControl,omitempty"`
 	ControlWriteReadiness            *ControlWriteReadiness `json:"controlWriteReadiness,omitempty"`
+	ControlDiagnostics               *ControlDiagnostics    `json:"controlDiagnostics,omitempty"`
 	TargetChargeW                    int                    `json:"targetChargeW"`
 	State                            string                 `json:"state"`
 	Mode                             string                 `json:"mode"`
@@ -85,6 +86,45 @@ type ControlWriteGates struct {
 	Delta3ExecuteWrite          bool `json:"delta3ExecuteWrite"`
 	Delta3AllowPrivateWrite     bool `json:"delta3AllowPrivateWrite"`
 	Delta3AllowAutoWrite        bool `json:"delta3AllowAutoWrite"`
+}
+
+type ControlDiagnostics struct {
+	GridState      string                      `json:"gridState"`
+	Summary        string                      `json:"summary"`
+	DataFreshness  ControlDataFreshness        `json:"dataFreshness"`
+	WriteReadiness ControlDiagnosticsReadiness `json:"writeReadiness"`
+	Pro3           ControlDeviceDiagnostics    `json:"pro3"`
+	Auxiliary      ControlDeviceDiagnostics    `json:"auxiliary"`
+}
+
+type ControlDataFreshness struct {
+	UpdatedAt  time.Time `json:"updatedAt"`
+	AgeSeconds int64     `json:"ageSeconds"`
+	Stale      bool      `json:"stale"`
+	HasError   bool      `json:"hasError"`
+	LastError  *string   `json:"lastError,omitempty"`
+}
+
+type ControlDiagnosticsReadiness struct {
+	Ready          bool   `json:"ready"`
+	Mode           string `json:"mode"`
+	BlockedReason  string `json:"blockedReason,omitempty"`
+	BlockedReasons int    `json:"blockedReasons"`
+}
+
+type ControlDeviceDiagnostics struct {
+	Name                        string `json:"name"`
+	DeviceType                  string `json:"deviceType,omitempty"`
+	Action                      string `json:"action"`
+	Reason                      string `json:"reason"`
+	ControlSource               string `json:"controlSource,omitempty"`
+	SOC                         *int   `json:"soc,omitempty"`
+	ACInputW                    *int   `json:"acInputW,omitempty"`
+	ACOutputW                   *int   `json:"acOutputW,omitempty"`
+	TargetChargeW               *int   `json:"targetChargeW,omitempty"`
+	RecommendedACChargeLimitW   *int   `json:"recommendedAcChargeLimitW,omitempty"`
+	RecommendedBackupReserveSoc *int   `json:"recommendedBackupReserveSoc,omitempty"`
+	WriteCandidate              bool   `json:"writeCandidate"`
 }
 
 type SurplusPlan struct {

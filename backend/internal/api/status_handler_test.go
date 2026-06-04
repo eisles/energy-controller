@@ -34,6 +34,12 @@ func (stubStatusProvider) CurrentStatus(context.Context) (domain.Status, error) 
 	}, nil
 }
 
+type statusProviderFunc func(context.Context) (domain.Status, error)
+
+func (f statusProviderFunc) CurrentStatus(ctx context.Context) (domain.Status, error) {
+	return f(ctx)
+}
+
 type fixedAPIClock struct {
 	now time.Time
 }
@@ -197,6 +203,268 @@ func TestStatusHandlerAddsReadyControlWriteReadiness(t *testing.T) {
 	}
 }
 
+func TestStatusHandlerAddsExportingControlDiagnostics(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+	now := time.Date(2026, 6, 5, 9, 0, 0, 0, time.UTC)
+	reserve := 70
+
+	provider := statusProviderFunc(func(context.Context) (domain.Status, error) {
+		return domain.Status{
+			GridW:              -900,
+			ImportW:            0,
+			ExportW:            900,
+			BatterySoc:         65,
+			BatteryInputW:      120,
+			BatteryOutputW:     0,
+			TargetChargeW:      500,
+			LastDecisionReason: "surplus tracking condition met; planner recommends charging adjustments",
+			UpdatedAt:          now.Add(-30 * time.Second),
+			SurplusPlan: &domain.SurplusPlan{
+				StrategyState:               "READY",
+				RecommendedACChargeLimitW:   500,
+				RecommendedBackupReserveSoc: &reserve,
+				ShouldAdjustACChargeLimit:   true,
+				WouldWrite:                  true,
+				ActionSummary:               "surplus tracking condition met; planner recommends charging adjustments",
+			},
+		}, nil
+	})
+
+	statusHandler(provider, slog.Default(), readyControlConfig(now))(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var payload struct {
+		ControlDiagnostics domain.ControlDiagnostics `json:"controlDiagnostics"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("invalid json response: %v", err)
+	}
+	if payload.ControlDiagnostics.GridState != "exporting" {
+		t.Fatalf("GridState = %q, want exporting", payload.ControlDiagnostics.GridState)
+	}
+	if payload.ControlDiagnostics.Pro3.Action != "surplus_charge_candidate" {
+		t.Fatalf("Pro3.Action = %q, want surplus_charge_candidate", payload.ControlDiagnostics.Pro3.Action)
+	}
+	if !payload.ControlDiagnostics.Pro3.WriteCandidate {
+		t.Fatal("Pro3.WriteCandidate = false, want true")
+	}
+	if payload.ControlDiagnostics.Summary != "export_absorb_candidate" {
+		t.Fatalf("Summary = %q, want export_absorb_candidate", payload.ControlDiagnostics.Summary)
+	}
+}
+
+func TestStatusHandlerPrioritizesPassthroughControlDiagnostics(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+	now := time.Date(2026, 6, 5, 10, 0, 0, 0, time.UTC)
+	reserve := 65
+
+	provider := statusProviderFunc(func(context.Context) (domain.Status, error) {
+		return domain.Status{
+			GridW:              -80,
+			ImportW:            0,
+			ExportW:            80,
+			BatterySoc:         65,
+			BatteryInputW:      420,
+			BatteryOutputW:     410,
+			LastDecisionReason: "small surplus; keep passthrough aligned",
+			UpdatedAt:          now.Add(-20 * time.Second),
+			SurplusPlan: &domain.SurplusPlan{
+				StrategyState:               "PASSTHROUGH",
+				RecommendedACChargeLimitW:   400,
+				RecommendedBackupReserveSoc: &reserve,
+				ShouldAlignBackupReserve:    true,
+				WouldWrite:                  true,
+				ActionSummary:               "small surplus; keep passthrough aligned",
+			},
+		}, nil
+	})
+
+	statusHandler(provider, slog.Default(), readyControlConfig(now))(rec, req)
+
+	var payload struct {
+		ControlDiagnostics domain.ControlDiagnostics `json:"controlDiagnostics"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("invalid json response: %v", err)
+	}
+	if payload.ControlDiagnostics.Pro3.Action != "passthrough" {
+		t.Fatalf("Pro3.Action = %q, want passthrough", payload.ControlDiagnostics.Pro3.Action)
+	}
+}
+
+func TestStatusHandlerDoesNotLetInactiveNightPlanHideSurplusDiagnostics(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+	now := time.Date(2026, 6, 5, 14, 0, 0, 0, time.UTC)
+	reserve := 72
+
+	provider := statusProviderFunc(func(context.Context) (domain.Status, error) {
+		return domain.Status{
+			GridW:              -760,
+			ImportW:            0,
+			ExportW:            760,
+			BatterySoc:         60,
+			BatteryInputW:      100,
+			BatteryOutputW:     0,
+			LastDecisionReason: "daytime surplus should be handled by surplus plan",
+			UpdatedAt:          now.Add(-20 * time.Second),
+			NightChargePlan: &domain.NightChargePlan{
+				ShouldChargeTonight: true,
+				WouldWrite:          false,
+				ActionSummary:       "night charge target exists outside write window",
+			},
+			SurplusPlan: &domain.SurplusPlan{
+				StrategyState:               "READY",
+				RecommendedACChargeLimitW:   500,
+				RecommendedBackupReserveSoc: &reserve,
+				ShouldAdjustACChargeLimit:   true,
+				WouldWrite:                  true,
+				ActionSummary:               "surplus tracking condition met; planner recommends charging adjustments",
+			},
+		}, nil
+	})
+
+	statusHandler(provider, slog.Default(), readyControlConfig(now))(rec, req)
+
+	var payload struct {
+		ControlDiagnostics domain.ControlDiagnostics `json:"controlDiagnostics"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("invalid json response: %v", err)
+	}
+	if payload.ControlDiagnostics.Pro3.Action != "surplus_charge_candidate" {
+		t.Fatalf("Pro3.Action = %q, want surplus_charge_candidate", payload.ControlDiagnostics.Pro3.Action)
+	}
+	if payload.ControlDiagnostics.Pro3.ControlSource != "surplus_plan" {
+		t.Fatalf("Pro3.ControlSource = %q, want surplus_plan", payload.ControlDiagnostics.Pro3.ControlSource)
+	}
+}
+
+func TestStatusHandlerMapsActiveSurplusTrackingToChargingDiagnostics(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+	now := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
+
+	provider := statusProviderFunc(func(context.Context) (domain.Status, error) {
+		return domain.Status{
+			GridW:              -180,
+			ImportW:            0,
+			ExportW:            180,
+			BatterySoc:         72,
+			BatteryInputW:      420,
+			BatteryOutputW:     40,
+			LastDecisionReason: "already tracking surplus charging",
+			UpdatedAt:          now.Add(-20 * time.Second),
+			SurplusPlan: &domain.SurplusPlan{
+				StrategyState:             "CHARGING",
+				RecommendedACChargeLimitW: 400,
+				WouldWrite:                false,
+				ActionSummary:             "already tracking surplus charging",
+			},
+		}, nil
+	})
+
+	statusHandler(provider, slog.Default(), readyControlConfig(now))(rec, req)
+
+	var payload struct {
+		ControlDiagnostics domain.ControlDiagnostics `json:"controlDiagnostics"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("invalid json response: %v", err)
+	}
+	if payload.ControlDiagnostics.Pro3.Action != "charging" {
+		t.Fatalf("Pro3.Action = %q, want charging", payload.ControlDiagnostics.Pro3.Action)
+	}
+}
+
+func TestStatusHandlerAddsImportingControlDiagnostics(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+	now := time.Date(2026, 6, 5, 19, 0, 0, 0, time.UTC)
+
+	provider := statusProviderFunc(func(context.Context) (domain.Status, error) {
+		return domain.Status{
+			GridW:              650,
+			ImportW:            650,
+			ExportW:            0,
+			BatterySoc:         70,
+			BatteryInputW:      0,
+			BatteryOutputW:     480,
+			TargetChargeW:      0,
+			LastDecisionReason: "importing from grid; recover by stopping surplus charge and restoring default reserve",
+			UpdatedAt:          now.Add(-15 * time.Second),
+			SurplusPlan: &domain.SurplusPlan{
+				StrategyState:             "RECOVERING",
+				ShouldLowerBackupReserve:  true,
+				ShouldDisableEnergyModes:  true,
+				RecommendedACChargeLimitW: 0,
+				Reason:                    "importing from grid; recover by stopping surplus charge and restoring default reserve",
+			},
+		}, nil
+	})
+
+	statusHandler(provider, slog.Default(), readyControlConfig(now))(rec, req)
+
+	var payload struct {
+		ControlDiagnostics domain.ControlDiagnostics `json:"controlDiagnostics"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("invalid json response: %v", err)
+	}
+	if payload.ControlDiagnostics.GridState != "importing" {
+		t.Fatalf("GridState = %q, want importing", payload.ControlDiagnostics.GridState)
+	}
+	if payload.ControlDiagnostics.Pro3.Action != "discharge_recovery_candidate" {
+		t.Fatalf("Pro3.Action = %q, want discharge_recovery_candidate", payload.ControlDiagnostics.Pro3.Action)
+	}
+	if payload.ControlDiagnostics.Summary != "import_discharge_candidate" {
+		t.Fatalf("Summary = %q, want import_discharge_candidate", payload.ControlDiagnostics.Summary)
+	}
+}
+
+func TestStatusHandlerAddsStaleErrorControlDiagnostics(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+	now := time.Date(2026, 6, 5, 21, 0, 0, 0, time.UTC)
+	lastErr := "Nature Remo grid power read failed: nature cloud returned HTTP 429"
+
+	provider := statusProviderFunc(func(context.Context) (domain.Status, error) {
+		return domain.Status{
+			GridW:              0,
+			ImportW:            0,
+			ExportW:            0,
+			LastDecisionReason: "status acquisition failed",
+			LastError:          &lastErr,
+			UpdatedAt:          now.Add(-10 * time.Minute),
+		}, nil
+	})
+
+	statusHandler(provider, slog.Default(), readyControlConfig(now))(rec, req)
+
+	var payload struct {
+		ControlDiagnostics domain.ControlDiagnostics `json:"controlDiagnostics"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("invalid json response: %v", err)
+	}
+	if !payload.ControlDiagnostics.DataFreshness.Stale {
+		t.Fatal("DataFreshness.Stale = false, want true")
+	}
+	if !payload.ControlDiagnostics.DataFreshness.HasError {
+		t.Fatal("DataFreshness.HasError = false, want true")
+	}
+	if payload.ControlDiagnostics.Pro3.Action != "unavailable" {
+		t.Fatalf("Pro3.Action = %q, want unavailable", payload.ControlDiagnostics.Pro3.Action)
+	}
+	if payload.ControlDiagnostics.Summary != "status_error" {
+		t.Fatalf("Summary = %q, want status_error", payload.ControlDiagnostics.Summary)
+	}
+}
+
 func TestStatusHandlerControlWriteReadinessDoesNotExposeSecrets(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 	rec := httptest.NewRecorder()
@@ -227,6 +495,27 @@ func TestStatusHandlerControlWriteReadinessDoesNotExposeSecrets(t *testing.T) {
 	}
 	if !strings.Contains(body, "CONFIRM_ECOFLOW_WRITE is not I_UNDERSTAND") {
 		t.Fatalf("response body does not include sanitized confirmation blocker: %s", body)
+	}
+	var payload struct {
+		ControlDiagnostics domain.ControlDiagnostics `json:"controlDiagnostics"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		t.Fatalf("invalid json response: %v", err)
+	}
+	if payload.ControlDiagnostics.WriteReadiness.BlockedReason != "CONFIRM_ECOFLOW_WRITE is not I_UNDERSTAND" {
+		t.Fatalf("BlockedReason = %q, want sanitized confirmation blocker", payload.ControlDiagnostics.WriteReadiness.BlockedReason)
+	}
+}
+
+func readyControlConfig(now time.Time) config.Config {
+	return config.Config{
+		MockMode:              false,
+		SimulationMode:        false,
+		EnableRealControl:     true,
+		AutoControlEnabled:    true,
+		ConfirmEcoFlowWrite:   "I_UNDERSTAND",
+		RealControlTrialUntil: now.Add(time.Hour),
+		Clock:                 fixedAPIClock{now: now},
 	}
 }
 
