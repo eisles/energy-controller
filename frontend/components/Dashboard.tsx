@@ -12,6 +12,7 @@ import { Header } from "@/components/Header";
 import { LogTable } from "@/components/LogTable";
 import { NightChargePlanLogTable } from "@/components/NightChargePlanLogTable";
 import { NightChargeSummaryTable } from "@/components/NightChargeSummaryTable";
+import { PVForecastHistoryChart } from "@/components/PVForecastHistoryChart";
 import { SolarForecastPanel } from "@/components/SolarForecastPanel";
 import {
   NightChargePlanSection,
@@ -35,6 +36,7 @@ import {
   fetchLogsPage,
   fetchNightChargePlanLogsPage,
   fetchNightChargeSummariesPage,
+  fetchPVForecastHistory,
   fetchSolarForecast,
   fetchStatus,
   fetchSurplusControlCommandLogsPage,
@@ -48,6 +50,7 @@ import type {
   Delta3AuxControlCommandLog,
   NightChargeDailySummary,
   NightChargePlanLog,
+  PVForecastHistoryItem,
   PowerLog,
   SolarForecastSummary,
   SurplusControlCommandLog,
@@ -72,6 +75,12 @@ const forecastRanges = [
   { label: "16日", days: 16 }
 ] as const;
 
+const pvForecastHistoryRanges = [
+  { label: "14日", days: 14 },
+  { label: "30日", days: 30 },
+  { label: "90日", days: 90 }
+] as const;
+
 const logPageSize = 25;
 const energyMeterLogPageSize = 25;
 const nightChargePlanLogPageSize = 25;
@@ -84,6 +93,7 @@ type DashboardSectionKey =
   | StatusCardSectionKey
   | "settings"
   | "solarForecast"
+  | "pvForecastHistory"
   | "tariffSummary"
   | "verification"
   | "nightDryRun"
@@ -103,6 +113,7 @@ const defaultSectionOrder: DashboardSectionKey[] = [
   "verification",
   "settings",
   "solarForecast",
+  "pvForecastHistory",
   "tariffSummary",
   "nightDryRun",
   "surplusCommand",
@@ -122,6 +133,7 @@ const initialDashboardSections: Record<DashboardSectionKey, boolean> = {
   verification: true,
   settings: true,
   solarForecast: true,
+  pvForecastHistory: true,
   tariffSummary: true,
   nightDryRun: false,
   surplusCommand: false,
@@ -199,6 +211,8 @@ export function Dashboard() {
   const [tariffSummary, setTariffSummary] = useState<TariffSummary | null>(null);
   const [solarForecast, setSolarForecast] = useState<SolarForecastSummary | null>(null);
   const [forecastRange, setForecastRange] = useState<{ label: string; days: number }>(forecastRanges[0]);
+  const [pvForecastHistory, setPVForecastHistory] = useState<PVForecastHistoryItem[]>([]);
+  const [pvForecastHistoryRange, setPVForecastHistoryRange] = useState<{ label: string; days: number }>(pvForecastHistoryRanges[1]);
   const [tariffFromInput, setTariffFromInput] = useState("");
   const [tariffToInput, setTariffToInput] = useState("");
   const [appliedTariffFrom, setAppliedTariffFrom] = useState("");
@@ -219,6 +233,7 @@ export function Dashboard() {
   const [energyMeterError, setEnergyMeterError] = useState<string | null>(null);
   const [tariffError, setTariffError] = useState<string | null>(null);
   const [solarForecastError, setSolarForecastError] = useState<string | null>(null);
+  const [pvForecastHistoryError, setPVForecastHistoryError] = useState<string | null>(null);
   const [solarForecastLoading, setSolarForecastLoading] = useState(false);
   const [openSections, setOpenSections] = useState<Record<DashboardSectionKey, boolean>>(initialDashboardSections);
   const [openSectionsLoaded, setOpenSectionsLoaded] = useState(false);
@@ -720,6 +735,31 @@ export function Dashboard() {
     };
   }, [forecastRange]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPVForecastHistory() {
+      try {
+        const nextHistory = await fetchPVForecastHistory(pvForecastHistoryRange.days);
+        if (!cancelled) {
+          setPVForecastHistory(nextHistory.items);
+          setPVForecastHistoryError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setPVForecastHistoryError(err instanceof Error ? err.message : "PV forecast history request failed");
+        }
+      }
+    }
+
+    loadPVForecastHistory();
+    const timer = window.setInterval(loadPVForecastHistory, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [pvForecastHistoryRange]);
+
   function submitLogSearch() {
     setAppliedLogSearch(logSearchInput);
     setAppliedLogFrom(logFromInput);
@@ -863,6 +903,24 @@ export function Dashboard() {
               selectedRange={forecastRange}
               loading={solarForecastLoading}
               onRangeChange={setForecastRange}
+            />
+          </CollapsibleSection>
+        );
+      case "pvForecastHistory":
+        return (
+          <CollapsibleSection
+            title="発電予測履歴"
+            summary={pvForecastHistorySummary(pvForecastHistory, pvForecastHistoryRange.label, pvForecastHistoryError)}
+            open={openSections.pvForecastHistory}
+            onToggle={() => toggleSection("pvForecastHistory")}
+            headerControls={headerControls}
+          >
+            <PVForecastHistoryChart
+              items={pvForecastHistory}
+              error={pvForecastHistoryError}
+              ranges={pvForecastHistoryRanges}
+              selectedRange={pvForecastHistoryRange}
+              onRangeChange={setPVForecastHistoryRange}
             />
           </CollapsibleSection>
         );
@@ -1254,6 +1312,7 @@ function dashboardSectionLabel(section: DashboardSectionKey) {
     verification: "実証検証",
     settings: "設定",
     solarForecast: "発電予測",
+    pvForecastHistory: "発電予測履歴",
     tariffSummary: "料金概算",
     nightDryRun: "夜間制御 dry-run 履歴",
     surplusCommand: "余剰追従 実行ログ",
@@ -1288,6 +1347,17 @@ function solarForecastSummary(summary: SolarForecastSummary | null, rangeLabel: 
     return `${rangeLabel} / 取得待ち`;
   }
   return `${rangeLabel} / ${summary.items.length}日分`;
+}
+
+function pvForecastHistorySummary(items: PVForecastHistoryItem[], rangeLabel: string, error: string | null) {
+  if (error) {
+    return `取得エラー: ${error}`;
+  }
+  const latest = items.at(-1);
+  if (!latest) {
+    return `${rangeLabel} / 履歴待ち`;
+  }
+  return `${rangeLabel} / ${items.length}日分 / 最新 ${latest.forecastDate}`;
 }
 
 function tariffSummaryLabel(summary: TariffSummary | null, error: string | null) {

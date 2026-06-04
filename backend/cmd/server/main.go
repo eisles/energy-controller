@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/eisles/energy-controller/backend/internal/api"
 	"github.com/eisles/energy-controller/backend/internal/config"

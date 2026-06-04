@@ -9,6 +9,7 @@ import type {
   EnergyStatus,
   NightChargeDailySummariesPage,
   NightChargePlanLogsPage,
+  PVForecastHistoryResponse,
   PowerLog,
   PowerLogsPage,
   SolarForecastSummary,
@@ -152,6 +153,17 @@ export async function fetchNightChargePlanLogsPage({
   const response = await fetch(`/api/night-charge/plans?${params.toString()}`, { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`night charge plan logs request failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function fetchPVForecastHistory(days: number): Promise<PVForecastHistoryResponse> {
+  const params = new URLSearchParams({
+    days: String(days)
+  });
+  const response = await fetch(`/api/night-charge/forecast-history?${params.toString()}`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`PV forecast history request failed: ${response.status}`);
   }
   return response.json();
 }

@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Control Write Readiness Visibility Plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; color: #111827; margin: 32px; max-width: 980px; }
+    h1, h2 { line-height: 1.25; }
+    h1 { font-size: 28px; margin-bottom: 16px; }
+    h2 { font-size: 20px; margin-top: 28px; border-bottom: 1px solid #d1d5db; padding-bottom: 4px; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    pre { background: #f3f4f6; padding: 16px; border-radius: 6px; overflow: auto; }
+    .note { background: #ecfdf5; border: 1px solid #a7f3d0; padding: 12px 14px; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Control Write Readiness Visibility Plan</h1>
+
+  <h2>Goal</h2>
+  <p>Make it clear why EcoFlow write commands remain <code>dryRun=true</code> or <code>commandSent=false</code> without weakening any real-device safety gate.</p>
+  <p>The immediate operational question is: when a control plan says it can recover import/export behavior, which setting or runtime guard prevents an actual write?</p>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li>Do not enable real EcoFlow writes by default.</li>
+    <li>Do not change <code>.env</code>, secrets, device serial numbers, or Docker runtime credentials.</li>
+    <li>Do not bypass <code>ENABLE_REAL_CONTROL</code>, <code>SIMULATION_MODE</code>, <code>MOCK_MODE</code>, <code>AUTO_CONTROL_ENABLED</code>, trial window, confirmation text, minimum command interval, duplicate fingerprint, or private MQTT write gates.</li>
+    <li>Do not alter the charging strategy itself in this change.</li>
+    <li>Do not send any real-device write during implementation or verification.</li>
+  </ul>
+
+  <h2>Current state</h2>
+  <ul>
+    <li><code>/api/status</code> shows the current grid and high-level control state.</li>
+    <li>Surplus and night-charge command logs expose <code>dryRun</code>, <code>wouldWrite</code>, <code>commandSent</code>, <code>suppressedReason</code>, and <code>decisionReason</code>.</li>
+    <li>The dashboard header shows runtime mode, state, and trial window.</li>
+    <li>Operators still have to infer whether the active blocker is mock mode, simulation mode, disabled real control, disabled auto control, trial expiry, missing confirmation, or a private MQTT gate.</li>
+    <li>Recent local status check showed a surplus-control log with <code>dryRun=true</code>, <code>wouldWrite=false</code>, and a command candidate that was suppressed as a duplicate. The exact active write-readiness gates are not displayed as a first-class API/UI value.</li>
+  </ul>
+
+  <h2>Data and API contract</h2>
+  <p>Add a sanitized write-readiness object to <code>domain.Status</code> and <code>/api/status</code>.</p>
+  <pre>{
+  "controlWriteReadiness": {
+    "ready": false,
+    "mode": "dry-run",
+    "reasons": [
+      "simulation mode keeps device write disabled"
+    ],
+    "gates": {
+      "mockMode": false,
+      "simulationMode": true,
+      "enableRealControl": true,
+      "autoControlEnabled": true,
+      "confirmEcoFlowWriteAccepted": true,
+      "realControlTrialActive": true,
+      "delta3ExecuteWrite": true,
+      "delta3AllowPrivateWrite": true,
+      "delta3AllowAutoWrite": true,
+      "delta3AuxEnabled": true
+    }
+  }
+}</pre>
+  <p>Rules:</p>
+  <ul>
+    <li>Expose only booleans and reason labels.</li>
+    <li>Never expose token values, email, password, access key, secret key, device SN, MQTT client id, or raw confirmation text.</li>
+    <li><code>ready</code> is true only when Pro 3 cloud write gates are ready: <code>MOCK_MODE=false</code>, <code>SIMULATION_MODE=false</code>, <code>ENABLE_REAL_CONTROL=true</code>, <code>AUTO_CONTROL_ENABLED=true</code>, confirmation accepted, and real-control trial active.</li>
+    <li>DELTA 3 private MQTT gates are reported separately inside <code>gates</code>; they do not make Pro 3 <code>ready</code> false, but they explain auxiliary write readiness.</li>
+  </ul>
+
+  <h2>Files likely to change</h2>
+  <ul>
+    <li><code>backend/internal/domain/status.go</code></li>
+    <li><code>backend/internal/api/status_handler.go</code></li>
+    <li>A small backend helper for readiness calculation, either in <code>backend/internal/api</code> or a focused domain/config helper.</li>
+    <li><code>backend/internal/api/status_handler_test.go</code> or equivalent API tests.</li>
+    <li><code>frontend/lib/types.ts</code></li>
+    <li><code>frontend/components/Header.tsx</code></li>
+    <li>Optionally <code>frontend/components/StatusCards.tsx</code> if a compact detail strip is a better fit than header badges alone.</li>
+  </ul>
+
+  <h2>Safety boundaries</h2>
+  <div class="note">
+    This is read-only visibility. Existing execution code and write clients remain unchanged. Defaults remain mock + simulation. No new endpoint accepts writes. No secrets are returned. Verification uses API reads and tests only.
+  </div>
+
+  <h2>Implementation steps</h2>
+  <ol>
+    <li>Add <code>ControlWriteReadiness</code> and <code>ControlWriteGates</code> structs to the domain status model.</li>
+    <li>Build a helper that derives sanitized readiness from <code>config.Config</code> and the existing real-control trial calculation.</li>
+    <li>Attach readiness to <code>/api/status</code> in the status handler.</li>
+    <li>Add backend tests for default safe config, ready config, missing confirmation or inactive trial, and DELTA 3 gate visibility without secrets.</li>
+    <li>Extend frontend types.</li>
+    <li>Add a compact dashboard display: header badge plus first blocker reason.</li>
+    <li>Verify local API output does not contain secrets.</li>
+  </ol>
+
+  <h2>Review points</h2>
+  <ul>
+    <li>The readiness logic must not be used to send commands.</li>
+    <li>Labels must describe active blockers accurately.</li>
+    <li>The API must not leak raw env values.</li>
+    <li>The UI must not imply real writes are enabled when a gate is still false.</li>
+    <li>Existing dirty worktree changes must not be reverted.</li>
+  </ul>
+
+  <h2>Verification commands</h2>
+  <pre>cd backend &amp;&amp; rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build
+curl -s http://localhost:18085/api/status</pre>
+
+  <h2>Rollback and operational notes</h2>
+  <ul>
+    <li>Rollback is a normal git revert of the changed status/API/UI files.</li>
+    <li>If the UI shows <code>ready=false</code>, the operator should check the listed blocker before expecting <code>commandSent=true</code>.</li>
+    <li>If the UI shows <code>ready=true</code> but command logs still show <code>commandSent=false</code>, the next investigation should focus on command-level suppressions such as duplicate fingerprint, minimum interval, stale mode reflection, or writer errors.</li>
+  </ul>
+</body>
+</html>

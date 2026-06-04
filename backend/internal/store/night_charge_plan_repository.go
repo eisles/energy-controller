@@ -144,6 +144,109 @@ func (r *NightChargePlanRepository) LatestNightChargePlanWriteCandidateLog(ctx c
 	return &logs[0], nil
 }
 
+func (r *NightChargePlanRepository) ListPVForecastHistory(ctx context.Context, days int) ([]domain.PVForecastHistoryItem, error) {
+	days = normalizePVForecastHistoryDays(days)
+	rows, err := r.db.QueryContext(ctx, `WITH ranked AS (
+		SELECT
+			target_forecast_date,
+			measured_at,
+			daily_estimated_pv_kwh,
+			corrected_estimated_pv_kwh,
+			corrected_estimated_pv_to_battery_kwh,
+			forecast_daytime_deficit_kwh,
+			recommended_night_target_soc,
+			recommended_night_target_kwh,
+			required_night_charge_kwh,
+			total_daytime_required_kwh,
+			total_available_kwh,
+			total_deficit_kwh,
+			pv_charge_correction_factor,
+			pv_charge_correction_source,
+			should_charge_tonight,
+			COUNT(*) OVER (PARTITION BY target_forecast_date) AS sample_count,
+			MIN(measured_at) OVER (PARTITION BY target_forecast_date) AS first_measured_at,
+			MAX(measured_at) OVER (PARTITION BY target_forecast_date) AS last_measured_at,
+			ROW_NUMBER() OVER (PARTITION BY target_forecast_date ORDER BY julianday(measured_at) DESC, id DESC) AS row_number
+		FROM night_charge_plan_logs
+		WHERE target_forecast_date IS NOT NULL AND target_forecast_date != ''
+	),
+	latest AS (
+		SELECT *
+		FROM ranked
+		WHERE row_number = 1
+		ORDER BY target_forecast_date DESC
+		LIMIT ?
+	)
+	SELECT
+		target_forecast_date,
+		first_measured_at,
+		last_measured_at,
+		sample_count,
+		daily_estimated_pv_kwh,
+		corrected_estimated_pv_kwh,
+		corrected_estimated_pv_to_battery_kwh,
+		forecast_daytime_deficit_kwh,
+		recommended_night_target_soc,
+		recommended_night_target_kwh,
+		required_night_charge_kwh,
+		total_daytime_required_kwh,
+		total_available_kwh,
+		total_deficit_kwh,
+		pv_charge_correction_factor,
+		pv_charge_correction_source,
+		should_charge_tonight
+	FROM latest
+	ORDER BY target_forecast_date ASC`, days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.PVForecastHistoryItem, 0, days)
+	for rows.Next() {
+		var item domain.PVForecastHistoryItem
+		var firstMeasuredAt, lastMeasuredAt string
+		var shouldChargeTonight int
+		if err := rows.Scan(
+			&item.ForecastDate,
+			&firstMeasuredAt,
+			&lastMeasuredAt,
+			&item.SampleCount,
+			&item.EstimatedPVKWh,
+			&item.CorrectedEstimatedPVKWh,
+			&item.CorrectedEstimatedPVToBatteryKWh,
+			&item.ForecastDaytimeDeficitKWh,
+			&item.RecommendedNightTargetSoc,
+			&item.RecommendedNightTargetKWh,
+			&item.RequiredNightChargeKWh,
+			&item.TotalDaytimeRequiredKWh,
+			&item.TotalAvailableKWh,
+			&item.TotalDeficitKWh,
+			&item.PVChargeCorrectionFactor,
+			&item.PVChargeCorrectionSource,
+			&shouldChargeTonight,
+		); err != nil {
+			return nil, err
+		}
+		parsedFirstMeasuredAt, err := parseTime(firstMeasuredAt)
+		if err != nil {
+			return nil, err
+		}
+		parsedLastMeasuredAt, err := parseTime(lastMeasuredAt)
+		if err != nil {
+			return nil, err
+		}
+		item.FirstMeasuredAt = parsedFirstMeasuredAt
+		item.LastMeasuredAt = parsedLastMeasuredAt
+		item.ShouldChargeTonight = shouldChargeTonight != 0
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func nightChargePlanLogFromStatus(status domain.Status) domain.NightChargePlanLog {
 	plan := status.NightChargePlan
 	log := domain.NightChargePlanLog{
@@ -191,6 +294,16 @@ func nightChargePlanLogFromStatus(status domain.Status) domain.NightChargePlanLo
 		log.TargetForecastDate = &targetDate
 	}
 	return log
+}
+
+func normalizePVForecastHistoryDays(days int) int {
+	if days < 1 {
+		return 30
+	}
+	if days > 90 {
+		return 90
+	}
+	return days
 }
 
 func scanNightChargePlanLogs(rows *sql.Rows, capacity int) ([]domain.NightChargePlanLog, error) {

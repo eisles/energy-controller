@@ -33,35 +33,58 @@ type ControlDecision struct {
 }
 
 type Status struct {
-	GridW                            int                   `json:"gridW"`
-	ImportW                          int                   `json:"importW"`
-	ExportW                          int                   `json:"exportW"`
-	BatterySoc                       int                   `json:"batterySoc"`
-	BatteryInputW                    int                   `json:"batteryInputW"`
-	BatteryOutputW                   int                   `json:"batteryOutputW"`
-	ACChargeLimitW                   int                   `json:"acChargeLimitW"`
-	BackupReserveSoc                 *int                  `json:"backupReserveSoc,omitempty"`
-	EnergyBackupEnabled              *bool                 `json:"energyBackupEnabled,omitempty"`
-	TOUModeEnabled                   *bool                 `json:"touModeEnabled,omitempty"`
-	SelfPoweredEnabled               *bool                 `json:"selfPoweredEnabled,omitempty"`
-	ScheduledEnabled                 *bool                 `json:"scheduledEnabled,omitempty"`
-	IntelligentEnabled               *bool                 `json:"intelligentEnabled,omitempty"`
-	BatteryFullEnergyWh              *int                  `json:"batteryFullEnergyWh,omitempty"`
-	EcoFlowDiagnostics               map[string]any        `json:"ecoflowDiagnostics,omitempty"`
-	SurplusPlan                      *SurplusPlan          `json:"surplusPlan,omitempty"`
-	NightChargePlan                  *NightChargePlan      `json:"nightChargePlan,omitempty"`
-	Delta3AuxPlan                    *Delta3AuxPlan        `json:"delta3AuxPlan,omitempty"`
-	Pro3ACOutputEvent                *Pro3ACOutputEvent    `json:"pro3AcOutputEvent,omitempty"`
-	TariffControl                    *TariffControlContext `json:"tariffControl,omitempty"`
-	TargetChargeW                    int                   `json:"targetChargeW"`
-	State                            string                `json:"state"`
-	Mode                             string                `json:"mode"`
-	RealControlTrialUntil            *time.Time            `json:"realControlTrialUntil,omitempty"`
-	RealControlTrialActive           bool                  `json:"realControlTrialActive"`
-	RealControlTrialRemainingSeconds int64                 `json:"realControlTrialRemainingSeconds"`
-	LastDecisionReason               string                `json:"lastDecisionReason"`
-	LastError                        *string               `json:"lastError"`
-	UpdatedAt                        time.Time             `json:"updatedAt"`
+	GridW                            int                    `json:"gridW"`
+	ImportW                          int                    `json:"importW"`
+	ExportW                          int                    `json:"exportW"`
+	BatterySoc                       int                    `json:"batterySoc"`
+	BatteryInputW                    int                    `json:"batteryInputW"`
+	BatteryOutputW                   int                    `json:"batteryOutputW"`
+	ACChargeLimitW                   int                    `json:"acChargeLimitW"`
+	BackupReserveSoc                 *int                   `json:"backupReserveSoc,omitempty"`
+	EnergyBackupEnabled              *bool                  `json:"energyBackupEnabled,omitempty"`
+	TOUModeEnabled                   *bool                  `json:"touModeEnabled,omitempty"`
+	SelfPoweredEnabled               *bool                  `json:"selfPoweredEnabled,omitempty"`
+	ScheduledEnabled                 *bool                  `json:"scheduledEnabled,omitempty"`
+	IntelligentEnabled               *bool                  `json:"intelligentEnabled,omitempty"`
+	BatteryFullEnergyWh              *int                   `json:"batteryFullEnergyWh,omitempty"`
+	EcoFlowDiagnostics               map[string]any         `json:"ecoflowDiagnostics,omitempty"`
+	SurplusPlan                      *SurplusPlan           `json:"surplusPlan,omitempty"`
+	NightChargePlan                  *NightChargePlan       `json:"nightChargePlan,omitempty"`
+	Delta3AuxPlan                    *Delta3AuxPlan         `json:"delta3AuxPlan,omitempty"`
+	Pro3ACOutputEvent                *Pro3ACOutputEvent     `json:"pro3AcOutputEvent,omitempty"`
+	TariffControl                    *TariffControlContext  `json:"tariffControl,omitempty"`
+	ControlWriteReadiness            *ControlWriteReadiness `json:"controlWriteReadiness,omitempty"`
+	TargetChargeW                    int                    `json:"targetChargeW"`
+	State                            string                 `json:"state"`
+	Mode                             string                 `json:"mode"`
+	RealControlTrialUntil            *time.Time             `json:"realControlTrialUntil,omitempty"`
+	RealControlTrialActive           bool                   `json:"realControlTrialActive"`
+	RealControlTrialRemainingSeconds int64                  `json:"realControlTrialRemainingSeconds"`
+	LastDecisionReason               string                 `json:"lastDecisionReason"`
+	LastError                        *string                `json:"lastError"`
+	UpdatedAt                        time.Time              `json:"updatedAt"`
+}
+
+type ControlWriteReadiness struct {
+	Ready   bool              `json:"ready"`
+	Mode    string            `json:"mode"`
+	Reasons []string          `json:"reasons"`
+	Gates   ControlWriteGates `json:"gates"`
+}
+
+type ControlWriteGates struct {
+	MockMode                    bool `json:"mockMode"`
+	SimulationMode              bool `json:"simulationMode"`
+	EnableRealControl           bool `json:"enableRealControl"`
+	AutoControlEnabled          bool `json:"autoControlEnabled"`
+	ConfirmEcoFlowWriteAccepted bool `json:"confirmEcoFlowWriteAccepted"`
+	RealControlTrialConfigured  bool `json:"realControlTrialConfigured"`
+	RealControlTrialActive      bool `json:"realControlTrialActive"`
+	Delta3ReadEnabled           bool `json:"delta3ReadEnabled"`
+	Delta3AuxEnabled            bool `json:"delta3AuxEnabled"`
+	Delta3ExecuteWrite          bool `json:"delta3ExecuteWrite"`
+	Delta3AllowPrivateWrite     bool `json:"delta3AllowPrivateWrite"`
+	Delta3AllowAutoWrite        bool `json:"delta3AllowAutoWrite"`
 }
 
 type SurplusPlan struct {
@@ -375,6 +398,30 @@ type NightChargePlanLog struct {
 	Reason                           string    `json:"reason"`
 	TargetForecastDate               *string   `json:"targetForecastDate,omitempty"`
 	CreatedAt                        time.Time `json:"createdAt"`
+}
+
+type PVForecastHistoryItem struct {
+	ForecastDate                     string    `json:"forecastDate"`
+	FirstMeasuredAt                  time.Time `json:"firstMeasuredAt"`
+	LastMeasuredAt                   time.Time `json:"lastMeasuredAt"`
+	SampleCount                      int       `json:"sampleCount"`
+	EstimatedPVKWh                   float64   `json:"estimatedPvKwh"`
+	CorrectedEstimatedPVKWh          float64   `json:"correctedEstimatedPvKwh"`
+	CorrectedEstimatedPVToBatteryKWh float64   `json:"correctedEstimatedPvToBatteryKwh"`
+	ForecastDaytimeDeficitKWh        float64   `json:"forecastDaytimeDeficitKwh"`
+	RecommendedNightTargetSoc        int       `json:"recommendedNightTargetSoc"`
+	RecommendedNightTargetKWh        float64   `json:"recommendedNightTargetKwh"`
+	RequiredNightChargeKWh           float64   `json:"requiredNightChargeKwh"`
+	TotalDaytimeRequiredKWh          float64   `json:"totalDaytimeRequiredKwh"`
+	TotalAvailableKWh                float64   `json:"totalAvailableKwh"`
+	TotalDeficitKWh                  float64   `json:"totalDeficitKwh"`
+	PVChargeCorrectionFactor         float64   `json:"pvChargeCorrectionFactor"`
+	PVChargeCorrectionSource         string    `json:"pvChargeCorrectionSource"`
+	ShouldChargeTonight              bool      `json:"shouldChargeTonight"`
+}
+
+type PVForecastHistoryResponse struct {
+	Items []PVForecastHistoryItem `json:"items"`
 }
 
 type NightChargeDailySummary struct {

@@ -110,6 +110,126 @@ func TestStatusHandlerAddsRealControlTrialStatus(t *testing.T) {
 	}
 }
 
+func TestStatusHandlerAddsDefaultControlWriteReadiness(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+
+	statusHandler(stubStatusProvider{}, slog.Default(), config.Config{
+		MockMode:                true,
+		SimulationMode:          true,
+		EnableRealControl:       false,
+		AutoControlEnabled:      false,
+		ConfirmEcoFlowWrite:     "",
+		Delta3ReadEnabled:       true,
+		Delta3ExecuteWrite:      true,
+		Delta3AllowPrivateWrite: true,
+		Delta3AllowAutoWrite:    true,
+		Delta3Aux:               config.Delta3AuxConfig{Enabled: true},
+	})(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var payload struct {
+		ControlWriteReadiness domain.ControlWriteReadiness `json:"controlWriteReadiness"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("invalid json response: %v", err)
+	}
+	if payload.ControlWriteReadiness.Ready {
+		t.Fatal("ControlWriteReadiness.Ready = true, want false")
+	}
+	if payload.ControlWriteReadiness.Mode != "dry-run" {
+		t.Fatalf("ControlWriteReadiness.Mode = %q, want dry-run", payload.ControlWriteReadiness.Mode)
+	}
+	if len(payload.ControlWriteReadiness.Reasons) == 0 {
+		t.Fatal("ControlWriteReadiness.Reasons is empty, want blockers")
+	}
+	gates := payload.ControlWriteReadiness.Gates
+	if !gates.MockMode || !gates.SimulationMode || gates.EnableRealControl || gates.AutoControlEnabled {
+		t.Fatalf("unexpected Pro 3 write gates: %+v", gates)
+	}
+	if !gates.Delta3ReadEnabled || !gates.Delta3ExecuteWrite || !gates.Delta3AllowPrivateWrite || !gates.Delta3AllowAutoWrite || !gates.Delta3AuxEnabled {
+		t.Fatalf("unexpected DELTA 3 gates: %+v", gates)
+	}
+}
+
+func TestStatusHandlerAddsReadyControlWriteReadiness(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+	now := time.Date(2026, 6, 4, 8, 0, 0, 0, time.UTC)
+
+	statusHandler(stubStatusProvider{}, slog.Default(), config.Config{
+		MockMode:                false,
+		SimulationMode:          false,
+		EnableRealControl:       true,
+		AutoControlEnabled:      true,
+		ConfirmEcoFlowWrite:     "I_UNDERSTAND",
+		RealControlTrialUntil:   now.Add(time.Hour),
+		Clock:                   fixedAPIClock{now: now},
+		Delta3ReadEnabled:       true,
+		Delta3ExecuteWrite:      true,
+		Delta3AllowPrivateWrite: true,
+		Delta3AllowAutoWrite:    true,
+		Delta3Aux:               config.Delta3AuxConfig{Enabled: true},
+	})(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var payload struct {
+		ControlWriteReadiness domain.ControlWriteReadiness `json:"controlWriteReadiness"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("invalid json response: %v", err)
+	}
+	if !payload.ControlWriteReadiness.Ready {
+		t.Fatalf("ControlWriteReadiness.Ready = false, reasons = %#v", payload.ControlWriteReadiness.Reasons)
+	}
+	if payload.ControlWriteReadiness.Mode != "ready" {
+		t.Fatalf("ControlWriteReadiness.Mode = %q, want ready", payload.ControlWriteReadiness.Mode)
+	}
+	if len(payload.ControlWriteReadiness.Reasons) != 0 {
+		t.Fatalf("ControlWriteReadiness.Reasons = %#v, want empty", payload.ControlWriteReadiness.Reasons)
+	}
+	if !payload.ControlWriteReadiness.Gates.ConfirmEcoFlowWriteAccepted || !payload.ControlWriteReadiness.Gates.RealControlTrialActive {
+		t.Fatalf("unexpected gates: %+v", payload.ControlWriteReadiness.Gates)
+	}
+}
+
+func TestStatusHandlerControlWriteReadinessDoesNotExposeSecrets(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	rec := httptest.NewRecorder()
+	now := time.Date(2026, 6, 4, 8, 0, 0, 0, time.UTC)
+
+	statusHandler(stubStatusProvider{}, slog.Default(), config.Config{
+		MockMode:              false,
+		SimulationMode:        false,
+		EnableRealControl:     true,
+		AutoControlEnabled:    true,
+		ConfirmEcoFlowWrite:   "SECRET_CONFIRM",
+		RealControlTrialUntil: now.Add(time.Hour),
+		Clock:                 fixedAPIClock{now: now},
+		EcoFlowAccessKey:      "access-secret",
+		EcoFlowSecretKey:      "secret-key",
+		EcoFlowDeviceSN:       "device-serial",
+		Delta3PrivateEmail:    "user@example.com",
+		Delta3PrivatePassword: "private-password",
+		Delta3DeviceSN:        "delta3-serial",
+		Delta3MQTTClientID:    "mqtt-client",
+	})(rec, req)
+
+	body := rec.Body.String()
+	for _, secret := range []string{"SECRET_CONFIRM", "access-secret", "secret-key", "device-serial", "user@example.com", "private-password", "delta3-serial", "mqtt-client"} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("response leaked secret %q: %s", secret, body)
+		}
+	}
+	if !strings.Contains(body, "CONFIRM_ECOFLOW_WRITE is not I_UNDERSTAND") {
+		t.Fatalf("response body does not include sanitized confirmation blocker: %s", body)
+	}
+}
+
 func TestRouterStatusReadsCurrentStatusFromDatabase(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "energy.db"))
 	if err != nil {

@@ -17,6 +17,7 @@ type stubNightChargePlanLogProvider struct {
 	limit  int
 	offset int
 	filter store.NightChargePlanLogPageFilter
+	days   int
 }
 
 func (p *stubNightChargePlanLogProvider) ListNightChargePlanLogsPage(_ context.Context, limit int, offset int, filter store.NightChargePlanLogPageFilter) ([]domain.NightChargePlanLog, int, error) {
@@ -34,6 +35,24 @@ func (p *stubNightChargePlanLogProvider) ListNightChargePlanLogsPage(_ context.C
 			CreatedAt:                 time.Date(2026, 5, 19, 22, 0, 0, 0, time.UTC),
 		},
 	}, 42, nil
+}
+
+func (p *stubNightChargePlanLogProvider) ListPVForecastHistory(_ context.Context, days int) ([]domain.PVForecastHistoryItem, error) {
+	p.days = days
+	return []domain.PVForecastHistoryItem{
+		{
+			ForecastDate:              "2026-06-02",
+			FirstMeasuredAt:           time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
+			LastMeasuredAt:            time.Date(2026, 6, 2, 6, 0, 0, 0, time.UTC),
+			SampleCount:               12,
+			EstimatedPVKWh:            2.7,
+			CorrectedEstimatedPVKWh:   1.9,
+			ForecastDaytimeDeficitKWh: 1.6,
+			RecommendedNightTargetSoc: 59,
+			RequiredNightChargeKWh:    0,
+			ShouldChargeTonight:       false,
+		},
+	}, nil
 }
 
 func TestNightChargePlanLogsHandlerReturnsPagedJSON(t *testing.T) {
@@ -88,6 +107,54 @@ func TestNightChargePlanLogsHandlerRejectsInvalidDateRange(t *testing.T) {
 	rec := httptest.NewRecorder()
 
 	nightChargePlanLogsHandler(&stubNightChargePlanLogProvider{}, slog.Default())(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestNightChargeForecastHistoryHandlerReturnsItems(t *testing.T) {
+	provider := &stubNightChargePlanLogProvider{}
+	req := httptest.NewRequest(http.MethodGet, "/api/night-charge/forecast-history?days=14", nil)
+	rec := httptest.NewRecorder()
+
+	nightChargeForecastHistoryHandler(provider, slog.Default())(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if provider.days != 14 {
+		t.Fatalf("days = %d, want 14", provider.days)
+	}
+	var payload domain.PVForecastHistoryResponse
+	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
+		t.Fatalf("invalid json response: %v", err)
+	}
+	if len(payload.Items) != 1 || payload.Items[0].ForecastDate != "2026-06-02" {
+		t.Fatalf("unexpected payload: %#v", payload)
+	}
+}
+
+func TestNightChargeForecastHistoryHandlerClampsDays(t *testing.T) {
+	provider := &stubNightChargePlanLogProvider{}
+	req := httptest.NewRequest(http.MethodGet, "/api/night-charge/forecast-history?days=999", nil)
+	rec := httptest.NewRecorder()
+
+	nightChargeForecastHistoryHandler(provider, slog.Default())(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if provider.days != 90 {
+		t.Fatalf("days = %d, want 90", provider.days)
+	}
+}
+
+func TestNightChargeForecastHistoryHandlerRejectsInvalidDays(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/night-charge/forecast-history?days=abc", nil)
+	rec := httptest.NewRecorder()
+
+	nightChargeForecastHistoryHandler(&stubNightChargePlanLogProvider{}, slog.Default())(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusBadRequest)

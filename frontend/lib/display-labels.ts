@@ -100,6 +100,15 @@ const exactReasonLabels: Record<string, string> = {
   "DELTA 3 Plus backup reserve command was not reflected by the device": "前回リザーブ送信が実機へ反映されていません"
 };
 
+const exactControlWriteReadinessReasonLabels: Record<string, string> = {
+  "mock mode keeps device write disabled": "モックモードのため実機書き込みは無効です",
+  "simulation mode keeps device write disabled": "シミュレーションのため実機書き込みは無効です",
+  "ENABLE_REAL_CONTROL=false keeps device write disabled": "ENABLE_REAL_CONTROL=false のため実機書き込みは無効です",
+  "auto control disabled keeps device write disabled": "自動制御が無効です",
+  "CONFIRM_ECOFLOW_WRITE is not I_UNDERSTAND": "確認文字列が未設定です",
+  "real control trial window inactive": "実制御の試験期限外です"
+};
+
 const partialReasonLabels: Array<[string, string]> = [
   ["surplus dry-run plan:", "余剰追従計画:"],
   ["night dry-run plan:", "夜間充電計画:"],
@@ -177,6 +186,13 @@ export function decisionSummaryLabel(value: string | null | undefined) {
     .map((part) => translateReason(part.trim(), exactReasonLabels))
     .filter(Boolean)
     .join("; ");
+}
+
+export function controlWriteReadinessReasonLabel(value: string | null | undefined) {
+  if (!value) {
+    return "-";
+  }
+  return translateReason(value, exactControlWriteReadinessReasonLabels);
 }
 
 function translateReason(value: string, exactLabels: Record<string, string>) {

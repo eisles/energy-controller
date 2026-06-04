@@ -596,6 +596,80 @@ func TestNightChargePlanRepositoryInsertsAndListsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestNightChargePlanRepositoryListsPVForecastHistoryByForecastDate(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewNightChargePlanRepository(db)
+	base := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+
+	entries := []struct {
+		forecastDate string
+		measuredAt   time.Time
+		estimatedPV  float64
+		correctedPV  float64
+		deficit      float64
+		targetSoc    int
+		charge       bool
+	}{
+		{"2026-06-01", base.Add(-24 * time.Hour), 22.5, 15.7, 0, 55, false},
+		{"2026-06-02", base, 2.4, 1.6, 1.9, 58, true},
+		{"2026-06-02", base.Add(30 * time.Minute), 2.8, 1.9, 1.6, 59, false},
+	}
+	for _, entry := range entries {
+		if err := repo.InsertNightChargePlanLog(context.Background(), domain.Status{
+			BatterySoc:     50,
+			BatteryInputW:  10,
+			BatteryOutputW: 20,
+			UpdatedAt:      entry.measuredAt,
+			NightChargePlan: &domain.NightChargePlan{
+				StrategyState:                    "NIGHT_RECOVER",
+				RecommendedMode:                  "self-powered",
+				RecommendedNightTargetSoc:        entry.targetSoc,
+				RecommendedNightTargetKWh:        7.2,
+				CurrentBatteryEnergyKWh:          6.8,
+				RequiredNightChargeKWh:           0.4,
+				DailyEstimatedPVKWh:              entry.estimatedPV,
+				CorrectedEstimatedPVKWh:          entry.correctedPV,
+				CorrectedEstimatedPVToBatteryKWh: entry.correctedPV,
+				ForecastDaytimeDeficitKWh:        entry.deficit,
+				TotalDaytimeRequiredKWh:          3.6,
+				TotalAvailableKWh:                2.0,
+				TotalDeficitKWh:                  entry.deficit,
+				PVChargeCorrectionFactor:         0.7,
+				PVChargeCorrectionSource:         "default",
+				ShouldChargeTonight:              entry.charge,
+				CommandFingerprint:               "none",
+				CommandBlockReason:               "test",
+				ActionSummary:                    "test",
+				Reason:                           "test",
+				TargetForecast:                   &domain.WeatherForecast{Date: entry.forecastDate},
+			},
+		}); err != nil {
+			t.Fatalf("InsertNightChargePlanLog failed: %v", err)
+		}
+	}
+
+	items, err := repo.ListPVForecastHistory(context.Background(), 30)
+	if err != nil {
+		t.Fatalf("ListPVForecastHistory failed: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("len(items) = %d, want 2", len(items))
+	}
+	if items[0].ForecastDate != "2026-06-01" || items[1].ForecastDate != "2026-06-02" {
+		t.Fatalf("forecast dates = %+v, want ascending dates", items)
+	}
+	latest := items[1]
+	if latest.SampleCount != 2 {
+		t.Fatalf("SampleCount = %d, want 2", latest.SampleCount)
+	}
+	if latest.RecommendedNightTargetSoc != 59 || latest.ShouldChargeTonight {
+		t.Fatalf("latest representative = %+v, want latest log for 2026-06-02", latest)
+	}
+	if !floatAlmostEqual(latest.EstimatedPVKWh, 2.8) || !floatAlmostEqual(latest.CorrectedEstimatedPVKWh, 1.9) || !floatAlmostEqual(latest.ForecastDaytimeDeficitKWh, 1.6) {
+		t.Fatalf("latest forecast values = %+v, want latest PV values", latest)
+	}
+}
+
 func TestNightChargePlanRepositoryReturnsLatestWriteCandidate(t *testing.T) {
 	db := openTestDB(t)
 	repo := NewNightChargePlanRepository(db)

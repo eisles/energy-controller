@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Container Timezone tzdata Implementation Plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; max-width: 920px; margin: 32px auto; padding: 0 20px; color: #111827; }
+    h1, h2 { line-height: 1.25; }
+    h1 { border-bottom: 1px solid #d1d5db; padding-bottom: 12px; }
+    code, pre { background: #f3f4f6; border-radius: 6px; }
+    code { padding: 2px 4px; }
+    pre { padding: 14px 16px; overflow: auto; }
+    li { margin: 4px 0; }
+  </style>
+</head>
+<body>
+  <h1>Container Timezone tzdata Implementation Plan</h1>
+
+  <h2>Goal</h2>
+  <p>Fix the runtime error <code>unknown time zone Asia/Tokyo</code> that appears in tariff control context when the app runs in the Docker container.</p>
+  <p>The fix should allow <code>time.LoadLocation("Asia/Tokyo")</code> to work reliably in the production container and keep the current safety gates for EcoFlow writes unchanged.</p>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li>Do not change tariff optimization behavior.</li>
+    <li>Do not change charging or discharging decisions.</li>
+    <li>Do not enable real EcoFlow writes by default.</li>
+    <li>Do not modify API credentials, device serial numbers, or <code>.env</code> secrets.</li>
+    <li>Do not change the existing uncommitted PV forecast history graph feature.</li>
+  </ul>
+
+  <h2>Current State</h2>
+  <ul>
+    <li>The running container is built from <code>alpine:3.20</code>.</li>
+    <li>The runtime stage does not install <code>tzdata</code>.</li>
+    <li>The app stores and validates tariff/weather timezone values such as <code>Asia/Tokyo</code>.</li>
+    <li><code>time.LoadLocation(plan.Timezone)</code> is used by tariff control and tariff summary code.</li>
+    <li>The current <code>/api/status</code> reports <code>tariff control context failed: unknown time zone Asia/Tokyo</code>.</li>
+    <li>Existing unrelated uncommitted changes are present for the PV forecast history graph. They will be preserved and not reverted.</li>
+  </ul>
+
+  <h2>Files Likely To Change</h2>
+  <ul>
+    <li><code>Dockerfile</code>: install <code>tzdata</code> in the runtime image so zoneinfo files are available.</li>
+    <li><code>backend/cmd/server/main.go</code>: add a blank import of <code>time/tzdata</code> so the Go binary can resolve IANA time zones even if the runtime image or host lacks zoneinfo.</li>
+  </ul>
+
+  <h2>Data/API Contracts</h2>
+  <ul>
+    <li>No API contract changes.</li>
+    <li>No database schema changes.</li>
+    <li>No control command payload changes.</li>
+  </ul>
+
+  <h2>Safety Boundaries</h2>
+  <ul>
+    <li>This is a runtime dependency and timezone resolution fix only.</li>
+    <li>Real-device write gates remain unchanged: <code>ENABLE_REAL_CONTROL=true</code>, <code>SIMULATION_MODE=false</code>, and existing write-target and command interval checks.</li>
+    <li>No new writes to EcoFlow or Nature APIs are introduced.</li>
+  </ul>
+
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li>Update the Docker runtime image to install <code>tzdata</code>.</li>
+    <li>Add <code>import _ "time/tzdata"</code> to <code>backend/cmd/server/main.go</code>.</li>
+    <li>Run Go formatting.</li>
+    <li>Run backend tests.</li>
+    <li>Build/restart Docker Compose.</li>
+    <li>Verify <code>/api/status</code> no longer includes <code>unknown time zone Asia/Tokyo</code>.</li>
+  </ol>
+
+  <h2>Review Points</h2>
+  <ul>
+    <li>Ensure the change is limited to timezone availability.</li>
+    <li>Ensure default mock/simulation settings in <code>Dockerfile</code> remain unchanged.</li>
+    <li>Ensure no real-device control path is loosened.</li>
+    <li>Ensure the fix works even in minimal runtime environments.</li>
+  </ul>
+
+  <h2>Verification Commands</h2>
+  <pre><code>cd backend &amp;&amp; rtk go test ./...
+docker compose up -d --build
+curl -s http://localhost:18085/api/status</code></pre>
+
+  <h2>Rollback / Operational Notes</h2>
+  <ul>
+    <li>Rollback is safe by reverting the Dockerfile and <code>main.go</code> import changes.</li>
+    <li>If the container is already running, it must be rebuilt and restarted for the Dockerfile change to take effect.</li>
+    <li>The <code>time/tzdata</code> import increases binary size slightly but avoids future zoneinfo dependency failures.</li>
+  </ul>
+</body>
+</html>

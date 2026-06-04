@@ -19,6 +19,7 @@ export type EnergyStatus = {
   delta3AuxPlan?: Delta3AuxPlan | null;
   pro3AcOutputEvent?: Pro3ACOutputEvent | null;
   tariffControl?: TariffControlContext | null;
+  controlWriteReadiness?: ControlWriteReadiness | null;
   targetChargeW: number;
   state: string;
   mode: string;
@@ -28,6 +29,28 @@ export type EnergyStatus = {
   lastDecisionReason: string;
   lastError: string | null;
   updatedAt: string;
+};
+
+export type ControlWriteReadiness = {
+  ready: boolean;
+  mode: string;
+  reasons: string[];
+  gates: ControlWriteGates;
+};
+
+export type ControlWriteGates = {
+  mockMode: boolean;
+  simulationMode: boolean;
+  enableRealControl: boolean;
+  autoControlEnabled: boolean;
+  confirmEcoFlowWriteAccepted: boolean;
+  realControlTrialConfigured: boolean;
+  realControlTrialActive: boolean;
+  delta3ReadEnabled: boolean;
+  delta3AuxEnabled: boolean;
+  delta3ExecuteWrite: boolean;
+  delta3AllowPrivateWrite: boolean;
+  delta3AllowAutoWrite: boolean;
 };
 
 export type Pro3ACOutputEvent = {
@@ -439,6 +462,30 @@ export type NightChargePlanLogsPage = {
   total: number;
   limit: number;
   offset: number;
+};
+
+export type PVForecastHistoryItem = {
+  forecastDate: string;
+  firstMeasuredAt: string;
+  lastMeasuredAt: string;
+  sampleCount: number;
+  estimatedPvKwh: number;
+  correctedEstimatedPvKwh: number;
+  correctedEstimatedPvToBatteryKwh: number;
+  forecastDaytimeDeficitKwh: number;
+  recommendedNightTargetSoc: number;
+  recommendedNightTargetKwh: number;
+  requiredNightChargeKwh: number;
+  totalDaytimeRequiredKwh: number;
+  totalAvailableKwh: number;
+  totalDeficitKwh: number;
+  pvChargeCorrectionFactor: number;
+  pvChargeCorrectionSource: string;
+  shouldChargeTonight: boolean;
+};
+
+export type PVForecastHistoryResponse = {
+  items: PVForecastHistoryItem[];
 };
 
 export type SurplusControlCommandLog = {

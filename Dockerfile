@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 go build -o /out/energy-controller ./cmd/server
 
 FROM alpine:3.20
 WORKDIR /app
-RUN addgroup -S app && adduser -S app -G app
+RUN apk add --no-cache tzdata && addgroup -S app && adduser -S app -G app
 COPY --from=backend /out/energy-controller /app/energy-controller
 COPY --from=frontend /src/frontend/out /app/frontend/out
 RUN mkdir -p /app/data && chown -R app:app /app

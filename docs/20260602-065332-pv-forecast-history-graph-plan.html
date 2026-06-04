@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>PV Forecast History Graph Implementation Plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 32px; color: #111827; }
+    h1, h2 { line-height: 1.25; }
+    code, pre { background: #f3f4f6; border-radius: 6px; }
+    code { padding: 2px 4px; }
+    pre { padding: 12px; overflow: auto; }
+    section { margin-bottom: 28px; }
+    ul, ol { padding-left: 24px; }
+  </style>
+</head>
+<body>
+  <h1>PV Forecast History Graph Implementation Plan</h1>
+  <section>
+    <h2>Goal</h2>
+    <p>過去に保存されている深夜充電計画ログから、発電予測の推移をグラフで確認できるようにする。</p>
+    <ul>
+      <li>発電予測 kWh</li>
+      <li>補正後発電予測 kWh</li>
+      <li>バッテリー充電に使える想定 kWh</li>
+      <li>日中不足見込み kWh</li>
+      <li>推奨深夜目標 SOC</li>
+      <li>必要深夜充電量 kWh</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Non-goals</h2>
+    <ul>
+      <li>EcoFlow / Nature Remo への実機 write は追加しない。</li>
+      <li>天気予報 API への追加取得や過去予報の再取得はしない。</li>
+      <li><code>pv_charge_correction_daily_logs</code> の実績集計自動生成は今回の対象外。</li>
+      <li>料金最適化ロジック、充放電制御ロジックは変更しない。</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Current State</h2>
+    <ul>
+      <li><code>night_charge_plan_logs</code> には予測値と深夜充電判断が保存されている。</li>
+      <li>既存 API <code>GET /api/night-charge/plans</code> はページングされた生ログを返す。</li>
+      <li>フロントエンドは <code>Recharts</code> と <code>ChartContainer</code> を使っている。</li>
+      <li>ダッシュボードには <code>発電予測</code> と <code>夜間計画・結果</code> セクションがある。</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Data/API Contract</h2>
+    <p>新規に読み取り専用 API を追加する。</p>
+    <pre><code>GET /api/night-charge/forecast-history?days=30</code></pre>
+    <pre><code>{
+  "items": [
+    {
+      "forecastDate": "2026-06-02",
+      "firstMeasuredAt": "2026-06-01T12:00:05+09:00",
+      "lastMeasuredAt": "2026-06-02T06:50:42+09:00",
+      "sampleCount": 4280,
+      "estimatedPvKwh": 2.754,
+      "correctedEstimatedPvKwh": 1.928,
+      "correctedEstimatedPvToBatteryKwh": 1.928,
+      "forecastDaytimeDeficitKwh": 1.762,
+      "recommendedNightTargetSoc": 59,
+      "requiredNightChargeKwh": 0,
+      "shouldChargeTonight": false
+    }
+  ]
+}</code></pre>
+    <ul>
+      <li><code>target_forecast_date</code> がある行を対象にする。</li>
+      <li>日付ごとに最新 <code>measured_at</code> のログを代表値として使う。</li>
+      <li><code>days</code> は 1-90 に丸める。既定は 30。</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Files Likely To Change</h2>
+    <ul>
+      <li><code>backend/internal/domain/status.go</code></li>
+      <li><code>backend/internal/store/night_charge_plan_repository.go</code></li>
+      <li><code>backend/internal/api/night_charge_forecast_history_handler.go</code></li>
+      <li><code>backend/internal/api/router.go</code></li>
+      <li><code>backend/internal/api/*_test.go</code> / <code>backend/internal/store/*_test.go</code></li>
+      <li><code>frontend/lib/types.ts</code></li>
+      <li><code>frontend/lib/api.ts</code></li>
+      <li><code>frontend/components/PVForecastHistoryChart.tsx</code></li>
+      <li><code>frontend/components/Dashboard.tsx</code></li>
+      <li>必要なら <code>frontend/app/globals.css</code></li>
+    </ul>
+  </section>
+  <section>
+    <h2>UI Plan</h2>
+    <p><code>発電予測</code> の近くに <code>発電予測履歴</code> セクションを追加する。</p>
+    <ul>
+      <li>レンジボタン: <code>14日</code> / <code>30日</code> / <code>90日</code></li>
+      <li>グラフ 1: 発電予測、補正後予測、バッテリー充電想定、日中不足見込み</li>
+      <li>グラフ 2: 推奨深夜目標 SOC、必要深夜充電量 kWh</li>
+      <li>サマリー: 対象日数、最新対象日、最新の補正後予測、最新の不足見込み</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Safety Boundaries</h2>
+    <ul>
+      <li>読み取り専用。実機制御、設定更新、DB write は追加しない。</li>
+      <li>外部 API は呼ばず、SQLite の既存ログだけを読む。</li>
+      <li>API token、SN、secret は扱わない。</li>
+      <li>429対策や制御周期は変更しない。</li>
+    </ul>
+  </section>
+  <section>
+    <h2>Implementation Steps</h2>
+    <ol>
+      <li>domain に発電予測履歴型を追加する。</li>
+      <li><code>NightChargePlanRepository</code> に日別履歴取得を追加する。</li>
+      <li>新規 handler を追加する。</li>
+      <li>router に route を登録する。</li>
+      <li>Go handler/repository テストを追加する。</li>
+      <li>frontend 型と fetch 関数を追加する。</li>
+      <li>グラフコンポーネントを追加する。</li>
+      <li>Dashboard に state/effect/section を追加する。</li>
+      <li>backend test と frontend build を通す。</li>
+      <li><code>rtk codex review --uncommitted</code> で実装レビューする。</li>
+    </ol>
+  </section>
+  <section>
+    <h2>Verification Commands</h2>
+    <pre><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build
+rtk git diff --check
+rtk codex review --uncommitted</code></pre>
+  </section>
+  <section>
+    <h2>Rollback / Operational Notes</h2>
+    <ul>
+      <li>新規 API と UI は読み取り専用なので、問題があれば route 登録と Dashboard セクション追加を戻せば制御への影響はない。</li>
+      <li>履歴はログ保存開始日以降のみ表示される。</li>
+      <li><code>pv_charge_correction_daily_logs</code> が空でも、このグラフは <code>night_charge_plan_logs</code> だけで表示できる。</li>
+    </ul>
+  </section>
+</body>
+</html>
