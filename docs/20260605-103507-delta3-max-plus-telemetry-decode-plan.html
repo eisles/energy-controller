@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>DELTA 3 Max Plus Telemetry Decode Plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.65; margin: 40px; color: #172033; }
+    h1, h2, h3 { line-height: 1.25; }
+    code { background: #f3f5f7; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    section { margin: 28px 0; }
+    .note { background: #f7fbff; border: 1px solid #c9def8; border-radius: 8px; padding: 14px 16px; }
+    .warn { background: #fff8ed; border: 1px solid #f3d3a0; border-radius: 8px; padding: 14px 16px; }
+    li { margin: 0.25rem 0; }
+  </style>
+</head>
+<body>
+  <h1>DELTA 3 Max Plus Telemetry Decode Plan</h1>
+
+  <section>
+    <h2>Goal</h2>
+    <p>DELTA 3 Max Plus の EcoFlow private MQTT telemetry を、制御判断に使える read-only 状態として安定して取得できるようにする。</p>
+    <p class="note">現時点では DELTA 3 Max Plus の電源が入っていないため、実機 write や実値検証は行わない。まずは既存 decoder と status reader の構造を整理し、電源投入後に raw payload 収集、field mapping、画面確認まで進められる実装計画を定義する。</p>
+  </section>
+
+  <section>
+    <h2>Non-Goals</h2>
+    <ul>
+      <li>DELTA 3 Max Plus への新しい write command は追加しない。</li>
+      <li>AC1 / AC2 の ON/OFF write command は追加しない。</li>
+      <li>AC出力保護チャンネルの write command は追加しない。</li>
+      <li>RIVER 2 の telemetry decode は今回の範囲外とする。</li>
+      <li>実機writeの安全ゲート、最小コマンド間隔、重複抑制、確認値は変更しない。</li>
+      <li>電源OFF状態の機器から取れない値を推測で補完しない。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Current State</h2>
+    <ul>
+      <li>DELTA 3 Max Plus は <code>device_type=DELTA_3_MAX_PLUS</code>、<code>status_source=ecoflow_private_mqtt</code> として扱える。</li>
+      <li>write target selection は候補にできるが、実際の制御判断には telemetry の可読性が必要。</li>
+      <li>現在の制御診断では、<code>EcoFlow private MQTT returned no supported telemetry fields for DELTA_3_MAX_PLUS</code> となる場合がある。</li>
+      <li>既存計画で <code>field=367</code> AC1、<code>field=971</code> AC2、<code>field=1539</code> AC出力保護チャンネルが整理済み。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Implementation Plan</h2>
+    <h3>1. Read-only raw capture support</h3>
+    <p><code>backend/cmd/ecoflow-delta3-probe</code> または既存 private MQTT read path に、unsupported telemetry を調査しやすい read-only 出力を追加する。</p>
+    <ul>
+      <li>decoded fields count</li>
+      <li>unsupported message count</li>
+      <li>header <code>cmdFunc</code> / <code>cmdId</code></li>
+      <li>unknown field number / wire type / value preview</li>
+    </ul>
+
+    <h3>2. Unsupported telemetry diagnostics</h3>
+    <p><code>hasReadablePrivateMQTTTelemetry</code> が false の場合でも、電源OFF、MQTT接続不可、payload未対応を区別できるようにする。</p>
+
+    <h3>3. DELTA 3 Max Plus profile mapping</h3>
+    <p>SOC、AC入力W、AC出力W、PV入力W、AC充電上限、リザーブ、AC1/AC2、AC出力保護チャンネルを優先して確定する。</p>
+
+    <h3>4. UI and diagnostics</h3>
+    <p>充電機器ステータスと制御診断で、取得不可理由と機器別制御候補理由を明確にする。</p>
+
+    <h3>5. Control integration after read verification</h3>
+    <p>telemetry が安定して読めることを確認してから、売電時の補助充電候補へ接続する。1台 write target の既存方針を維持し、複数台同時配分は別計画に分ける。</p>
+  </section>
+
+  <section>
+    <h2>Files Likely To Change</h2>
+    <ul>
+      <li><code>backend/internal/ecoflowprivate/codec.go</code></li>
+      <li><code>backend/internal/ecoflowprivate/status.go</code></li>
+      <li><code>backend/internal/ecoflowprivate/profile.go</code></li>
+      <li><code>backend/internal/ecoflowprivate/codec_test.go</code></li>
+      <li><code>backend/cmd/ecoflow-delta3-probe/main.go</code></li>
+      <li><code>backend/internal/api/delta3_status_handler.go</code></li>
+      <li><code>backend/internal/api/delta3_status_handler_test.go</code></li>
+      <li><code>frontend/lib/types.ts</code></li>
+      <li><code>frontend/lib/display-labels.ts</code></li>
+      <li><code>frontend/components/Dashboard.tsx</code></li>
+      <li><code>frontend/components/StatusCards.tsx</code></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Safety Boundaries</h2>
+    <div class="warn">
+      <ul>
+        <li>計画段階では実機 write を行わない。</li>
+        <li>実装段階でも最初は read-only decoder と diagnostics に限定する。</li>
+        <li>未確認 payload を write command として送信しない。</li>
+        <li><code>ENABLE_REAL_CONTROL</code>、<code>SIMULATION_MODE</code>、<code>MOCK_MODE</code>、<code>AUTO_CONTROL_ENABLED</code>、確認値、private MQTT write gate は維持する。</li>
+        <li>device serial number、API token、access key、secret key、private MQTT credential は計画、テスト、ログに残さない。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Verification Plan</h2>
+    <h3>電源OFFでも実行できる確認</h3>
+    <ul>
+      <li><code>cd backend &amp;&amp; rtk go test ./internal/ecoflowprivate ./internal/api</code></li>
+      <li><code>cd backend &amp;&amp; rtk go test ./cmd/ecoflow-delta3-probe</code></li>
+      <li><code>cd frontend &amp;&amp; rtk npm run build</code></li>
+      <li><code>rtk git diff --check</code></li>
+    </ul>
+    <h3>電源投入後に実行する確認</h3>
+    <ul>
+      <li><code>cd backend &amp;&amp; rtk go run ./cmd/ecoflow-delta3-probe --device-type DELTA_3_MAX_PLUS</code></li>
+      <li><code>curl -fsS http://localhost:${HTTP_PORT:-8080}/api/devices/statuses</code></li>
+      <li><code>curl -fsS http://localhost:${HTTP_PORT:-8080}/api/status</code></li>
+      <li>ブラウザで <code>充電機器ステータス</code> と <code>制御診断</code> を確認する。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Power-On Checklist</h2>
+    <ol>
+      <li><code>/api/devices/statuses</code> で DELTA 3 Max Plus が <code>available=true</code> になるか。</li>
+      <li>SOC / AC入力W / AC出力W / PV入力W のどれかが取れるか。</li>
+      <li>AC1/AC2 の ON/OFF 操作をアプリ側で行い、read-only 値だけを比較する。</li>
+      <li>AC出力保護チャンネルを AC1/AC2 に切り替え、<code>acOutputProtectionChannel</code> の値を確認する。</li>
+      <li>取得値が安定してから、controlEnabled と priority を運用設定として調整する。</li>
+    </ol>
+  </section>
+</body>
+</html>
