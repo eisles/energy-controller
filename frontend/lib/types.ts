@@ -142,6 +142,27 @@ export type Delta3Status = {
   intelligentEnabled?: boolean | null;
   updatedAt?: string;
   lastError?: string | null;
+  telemetryDiagnostics?: PrivateTelemetryDiagnostics | null;
+};
+
+export type PrivateTelemetryDiagnostics = {
+  decodedMessages: number;
+  unsupportedMessages: number;
+  replyCount: number;
+  inspectErrorCount?: number;
+  lastInspectError?: string;
+  fieldCount: number;
+  fieldSummaryTruncated?: boolean;
+  fieldSummaries?: PrivateTelemetryFieldSummary[];
+};
+
+export type PrivateTelemetryFieldSummary = {
+  messageIndex: number;
+  cmdFunc: number;
+  cmdId: number;
+  field: number;
+  wire: number;
+  value: string;
 };
 
 export type DeviceStatus = {

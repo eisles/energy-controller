@@ -222,6 +222,81 @@ func TestProbeRawReturnsCapturedMQTTReplies(t *testing.T) {
 	}
 }
 
+func TestProbeAddsReadOnlyFieldSummaries(t *testing.T) {
+	client := NewClientWithTransport(Config{
+		PrivateAPIHost: "api.test",
+		Email:          "user@example.com",
+		Password:       "secret",
+		DeviceSN:       "SN123",
+		DeviceType:     "DELTA_3_MAX_PLUS",
+		HTTPClient:     newPrivateHTTPClient(t),
+		Timeout:        time.Second,
+	}, fakeTransport{
+		replies: []MQTTMessage{
+			{Topic: "/app/user-1/SN123/thing/property/get_reply", Payload: displayPayload(t, 30, true)},
+		},
+	})
+
+	status, err := client.Probe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ReplyCount != 1 {
+		t.Fatalf("ReplyCount = %d, want 1", status.ReplyCount)
+	}
+	if len(status.FieldSummaries) == 0 {
+		t.Fatal("FieldSummaries = empty, want read-only payload field summaries")
+	}
+	first := status.FieldSummaries[0]
+	if first.CmdFunc != 254 || first.CmdID != 21 || first.Field != 7 {
+		t.Fatalf("first field summary = %+v, want cmdFunc 254 cmdId 21 field 7", first)
+	}
+}
+
+func TestAppendTelemetryFieldSummariesTracksTotalWhenTruncated(t *testing.T) {
+	fields := make([]SnapshotField, telemetryFieldSummaryLimit+3)
+	for i := range fields {
+		fields[i] = SnapshotField{MessageIndex: 0, CmdFunc: 254, CmdID: 21, Field: i + 1, Wire: 0, Value: "1"}
+	}
+	var status Status
+
+	appendTelemetryFieldSummaries(&status, fields)
+
+	if status.FieldCount != len(fields) {
+		t.Fatalf("FieldCount = %d, want %d", status.FieldCount, len(fields))
+	}
+	if len(status.FieldSummaries) != telemetryFieldSummaryLimit {
+		t.Fatalf("FieldSummaries length = %d, want %d", len(status.FieldSummaries), telemetryFieldSummaryLimit)
+	}
+	if !status.FieldSummaryTruncated {
+		t.Fatal("FieldSummaryTruncated = false, want true")
+	}
+}
+
+func TestProbeAddsReadOnlyInspectErrorDiagnostics(t *testing.T) {
+	client := NewClientWithTransport(Config{
+		PrivateAPIHost: "api.test",
+		Email:          "user@example.com",
+		Password:       "secret",
+		DeviceSN:       "SN123",
+		DeviceType:     "DELTA_3_MAX_PLUS",
+		HTTPClient:     newPrivateHTTPClient(t),
+		Timeout:        time.Second,
+	}, fakeTransport{
+		replies: []MQTTMessage{
+			{Topic: "/app/user-1/SN123/thing/property/get_reply", Payload: []byte{0xff}},
+		},
+	})
+
+	status, err := client.Probe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ReplyCount != 1 || status.InspectErrorCount != 1 || status.LastInspectError == "" {
+		t.Fatalf("status diagnostics = %+v, want reply and inspect error diagnostics", status)
+	}
+}
+
 func TestProbeReusesPrivateSession(t *testing.T) {
 	counts := &privateHTTPCallCounts{}
 	client := NewClientWithTransport(Config{

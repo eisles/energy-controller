@@ -215,7 +215,11 @@ func TestDelta3StatusReaderMarksUnsupportedPrivateMQTTPayloadUnavailable(t *test
 	reader := newDelta3StatusReader(validDelta3Config(), nil, fakeDelta3Client{
 		status: ecoflowprivate.Status{
 			DeviceType:          "RIVER_2",
+			ReplyCount:          1,
 			UnsupportedMessages: 14,
+			FieldSummaries: []ecoflowprivate.TelemetryFieldSummary{
+				{MessageIndex: 0, CmdFunc: 254, CmdID: 21, Field: 999, Wire: 0, Value: "14"},
+			},
 		},
 	})
 
@@ -226,6 +230,36 @@ func TestDelta3StatusReaderMarksUnsupportedPrivateMQTTPayloadUnavailable(t *test
 	}
 	if !strings.Contains(status.LastError, "no supported telemetry fields") {
 		t.Fatalf("LastError = %q, want unsupported telemetry message", status.LastError)
+	}
+	if status.TelemetryDiagnostics == nil {
+		t.Fatal("TelemetryDiagnostics = nil, want unsupported field diagnostics")
+	}
+	if status.TelemetryDiagnostics.UnsupportedMessages != 14 || status.TelemetryDiagnostics.ReplyCount != 1 || status.TelemetryDiagnostics.FieldCount != 1 {
+		t.Fatalf("TelemetryDiagnostics = %+v, want replyCount=1 unsupported=14 fieldCount=1", status.TelemetryDiagnostics)
+	}
+	if got := status.TelemetryDiagnostics.FieldSummaries[0]; got.Field != 999 || got.Value != "14" {
+		t.Fatalf("Field summary = %+v, want field 999 value 14", got)
+	}
+}
+
+func TestDelta3StatusReaderKeepsDiagnosticsForEmptyUnsupportedPrivateMQTTPayload(t *testing.T) {
+	reader := newDelta3StatusReader(validDelta3Config(), nil, fakeDelta3Client{
+		status: ecoflowprivate.Status{
+			DeviceType: "DELTA_3_MAX_PLUS",
+			ReplyCount: 1,
+		},
+	})
+
+	status := reader.CurrentStatus(context.Background())
+
+	if status.Available {
+		t.Fatalf("Available = true, want false for empty unsupported payload")
+	}
+	if status.TelemetryDiagnostics == nil {
+		t.Fatal("TelemetryDiagnostics = nil, want empty unsupported probe diagnostics")
+	}
+	if status.TelemetryDiagnostics.ReplyCount != 1 || status.TelemetryDiagnostics.DecodedMessages != 0 || status.TelemetryDiagnostics.FieldCount != 0 {
+		t.Fatalf("TelemetryDiagnostics = %+v, want replyCount=1 decoded=0 fieldCount=0", status.TelemetryDiagnostics)
 	}
 }
 

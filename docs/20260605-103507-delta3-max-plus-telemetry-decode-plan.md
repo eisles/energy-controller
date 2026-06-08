@@ -130,7 +130,7 @@ telemetry が安定して読めることを確認してから、既存の補助�
 - 計画段階では実機 write を行わない。
 - 実装段階でも最初は read-only decoder と diagnostics に限定する。
 - 未確認 payload を write command として送信しない。
-- `ENABLE_REAL_CONTROL=true`、`SIMULATION_MODE=false`、`MOCK_MODE=false`、`AUTO_CONTROL_ENABLED=true`、確認値、private MQTT write gate は維持する。
+- `ENABLE_REAL_CONTROL`、`SIMULATION_MODE`、`MOCK_MODE`、`AUTO_CONTROL_ENABLED`、確認値、private MQTT write gate の既存判定は維持する。read-only telemetry 実装では、これらの値を実制御向けに変更しない。
 - device serial number、API token、access key、secret key、private MQTT credential は計画、テスト、ログに残さない。
 
 ## Review Points

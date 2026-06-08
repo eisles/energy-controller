@@ -38,28 +38,49 @@ type DeviceStatusStore interface {
 }
 
 type Delta3StatusResponse struct {
-	Available                 bool   `json:"available"`
-	DeviceType                string `json:"deviceType,omitempty"`
-	SOC                       *int   `json:"soc,omitempty"`
-	ACInW                     *int   `json:"acInW,omitempty"`
-	ACOutW                    *int   `json:"acOutW,omitempty"`
-	ACChargeLimitW            *int   `json:"acChargeLimitW,omitempty"`
-	GridBypassDisabled        *bool  `json:"gridBypassDisabled,omitempty"`
-	ACOutputEnabled           *bool  `json:"acOutputEnabled,omitempty"`
-	ACOutput1Enabled          *bool  `json:"acOutput1Enabled,omitempty"`
-	ACOutput2Enabled          *bool  `json:"acOutput2Enabled,omitempty"`
-	ACOutputProtectionChannel *int   `json:"acOutputProtectionChannel,omitempty"`
-	MaxChargeSoc              *int   `json:"maxChargeSoc,omitempty"`
-	MinDischargeSoc           *int   `json:"minDischargeSoc,omitempty"`
-	BackupReserveSoc          *int   `json:"backupReserveSoc,omitempty"`
-	BackupReserveEnabled      *bool  `json:"backupReserveEnabled,omitempty"`
-	TOUModeEnabled            *bool  `json:"touModeEnabled,omitempty"`
-	SelfPoweredEnabled        *bool  `json:"selfPoweredEnabled,omitempty"`
-	ScheduledEnabled          *bool  `json:"scheduledEnabled,omitempty"`
-	IntelligentEnabled        *bool  `json:"intelligentEnabled,omitempty"`
-	UpdatedAt                 string `json:"updatedAt,omitempty"`
-	LastError                 string `json:"lastError,omitempty"`
-	Cached                    bool   `json:"cached,omitempty"`
+	Available                 bool                         `json:"available"`
+	DeviceType                string                       `json:"deviceType,omitempty"`
+	SOC                       *int                         `json:"soc,omitempty"`
+	ACInW                     *int                         `json:"acInW,omitempty"`
+	ACOutW                    *int                         `json:"acOutW,omitempty"`
+	ACChargeLimitW            *int                         `json:"acChargeLimitW,omitempty"`
+	GridBypassDisabled        *bool                        `json:"gridBypassDisabled,omitempty"`
+	ACOutputEnabled           *bool                        `json:"acOutputEnabled,omitempty"`
+	ACOutput1Enabled          *bool                        `json:"acOutput1Enabled,omitempty"`
+	ACOutput2Enabled          *bool                        `json:"acOutput2Enabled,omitempty"`
+	ACOutputProtectionChannel *int                         `json:"acOutputProtectionChannel,omitempty"`
+	MaxChargeSoc              *int                         `json:"maxChargeSoc,omitempty"`
+	MinDischargeSoc           *int                         `json:"minDischargeSoc,omitempty"`
+	BackupReserveSoc          *int                         `json:"backupReserveSoc,omitempty"`
+	BackupReserveEnabled      *bool                        `json:"backupReserveEnabled,omitempty"`
+	TOUModeEnabled            *bool                        `json:"touModeEnabled,omitempty"`
+	SelfPoweredEnabled        *bool                        `json:"selfPoweredEnabled,omitempty"`
+	ScheduledEnabled          *bool                        `json:"scheduledEnabled,omitempty"`
+	IntelligentEnabled        *bool                        `json:"intelligentEnabled,omitempty"`
+	UpdatedAt                 string                       `json:"updatedAt,omitempty"`
+	LastError                 string                       `json:"lastError,omitempty"`
+	Cached                    bool                         `json:"cached,omitempty"`
+	TelemetryDiagnostics      *PrivateTelemetryDiagnostics `json:"telemetryDiagnostics,omitempty"`
+}
+
+type PrivateTelemetryDiagnostics struct {
+	DecodedMessages       int                            `json:"decodedMessages"`
+	UnsupportedMessages   int                            `json:"unsupportedMessages"`
+	ReplyCount            int                            `json:"replyCount"`
+	InspectErrorCount     int                            `json:"inspectErrorCount,omitempty"`
+	LastInspectError      string                         `json:"lastInspectError,omitempty"`
+	FieldCount            int                            `json:"fieldCount"`
+	FieldSummaryTruncated bool                           `json:"fieldSummaryTruncated,omitempty"`
+	FieldSummaries        []PrivateTelemetryFieldSummary `json:"fieldSummaries,omitempty"`
+}
+
+type PrivateTelemetryFieldSummary struct {
+	MessageIndex int    `json:"messageIndex"`
+	CmdFunc      int    `json:"cmdFunc"`
+	CmdID        int    `json:"cmdId"`
+	Field        int    `json:"field"`
+	Wire         int    `json:"wire"`
+	Value        string `json:"value"`
 }
 
 type DeviceStatusResponse struct {
@@ -374,9 +395,10 @@ func readDelta3Status(ctx context.Context, cfg config.Config, client delta3Probe
 	}
 	if !hasReadablePrivateMQTTTelemetry(status) {
 		return Delta3StatusResponse{
-			Available:  false,
-			DeviceType: cfg.Delta3DeviceType,
-			LastError:  fmt.Sprintf("EcoFlow private MQTT returned no supported telemetry fields for %s", cfg.Delta3DeviceType),
+			Available:            false,
+			DeviceType:           cfg.Delta3DeviceType,
+			LastError:            fmt.Sprintf("EcoFlow private MQTT returned no supported telemetry fields for %s", cfg.Delta3DeviceType),
+			TelemetryDiagnostics: privateTelemetryDiagnostics(status, true),
 		}
 	}
 	return mapDelta3Status(status, time.Now())
@@ -491,6 +513,45 @@ func mapDelta3Status(status ecoflowprivate.Status, now time.Time) Delta3StatusRe
 		BackupReserveSoc:          status.BackupReserveSoc,
 		BackupReserveEnabled:      status.BackupReserveEnabled,
 		UpdatedAt:                 now.Format(time.RFC3339),
+		TelemetryDiagnostics:      privateTelemetryDiagnostics(status, false),
+	}
+}
+
+func privateTelemetryDiagnostics(status ecoflowprivate.Status, includeEmpty bool) *PrivateTelemetryDiagnostics {
+	if !includeEmpty &&
+		status.ReplyCount == 0 &&
+		status.DecodedMessages == 0 &&
+		status.UnsupportedMessages == 0 &&
+		status.InspectErrorCount == 0 &&
+		status.FieldCount == 0 &&
+		len(status.FieldSummaries) == 0 &&
+		!status.FieldSummaryTruncated {
+		return nil
+	}
+	fieldCount := status.FieldCount
+	if fieldCount == 0 {
+		fieldCount = len(status.FieldSummaries)
+	}
+	fields := make([]PrivateTelemetryFieldSummary, 0, len(status.FieldSummaries))
+	for _, field := range status.FieldSummaries {
+		fields = append(fields, PrivateTelemetryFieldSummary{
+			MessageIndex: field.MessageIndex,
+			CmdFunc:      field.CmdFunc,
+			CmdID:        field.CmdID,
+			Field:        field.Field,
+			Wire:         field.Wire,
+			Value:        field.Value,
+		})
+	}
+	return &PrivateTelemetryDiagnostics{
+		DecodedMessages:       status.DecodedMessages,
+		UnsupportedMessages:   status.UnsupportedMessages,
+		ReplyCount:            status.ReplyCount,
+		InspectErrorCount:     status.InspectErrorCount,
+		LastInspectError:      status.LastInspectError,
+		FieldCount:            fieldCount,
+		FieldSummaryTruncated: status.FieldSummaryTruncated,
+		FieldSummaries:        fields,
 	}
 }
 

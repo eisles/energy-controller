@@ -919,6 +919,32 @@ input {
   font-weight: 700;
 }
 
+.telemetry-diagnostics {
+  margin-top: 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.telemetry-diagnostics p {
+  margin: 0 0 6px;
+}
+
+.telemetry-field-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.telemetry-field-list span {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--muted);
+  padding: 2px 5px;
+  color: var(--foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 11px;
+}
+
 .tariff-plan-actions {
   display: flex;
   flex-wrap: wrap;

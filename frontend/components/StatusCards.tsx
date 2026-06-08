@@ -166,7 +166,7 @@ function Pro3ACOutputMonitor({ status }: { status: EnergyStatus }) {
   return (
     <Alert variant={event ? "destructive" : "default"} className="section">
       <AlertTitle>DELTA Pro 3 AC出力監視</AlertTitle>
-      <AlertDescription>
+      <div className="ui-alert-description">
         <div className="detail-strip planner-secondary" aria-label="DELTA Pro 3 AC output event">
           <Detail label="AC出力停止シグナル" value={event ? "検知" : "未検知"} />
           <Detail label="出力状態復帰設定" value={outputStateRestoreEnabled ? "有効" : "無効"} />
@@ -183,7 +183,7 @@ function Pro3ACOutputMonitor({ status }: { status: EnergyStatus }) {
           <Detail label="直前理由" value={event?.previousCommandReason ? decisionReasonLabel(event.previousCommandReason) : "-"} />
         </div>
         {event?.message ? <p className="planner-reason">{event.message}</p> : null}
-      </AlertDescription>
+      </div>
     </Alert>
   );
 }
@@ -274,7 +274,10 @@ export function Delta3StatusCard({
                     ) : (
                       <Alert className="delta3-alert">
                         <AlertTitle>{device.name} read-only status</AlertTitle>
-                        <AlertDescription>{device.status.lastError || "read-only status is not loaded"}</AlertDescription>
+                        <div className="ui-alert-description">
+                          <p>{device.status.lastError || "read-only status is not loaded"}</p>
+                          <TelemetryDiagnostics status={device.status} />
+                        </div>
                       </Alert>
                     )}
                   </div>
@@ -349,11 +352,42 @@ export function Delta3StatusCard({
         ) : (
           <Alert className="delta3-alert">
             <AlertTitle>DELTA 3 Plus read-only status</AlertTitle>
-            <AlertDescription>{unavailableReason}</AlertDescription>
+            <div className="ui-alert-description">
+              <p>{unavailableReason}</p>
+              {status ? <TelemetryDiagnostics status={status} /> : null}
+            </div>
           </Alert>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function TelemetryDiagnostics({ status }: { status: Delta3Status }) {
+  const diagnostics = status.telemetryDiagnostics;
+  if (!diagnostics) {
+    return null;
+  }
+  const fields = diagnostics.fieldSummaries?.slice(0, 8) ?? [];
+  return (
+    <div className="telemetry-diagnostics" aria-label="private MQTT telemetry diagnostics">
+      <p>
+        telemetry: replies {diagnostics.replyCount} / decoded {diagnostics.decodedMessages} / unsupported {diagnostics.unsupportedMessages} / fields{" "}
+        {diagnostics.fieldCount}
+        {diagnostics.inspectErrorCount ? ` / inspect errors ${diagnostics.inspectErrorCount}` : ""}
+        {diagnostics.fieldSummaryTruncated ? " / truncated" : ""}
+      </p>
+      {diagnostics.lastInspectError ? <p>inspect: {diagnostics.lastInspectError}</p> : null}
+      {fields.length > 0 ? (
+        <div className="telemetry-field-list">
+          {fields.map((field, index) => (
+            <span key={`${field.messageIndex}-${field.cmdFunc}-${field.cmdId}-${field.field}-${index}`}>
+              {`m${field.messageIndex} ${field.cmdFunc}/${field.cmdId} f${field.field} w${field.wire}=${field.value}`}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

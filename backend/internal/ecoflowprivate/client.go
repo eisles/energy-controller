@@ -8,6 +8,8 @@ import (
 	"sync"
 )
 
+const telemetryFieldSummaryLimit = 80
+
 type Client struct {
 	cfg        Config
 	auth       sessionAuthenticator
@@ -103,6 +105,13 @@ func (c *Client) probeRawWithSession(ctx context.Context, session Session) (Stat
 	}
 	status := Status{DeviceType: c.cfg.DeviceType, DeviceSN: c.cfg.DeviceSN}
 	for _, reply := range replies {
+		status.ReplyCount++
+		if fields, inspectErr := InspectSnapshotFields(reply.Payload); inspectErr == nil {
+			appendTelemetryFieldSummaries(&status, fields)
+		} else {
+			status.InspectErrorCount++
+			status.LastInspectError = inspectErr.Error()
+		}
 		part, err := DecodeSnapshot(c.cfg.DeviceType, c.cfg.DeviceSN, reply.Payload)
 		if err != nil {
 			status.UnsupportedMessages++
@@ -111,6 +120,24 @@ func (c *Client) probeRawWithSession(ctx context.Context, session Session) (Stat
 		status.merge(part)
 	}
 	return status, replies, nil
+}
+
+func appendTelemetryFieldSummaries(status *Status, fields []SnapshotField) {
+	status.FieldCount += len(fields)
+	for _, field := range fields {
+		if len(status.FieldSummaries) >= telemetryFieldSummaryLimit {
+			status.FieldSummaryTruncated = true
+			return
+		}
+		status.FieldSummaries = append(status.FieldSummaries, TelemetryFieldSummary{
+			MessageIndex: field.MessageIndex,
+			CmdFunc:      field.CmdFunc,
+			CmdID:        field.CmdID,
+			Field:        field.Field,
+			Wire:         field.Wire,
+			Value:        field.Value,
+		})
+	}
 }
 
 func (c *Client) BuildDryRunACChargePower(watts int) (CommandPayload, error) {

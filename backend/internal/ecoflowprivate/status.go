@@ -1,40 +1,55 @@
 package ecoflowprivate
 
 type Status struct {
-	DeviceType                       string `json:"deviceType"`
-	DeviceSN                         string `json:"deviceSN"`
-	BMSBatterySoc                    *int   `json:"bmsBatterySoc,omitempty"`
-	CMSBatterySoc                    *int   `json:"cmsBatterySoc,omitempty"`
-	InputW                           *int   `json:"inputW,omitempty"`
-	OutputW                          *int   `json:"outputW,omitempty"`
-	ACInW                            *int   `json:"acInW,omitempty"`
-	ACOutW                           *int   `json:"acOutW,omitempty"`
-	PVInW                            *int   `json:"pvInW,omitempty"`
-	ACChargeLimitW                   *int   `json:"acChargeLimitW,omitempty"`
-	MaxChargeSoc                     *int   `json:"maxChargeSoc,omitempty"`
-	MinDischargeSoc                  *int   `json:"minDischargeSoc,omitempty"`
-	BackupReserveSoc                 *int   `json:"backupReserveSoc,omitempty"`
-	BackupReserveEnabled             *bool  `json:"backupReserveEnabled,omitempty"`
-	GridBypassDisabled               *bool  `json:"gridBypassDisabled,omitempty"`
-	ACOutputEnabled                  *bool  `json:"acOutputEnabled,omitempty"`
-	ACOutput1Enabled                 *bool  `json:"acOutput1Enabled,omitempty"`
-	ACOutput2Enabled                 *bool  `json:"acOutput2Enabled,omitempty"`
-	ACOutputProtectionChannel        *int   `json:"acOutputProtectionChannel,omitempty"`
-	DCOutputEnabled                  *bool  `json:"dcOutputEnabled,omitempty"`
-	USBOutputEnabled                 *bool  `json:"usbOutputEnabled,omitempty"`
-	XBoostEnabled                    *bool  `json:"xboostEnabled,omitempty"`
-	OutputPowerOffMemory             *bool  `json:"outputPowerOffMemory,omitempty"`
-	ChargingState                    *int   `json:"chargingState,omitempty"`
-	BMSChargingState                 *int   `json:"bmsChargingState,omitempty"`
-	CMSChargingState                 *int   `json:"cmsChargingState,omitempty"`
-	PCSWorkMode                      *int   `json:"pcsWorkMode,omitempty"`
-	DecodedMessages                  int    `json:"decodedMessages"`
-	UnsupportedMessages              int    `json:"unsupportedMessages"`
-	LastSetReplyConfigOK             *bool  `json:"lastSetReplyConfigOk,omitempty"`
-	LastSetReplyACChargeLimit        *int   `json:"lastSetReplyAcChargeLimitW,omitempty"`
-	LastSetReplyBackupReserveSoc     *int   `json:"lastSetReplyBackupReserveSoc,omitempty"`
-	LastSetReplyBackupReserveEnabled *bool  `json:"lastSetReplyBackupReserveEnabled,omitempty"`
-	LastSetReplySeq                  *int   `json:"lastSetReplySeq,omitempty"`
+	DeviceType                       string                  `json:"deviceType"`
+	DeviceSN                         string                  `json:"deviceSN"`
+	BMSBatterySoc                    *int                    `json:"bmsBatterySoc,omitempty"`
+	CMSBatterySoc                    *int                    `json:"cmsBatterySoc,omitempty"`
+	InputW                           *int                    `json:"inputW,omitempty"`
+	OutputW                          *int                    `json:"outputW,omitempty"`
+	ACInW                            *int                    `json:"acInW,omitempty"`
+	ACOutW                           *int                    `json:"acOutW,omitempty"`
+	PVInW                            *int                    `json:"pvInW,omitempty"`
+	ACChargeLimitW                   *int                    `json:"acChargeLimitW,omitempty"`
+	MaxChargeSoc                     *int                    `json:"maxChargeSoc,omitempty"`
+	MinDischargeSoc                  *int                    `json:"minDischargeSoc,omitempty"`
+	BackupReserveSoc                 *int                    `json:"backupReserveSoc,omitempty"`
+	BackupReserveEnabled             *bool                   `json:"backupReserveEnabled,omitempty"`
+	GridBypassDisabled               *bool                   `json:"gridBypassDisabled,omitempty"`
+	ACOutputEnabled                  *bool                   `json:"acOutputEnabled,omitempty"`
+	ACOutput1Enabled                 *bool                   `json:"acOutput1Enabled,omitempty"`
+	ACOutput2Enabled                 *bool                   `json:"acOutput2Enabled,omitempty"`
+	ACOutputProtectionChannel        *int                    `json:"acOutputProtectionChannel,omitempty"`
+	DCOutputEnabled                  *bool                   `json:"dcOutputEnabled,omitempty"`
+	USBOutputEnabled                 *bool                   `json:"usbOutputEnabled,omitempty"`
+	XBoostEnabled                    *bool                   `json:"xboostEnabled,omitempty"`
+	OutputPowerOffMemory             *bool                   `json:"outputPowerOffMemory,omitempty"`
+	ChargingState                    *int                    `json:"chargingState,omitempty"`
+	BMSChargingState                 *int                    `json:"bmsChargingState,omitempty"`
+	CMSChargingState                 *int                    `json:"cmsChargingState,omitempty"`
+	PCSWorkMode                      *int                    `json:"pcsWorkMode,omitempty"`
+	ReplyCount                       int                     `json:"replyCount"`
+	DecodedMessages                  int                     `json:"decodedMessages"`
+	UnsupportedMessages              int                     `json:"unsupportedMessages"`
+	InspectErrorCount                int                     `json:"inspectErrorCount,omitempty"`
+	LastInspectError                 string                  `json:"lastInspectError,omitempty"`
+	FieldCount                       int                     `json:"fieldCount,omitempty"`
+	FieldSummaries                   []TelemetryFieldSummary `json:"fieldSummaries,omitempty"`
+	FieldSummaryTruncated            bool                    `json:"fieldSummaryTruncated,omitempty"`
+	LastSetReplyConfigOK             *bool                   `json:"lastSetReplyConfigOk,omitempty"`
+	LastSetReplyACChargeLimit        *int                    `json:"lastSetReplyAcChargeLimitW,omitempty"`
+	LastSetReplyBackupReserveSoc     *int                    `json:"lastSetReplyBackupReserveSoc,omitempty"`
+	LastSetReplyBackupReserveEnabled *bool                   `json:"lastSetReplyBackupReserveEnabled,omitempty"`
+	LastSetReplySeq                  *int                    `json:"lastSetReplySeq,omitempty"`
+}
+
+type TelemetryFieldSummary struct {
+	MessageIndex int    `json:"messageIndex"`
+	CmdFunc      int    `json:"cmdFunc"`
+	CmdID        int    `json:"cmdId"`
+	Field        int    `json:"field"`
+	Wire         int    `json:"wire"`
+	Value        string `json:"value"`
 }
 
 func (s *Status) merge(other Status) {
@@ -112,6 +127,18 @@ func (s *Status) merge(other Status) {
 	}
 	if other.PCSWorkMode != nil {
 		s.PCSWorkMode = other.PCSWorkMode
+	}
+	s.ReplyCount += other.ReplyCount
+	s.InspectErrorCount += other.InspectErrorCount
+	if other.LastInspectError != "" {
+		s.LastInspectError = other.LastInspectError
+	}
+	if len(other.FieldSummaries) > 0 {
+		s.FieldSummaries = append(s.FieldSummaries, other.FieldSummaries...)
+	}
+	s.FieldCount += other.FieldCount
+	if other.FieldSummaryTruncated {
+		s.FieldSummaryTruncated = true
 	}
 	if other.LastSetReplyConfigOK != nil {
 		s.LastSetReplyConfigOK = other.LastSetReplyConfigOK
