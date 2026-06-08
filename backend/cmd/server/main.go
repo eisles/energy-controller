@@ -892,7 +892,7 @@ func applyNightChargePlanControl(ctx context.Context, cfg config.Config, status 
 	})
 	plan = control.ExecuteNightChargeCommand(ctx, plan, writeClient)
 	status.NightChargePlan = &plan
-	return nightPlanOwnsEnergyControl(plan, status.UpdatedAt)
+	return nightPlanOwnsEnergyControl(plan, status.UpdatedAt, status.TariffControl, cfg.WeatherTimezone)
 }
 
 func applyNightChargeDevicePlans(ctx context.Context, cfg config.Config, status *domain.Status, targetProvider delta3WriteTargetProvider, delta3Reader delta3StatusReader, previous *domain.NightChargePlanLog, previousDelta3Aux *domain.Delta3AuxControlCommandLog, logger *slog.Logger) {
@@ -1013,15 +1013,23 @@ func tariffLowPriceWindowActive(status *domain.Status) bool {
 	return status != nil && status.TariffControl != nil && status.TariffControl.IsLowPrice
 }
 
-func nightPlanOwnsEnergyControl(plan domain.NightChargePlan, measuredAt time.Time) bool {
+func nightPlanOwnsEnergyControl(plan domain.NightChargePlan, measuredAt time.Time, tariff *domain.TariffControlContext, timezone string) bool {
 	if plan.StrategyState == "NIGHT_CHARGE_WINDOW" {
 		return true
 	}
 	if plan.StrategyState != "NIGHT_RECOVER" {
 		return false
 	}
+	if tariff != nil {
+		return tariff.IsLowPrice
+	}
 	if measuredAt.IsZero() {
 		measuredAt = time.Now()
+	}
+	if timezone != "" {
+		if location, err := time.LoadLocation(timezone); err == nil {
+			measuredAt = measuredAt.In(location)
+		}
 	}
 	hour := measuredAt.Hour()
 	return hour >= 23 || hour < 7

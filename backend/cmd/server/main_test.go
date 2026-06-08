@@ -874,6 +874,38 @@ func TestTariffLowPriceWindowActive(t *testing.T) {
 	}
 }
 
+func TestNightPlanOwnsEnergyControlUsesTariffLowPriceForRecover(t *testing.T) {
+	measuredAt := time.Date(2026, 6, 8, 2, 0, 0, 0, time.UTC)
+	plan := domain.NightChargePlan{StrategyState: "NIGHT_RECOVER"}
+	highPrice := &domain.TariffControlContext{IsLowPrice: false, IsHighPrice: true}
+	if nightPlanOwnsEnergyControl(plan, measuredAt, highPrice, "Asia/Tokyo") {
+		t.Fatal("high-price tariff should not let night recovery own surplus control")
+	}
+	lowPrice := &domain.TariffControlContext{IsLowPrice: true}
+	if !nightPlanOwnsEnergyControl(plan, measuredAt, lowPrice, "Asia/Tokyo") {
+		t.Fatal("low-price tariff should let night recovery own surplus control")
+	}
+}
+
+func TestNightPlanOwnsEnergyControlFallsBackToConfiguredTimezone(t *testing.T) {
+	measuredAt := time.Date(2026, 6, 8, 2, 0, 0, 0, time.UTC)
+	plan := domain.NightChargePlan{StrategyState: "NIGHT_RECOVER"}
+	if nightPlanOwnsEnergyControl(plan, measuredAt, nil, "Asia/Tokyo") {
+		t.Fatal("02:00 UTC should be treated as 11:00 JST and not own surplus control")
+	}
+	if !nightPlanOwnsEnergyControl(plan, measuredAt, nil, "UTC") {
+		t.Fatal("02:00 UTC should own surplus control when UTC fallback is used")
+	}
+}
+
+func TestNightPlanOwnsEnergyControlKeepsNightChargeWindowOwnership(t *testing.T) {
+	plan := domain.NightChargePlan{StrategyState: "NIGHT_CHARGE_WINDOW"}
+	highPrice := &domain.TariffControlContext{IsLowPrice: false, IsHighPrice: true}
+	if !nightPlanOwnsEnergyControl(plan, time.Date(2026, 6, 8, 11, 0, 0, 0, time.UTC), highPrice, "Asia/Tokyo") {
+		t.Fatal("night charge window should keep ownership because command execution is handled by its own guard")
+	}
+}
+
 func TestRealControlTrialActiveUsesCurrentClockNotMeasuredAt(t *testing.T) {
 	deadline := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
 	cfg := config.Config{
