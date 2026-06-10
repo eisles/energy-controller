@@ -384,6 +384,14 @@ func syncPrimaryPro3NightChargePlan(plan *domain.NightChargePlan, devicePlans []
 		plan.ShouldChargeTonight = devicePlan.ShouldCharge
 		plan.ShouldSetACChargeLimit = false
 		plan.ShouldSetBackupReserve = false
+		if plan.RecommendedMode == "self-powered-discharge" {
+			if blockReason := selfPoweredDischargeDeviceBlockReason(devicePlan.BlockReason); blockReason != "" {
+				blockPrimaryPro3NightChargePlan(plan, blockReason)
+				return
+			}
+			syncPrimaryPro3SelfPoweredDischargePlan(plan, devicePlan, input, guard)
+			return
+		}
 		if !devicePlan.ShouldCharge {
 			if devicePlan.BlockReason != "" {
 				blockPrimaryPro3NightChargePlan(plan, devicePlan.BlockReason)
@@ -423,6 +431,50 @@ func syncPrimaryPro3NightChargePlan(plan *domain.NightChargePlan, devicePlans []
 		plan.ActionSummary = nightChargeActionSummary(*plan)
 		return
 	}
+}
+
+func syncPrimaryPro3SelfPoweredDischargePlan(plan *domain.NightChargePlan, devicePlan domain.NightChargeDevicePlan, input NightChargeDeviceInput, guard NightChargeDeviceWriteGuard) {
+	plan.RecommendedMode = "self-powered-discharge"
+	plan.StrategyState = "NIGHT_RECOVER"
+	plan.ShouldChargeTonight = false
+	plan.ShouldDisableEnergyModes = false
+	plan.ShouldEnableTOUMode = false
+	plan.ShouldEnableSelfPoweredMode = !boolPtrTrue(input.CurrentSelfPoweredEnabled)
+	plan.ShouldSetACChargeLimit = false
+
+	recommendedReserve := devicePlan.MinTargetSoc
+	if plan.RecommendedBackupReserveSoc != nil && *plan.RecommendedBackupReserveSoc > 0 {
+		recommendedReserve = *plan.RecommendedBackupReserveSoc
+		if input.ReserveSoc > 0 || input.BackupReserveMinSoc > 0 || input.BackupReserveMaxSoc > 0 {
+			recommendedReserve = clamp(recommendedReserve, devicePlan.MinTargetSoc, devicePlan.MaxTargetSoc)
+		}
+	}
+	plan.RecommendedBackupReserveSoc = &recommendedReserve
+	plan.ShouldSetBackupReserve = input.CurrentBackupReserveSoc == nil || *input.CurrentBackupReserveSoc != recommendedReserve
+
+	switch {
+	case !nightChargeHasCandidateChange(*plan):
+		plan.WouldWrite = false
+		plan.CommandBlockReason = "night charge settings already match high-price self-powered discharge plan"
+	case nightChargeDeviceGuardBlockReason(guard) != "":
+		plan.WouldWrite = false
+		plan.CommandBlockReason = nightChargeDeviceGuardBlockReason(guard)
+	case nightChargeDeviceSpecificBlockReason(devicePlan.Kind, guard) != "":
+		plan.WouldWrite = false
+		plan.CommandBlockReason = nightChargeDeviceSpecificBlockReason(devicePlan.Kind, guard)
+	default:
+		plan.WouldWrite = true
+		plan.CommandBlockReason = ""
+	}
+	plan.CommandFingerprint = NightChargeCommandFingerprint(*plan)
+	plan.ActionSummary = nightChargeActionSummary(*plan)
+}
+
+func selfPoweredDischargeDeviceBlockReason(reason string) string {
+	if reason == "outside night charge window" {
+		return ""
+	}
+	return reason
 }
 
 func blockPrimaryPro3NightChargePlan(plan *domain.NightChargePlan, reason string) {

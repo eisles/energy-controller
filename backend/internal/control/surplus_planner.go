@@ -49,7 +49,7 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		plan.StrategyState = "RECOVERING"
 		plan.RecommendedACChargeLimitW = calculateImportRecoveryChargeW(input.ACChargeLimitW, gridPower.ImportW, settings)
 		plan.ShouldAdjustACChargeLimit = abs(input.ACChargeLimitW-plan.RecommendedACChargeLimitW) >= settings.MinCommandDiffW
-		applyRecoveryModePlan(&plan, input)
+		applyRecoveryModePlan(&plan, input, settings)
 		recoveryReserveSoc := importRecoveryReserveSoc(input, settings)
 		if input.BackupReserveSoc != nil && input.BatterySoc > recoveryReserveSoc && *input.BackupReserveSoc > recoveryReserveSoc {
 			recommendedReserve := recoveryReserveSoc
@@ -66,7 +66,7 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		return plan
 	case input.BatterySoc >= settings.TargetSoc:
 		plan.StrategyState = "RECOVERING"
-		applyRecoveryModePlan(&plan, input)
+		applyRecoveryModePlan(&plan, input, settings)
 		if input.BackupReserveSoc != nil && *input.BackupReserveSoc > defaultReserveSoc {
 			recommendedReserve := defaultReserveSoc
 			plan.RecommendedBackupReserveSoc = &recommendedReserve
@@ -176,7 +176,10 @@ func surplusActionSummary(plan domain.SurplusPlan) string {
 	return strings.Join(actions, "; ")
 }
 
-func applyRecoveryModePlan(plan *domain.SurplusPlan, input SurplusPlanInput) {
+func applyRecoveryModePlan(plan *domain.SurplusPlan, input SurplusPlanInput, settings Settings) {
+	if highPriceImportDischargeRecovery(input, settings) {
+		return
+	}
 	if boolPtrTrue(input.TOUModeEnabled) {
 		return
 	}
@@ -185,6 +188,13 @@ func applyRecoveryModePlan(plan *domain.SurplusPlan, input SurplusPlanInput) {
 		return
 	}
 	plan.ShouldEnableTOUMode = boolPtrFalse(input.TOUModeEnabled)
+}
+
+func highPriceImportDischargeRecovery(input SurplusPlanInput, settings Settings) bool {
+	return input.GridW > 0 &&
+		input.TariffControl != nil &&
+		input.TariffControl.IsHighPrice &&
+		input.BatterySoc > importRecoveryReserveSoc(input, settings)
 }
 
 func conservativeStartExportW(batteryOutputW int, settings Settings) int {

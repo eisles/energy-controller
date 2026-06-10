@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>High-price Import Discharge Mode Implementation Plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 40px; color: #111827; }
+    h1, h2 { line-height: 1.25; }
+    h1 { font-size: 28px; }
+    h2 { margin-top: 28px; font-size: 20px; border-bottom: 1px solid #d1d5db; padding-bottom: 4px; }
+    code { background: #f3f4f6; padding: 1px 4px; border-radius: 4px; }
+    ul, ol { padding-left: 24px; }
+    .note { background: #f9fafb; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px 16px; }
+  </style>
+</head>
+<body>
+  <h1>High-price Import Discharge Mode Implementation Plan</h1>
+  <h2>Goal</h2>
+  <p>高単価時間帯に買電しているとき、DELTA Pro 3 が放電回復へ向かうように、余剰制御の recovery mode 判定を修正する。</p>
+  <p>先の duplicate retry 修正により <code>backupReserveSoc=10</code> と energy strategy modes OFF の実機 write は再送された。しかし直後の制御周期で TOU を ON に戻す候補が出て、実機状態が再び <code>backupReserveSoc=54</code> 付近へ戻った。高単価の買電中は、TOU 復帰よりもリザーブ低下による放電を優先する必要がある。</p>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li>夜間充電プラン全体は再設計しない。</li>
+    <li>通常の売電時・低単価時の TOU 復帰挙動は変更しない。</li>
+    <li>手動 write API は追加しない。</li>
+    <li>実機制御ゲートは変更しない。</li>
+  </ul>
+
+  <h2>Current State</h2>
+  <ul>
+    <li><code>PlanSurplusCharging</code> の買電 recovery は <code>applyRecoveryModePlan</code> を呼ぶ。</li>
+    <li><code>applyRecoveryModePlan</code> は、energy mode が全 OFF かつ TOU が OFF の場合に <code>ShouldEnableTOUMode=true</code> を立てる。</li>
+    <li>高単価買電中でもこの TOU 復帰が走るため、放電床へ向けた reserve 低下と競合する。</li>
+  </ul>
+
+  <h2>Data And Contracts</h2>
+  <ul>
+    <li><code>SurplusPlanInput.TariffControl.IsHighPrice</code> を使って高単価時間帯を判定する。</li>
+    <li>買電 recovery 中かつ高単価時間帯、さらに現在 SOC が放電床より上の場合は、TOU 復帰を出さない。</li>
+    <li>TOU が ON の場合は、energy strategy modes OFF の候補を出す。</li>
+    <li>既存の <code>modeGuardReason</code> と実機 write gate はそのまま使う。</li>
+  </ul>
+
+  <h2>Safety Boundaries</h2>
+  <ul>
+    <li><code>ENABLE_REAL_CONTROL</code>、<code>SIMULATION_MODE=false</code>、<code>CONFIRM_ECOFLOW_WRITE</code>、trial window などの write gate は維持する。</li>
+    <li><code>MinCommandInterval</code> は維持する。</li>
+    <li>高単価買電中以外の recovery では既存の TOU 復帰を維持する。</li>
+    <li>実機状態が mode status unavailable の場合は既存 guard で write しない。</li>
+  </ul>
+
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li><code>surplus_planner.go</code> に、高単価買電中の放電 recovery 判定 helper を追加する。</li>
+    <li><code>applyRecoveryModePlan</code> を拡張し、高単価買電中は TOU 復帰を抑制し、TOU が ON なら OFF 候補を出す。</li>
+    <li><code>surplus_planner_test.go</code> に、高単価買電中の TOU OFF 候補と TOU 復帰抑制のテストを追加する。</li>
+    <li>backend tests と diff check を実行する。</li>
+  </ol>
+
+  <h2>Review Points</h2>
+  <ul>
+    <li>高単価買電中だけ挙動が変わること。</li>
+    <li>TOU ON から OFF へ落とす場合も mode status guard が効くこと。</li>
+    <li>通常 recovery の既存テストが壊れないこと。</li>
+    <li>duplicate retry 修正との相互作用でコマンド連打にならないこと。</li>
+  </ul>
+
+  <h2>Verification Commands</h2>
+  <ul>
+    <li><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./internal/control</code></li>
+    <li><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./...</code></li>
+    <li><code>rtk git diff --check</code></li>
+  </ul>
+
+  <h2>Operational Notes</h2>
+  <p class="note">反映後、現在が高単価買電かつ DELTA Pro 3 の SOC が放電床より上であれば、余剰制御は TOU 復帰ではなく <code>backupReserveSoc=10</code> と energy strategy modes OFF を優先する。実機 write は既存の安全ゲートと最小間隔に従う。</p>
+</body>
+</html>

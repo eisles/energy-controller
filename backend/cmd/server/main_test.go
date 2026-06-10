@@ -906,6 +906,14 @@ func TestNightPlanOwnsEnergyControlKeepsNightChargeWindowOwnership(t *testing.T)
 	}
 }
 
+func TestNightPlanOwnsEnergyControlForSelfPoweredDischarge(t *testing.T) {
+	plan := domain.NightChargePlan{StrategyState: "NIGHT_RECOVER", RecommendedMode: "self-powered-discharge"}
+	highPrice := &domain.TariffControlContext{IsLowPrice: false, IsHighPrice: true}
+	if !nightPlanOwnsEnergyControl(plan, time.Date(2026, 6, 8, 11, 0, 0, 0, time.UTC), highPrice, "Asia/Tokyo") {
+		t.Fatal("self-powered discharge recovery should own control to avoid surplus mode-off competition")
+	}
+}
+
 func TestRealControlTrialActiveUsesCurrentClockNotMeasuredAt(t *testing.T) {
 	deadline := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
 	cfg := config.Config{

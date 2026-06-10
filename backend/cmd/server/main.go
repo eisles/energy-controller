@@ -1017,6 +1017,9 @@ func nightPlanOwnsEnergyControl(plan domain.NightChargePlan, measuredAt time.Tim
 	if plan.StrategyState == "NIGHT_CHARGE_WINDOW" {
 		return true
 	}
+	if plan.RecommendedMode == "self-powered-discharge" {
+		return true
+	}
 	if plan.StrategyState != "NIGHT_RECOVER" {
 		return false
 	}

@@ -3,6 +3,8 @@ package control
 import (
 	"strings"
 	"testing"
+
+	"github.com/eisles/energy-controller/backend/internal/domain"
 )
 
 func TestPlanSurplusChargingRecommendsACAndReserve(t *testing.T) {
@@ -370,6 +372,80 @@ func TestPlanSurplusChargingLowersReserveToDischargeFloorWhenImporting(t *testin
 	}
 	if !strings.Contains(plan.ActionSummary, "バックアップリザーブを10%へ戻す") {
 		t.Fatalf("ActionSummary = %q, want reserve floor action", plan.ActionSummary)
+	}
+}
+
+func TestPlanSurplusChargingHighPriceImportDoesNotDisableModesForDischargeRecovery(t *testing.T) {
+	reserve := 54
+	tou := true
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:                  1300,
+		BatterySoc:             54,
+		ACChargeLimitW:         minImportRecoveryChargeW,
+		BackupReserveSoc:       &reserve,
+		DefaultReserveSoc:      30,
+		MinDischargeReserveSoc: 10,
+		TOUModeEnabled:         &tou,
+		SimulationMode:         false,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		TariffControl:          &domain.TariffControlContext{IsHighPrice: true},
+	}, DefaultSettings())
+
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 10 {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want 10", plan.RecommendedBackupReserveSoc)
+	}
+	if !plan.ShouldLowerBackupReserve {
+		t.Fatal("ShouldLowerBackupReserve = false, want true")
+	}
+	if plan.ShouldDisableEnergyModes {
+		t.Fatal("ShouldDisableEnergyModes = true, want false because self-powered discharge is handled by night plan")
+	}
+	if plan.ShouldEnableTOUMode {
+		t.Fatal("ShouldEnableTOUMode = true, want false during high-price import recovery")
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true when real-control gates are open")
+	}
+	if !strings.Contains(plan.ActionSummary, "バックアップリザーブを10%へ戻す") {
+		t.Fatalf("ActionSummary = %q, want reserve floor action", plan.ActionSummary)
+	}
+	if strings.Contains(plan.ActionSummary, "energy strategy modesを全OFF") {
+		t.Fatalf("ActionSummary = %q, want no energy mode off action", plan.ActionSummary)
+	}
+}
+
+func TestPlanSurplusChargingHighPriceImportDoesNotRestoreTOUWhenModesAreOff(t *testing.T) {
+	reserve := 54
+	tou := false
+	selfPowered := false
+	scheduled := false
+	intelligent := false
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:                  1300,
+		BatterySoc:             54,
+		ACChargeLimitW:         minImportRecoveryChargeW,
+		BackupReserveSoc:       &reserve,
+		DefaultReserveSoc:      30,
+		MinDischargeReserveSoc: 10,
+		TOUModeEnabled:         &tou,
+		SelfPoweredEnabled:     &selfPowered,
+		ScheduledEnabled:       &scheduled,
+		IntelligentEnabled:     &intelligent,
+		SimulationMode:         false,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		TariffControl:          &domain.TariffControlContext{IsHighPrice: true},
+	}, DefaultSettings())
+
+	if plan.ShouldEnableTOUMode || plan.ShouldDisableEnergyModes {
+		t.Fatalf("enable/disable modes = %t/%t, want false/false", plan.ShouldEnableTOUMode, plan.ShouldDisableEnergyModes)
+	}
+	if !plan.ShouldLowerBackupReserve {
+		t.Fatal("ShouldLowerBackupReserve = false, want true")
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true for reserve recovery")
 	}
 }
 

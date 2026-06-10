@@ -160,6 +160,7 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 	}
 	nightChargePlan := control.PlanNightCharging(control.NightChargePlanInput{
 		Now:                 now,
+		GridW:               gridPower.GridW,
 		BatterySoc:          batteryStatus.Soc,
 		BatteryInputW:       batteryStatus.InputW,
 		BatteryOutputW:      batteryStatus.OutputW,

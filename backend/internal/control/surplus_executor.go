@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/eisles/energy-controller/backend/internal/domain"
 )
@@ -116,6 +117,12 @@ func surplusCommandSuppressedReason(input SurplusCommandGuardInput, settings Set
 	}
 	if previousWriteCandidate(input.Previous) {
 		if input.Previous.CommandFingerprint == log.CommandFingerprint {
+			if !surplusCommandIntervalElapsed(input.Previous.MeasuredAt, input.Status.UpdatedAt, settings.MinCommandInterval) {
+				return "duplicate command candidate"
+			}
+			if !surplusCommandTargetApplied(input.Status, log) {
+				return ""
+			}
 			return "duplicate command candidate"
 		}
 		if !input.Previous.MeasuredAt.IsZero() && !input.Status.UpdatedAt.IsZero() && input.Status.UpdatedAt.Sub(input.Previous.MeasuredAt) < settings.MinCommandInterval {
@@ -129,6 +136,38 @@ func surplusCommandSuppressedReason(input SurplusCommandGuardInput, settings Set
 		return "command retry suppressed after previous error"
 	}
 	return ""
+}
+
+func surplusCommandIntervalElapsed(previousAt, currentAt time.Time, interval time.Duration) bool {
+	if previousAt.IsZero() || currentAt.IsZero() {
+		return false
+	}
+	return currentAt.Sub(previousAt) >= interval
+}
+
+func surplusCommandTargetApplied(status domain.Status, log domain.SurplusControlCommandLog) bool {
+	if log.ShouldAdjustACChargeLimit {
+		if log.TargetACChargeLimitW == nil || status.ACChargeLimitW != *log.TargetACChargeLimitW {
+			return false
+		}
+	}
+	if log.ShouldSetBackupReserve {
+		if log.TargetBackupReserveSoc == nil || status.BackupReserveSoc == nil || *status.BackupReserveSoc != *log.TargetBackupReserveSoc {
+			return false
+		}
+	}
+	if log.ShouldDisableEnergyModes && hasEnabledEnergyMode(SurplusPlanInput{
+		TOUModeEnabled:     status.TOUModeEnabled,
+		SelfPoweredEnabled: status.SelfPoweredEnabled,
+		ScheduledEnabled:   status.ScheduledEnabled,
+		IntelligentEnabled: status.IntelligentEnabled,
+	}) {
+		return false
+	}
+	if log.ShouldEnableTOUMode && !boolPtrTrue(status.TOUModeEnabled) {
+		return false
+	}
+	return true
 }
 
 func ExecuteSurplusCommand(ctx context.Context, log domain.SurplusControlCommandLog, writer SurplusWriteClient) domain.SurplusControlCommandLog {

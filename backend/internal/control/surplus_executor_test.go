@@ -389,7 +389,7 @@ func TestEvaluateSurplusCommandGuardKeepsSuppressingAfterSuppressedLogWhenPrevio
 		t.Fatalf("second = %+v, want duplicate suppression", second)
 	}
 
-	status.UpdatedAt = now.Add(60 * time.Second)
+	status.UpdatedAt = now.Add(59 * time.Second)
 	third := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
 		Status:                 status,
 		EnableRealControl:      true,
@@ -400,6 +400,91 @@ func TestEvaluateSurplusCommandGuardKeepsSuppressingAfterSuppressedLogWhenPrevio
 	}, DefaultSettings())
 	if third.WouldWrite || third.SuppressedReason != "duplicate command candidate" {
 		t.Fatalf("third = %+v, want duplicate suppression based on latest write candidate, not suppressed log", third)
+	}
+}
+
+func TestEvaluateSurplusCommandGuardAllowsDuplicateRetryWhenTargetNotAppliedAfterInterval(t *testing.T) {
+	now := time.Date(2026, 6, 8, 6, 0, 0, 0, time.UTC)
+	currentReserve := 54
+	targetReserve := 10
+	status := surplusGuardStatus(now)
+	status.GridW = 1000
+	status.ImportW = 1000
+	status.ExportW = 0
+	status.ACChargeLimitW = 400
+	status.BackupReserveSoc = &currentReserve
+	status.TOUModeEnabled = boolPtr(false)
+	status.SelfPoweredEnabled = boolPtr(false)
+	status.ScheduledEnabled = boolPtr(false)
+	status.IntelligentEnabled = boolPtr(false)
+	status.SurplusPlan = &domain.SurplusPlan{
+		StrategyState:               "RECOVERING",
+		RecommendedBackupReserveSoc: &targetReserve,
+		ShouldLowerBackupReserve:    true,
+		ActionSummary:               "バックアップリザーブを10%へ戻す",
+		Reason:                      "importing from grid",
+	}
+	previous := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
+		Status:                 status,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
+	}, DefaultSettings())
+	if !previous.WouldWrite {
+		t.Fatalf("previous WouldWrite = false, want true: %+v", previous)
+	}
+
+	status.UpdatedAt = now.Add(DefaultSettings().MinCommandInterval)
+	retry := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
+		Status:                 status,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
+		Previous:               &previous,
+	}, DefaultSettings())
+	if !retry.WouldWrite || retry.SuppressedReason != "" {
+		t.Fatalf("retry = %+v, want write retry when target reserve is not applied", retry)
+	}
+}
+
+func TestEvaluateSurplusCommandGuardSuppressesDuplicateAfterIntervalWhenTargetApplied(t *testing.T) {
+	now := time.Date(2026, 6, 8, 6, 0, 0, 0, time.UTC)
+	currentReserve := 54
+	targetReserve := 10
+	status := surplusGuardStatus(now)
+	status.BackupReserveSoc = &currentReserve
+	status.SurplusPlan = &domain.SurplusPlan{
+		StrategyState:               "RECOVERING",
+		RecommendedBackupReserveSoc: &targetReserve,
+		ShouldLowerBackupReserve:    true,
+		ActionSummary:               "バックアップリザーブを10%へ戻す",
+		Reason:                      "importing from grid",
+	}
+	previous := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
+		Status:                 status,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
+	}, DefaultSettings())
+	if !previous.WouldWrite {
+		t.Fatalf("previous WouldWrite = false, want true: %+v", previous)
+	}
+
+	status.UpdatedAt = now.Add(DefaultSettings().MinCommandInterval)
+	status.BackupReserveSoc = &targetReserve
+	duplicate := EvaluateSurplusCommandGuard(SurplusCommandGuardInput{
+		Status:                 status,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		ConfirmEcoFlowWrite:    confirmEcoFlowWriteValue,
+		RealControlTrialActive: true,
+		Previous:               &previous,
+	}, DefaultSettings())
+	if duplicate.WouldWrite || duplicate.SuppressedReason != "duplicate command candidate" {
+		t.Fatalf("duplicate = %+v, want duplicate suppression after target reserve is applied", duplicate)
 	}
 }
 

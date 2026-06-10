@@ -601,6 +601,120 @@ func TestPlanNightChargingSuppressesFixedNightWhenTariffIsHighPrice(t *testing.T
 	}
 }
 
+func TestPlanNightChargingHighPriceDoesNotRestoreReserveOrSelfPowered(t *testing.T) {
+	nextLow := time.Date(2026, 5, 19, 14, 0, 0, 0, time.UTC)
+	highPrice := &domain.TariffControlContext{
+		CurrentPeriod:  "day",
+		CurrentRateYen: 34.06,
+		LowestRateYen:  16.11,
+		HighestRateYen: 34.06,
+		IsHighPrice:    true,
+		NextLowPriceAt: &nextLow,
+	}
+	reserve := 10
+	selfPowered := false
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                time.Date(2026, 5, 19, 15, 30, 0, 0, time.UTC),
+		BatterySoc:         54,
+		BackupReserveSoc:   &reserve,
+		SelfPoweredEnabled: &selfPowered,
+		Forecast:           &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 12, SunshineDurationHours: 4, CloudCoverMeanPercent: 70, PrecipitationProbabilityMax: 100, PrecipitationSumMM: 8},
+		TariffControl:      highPrice,
+		SimulationMode:     false,
+		EnableRealControl:  true,
+		AutoControl:        true,
+	}, DefaultSettings())
+
+	if plan.RecommendedMode != "observe" {
+		t.Fatalf("RecommendedMode = %q, want observe", plan.RecommendedMode)
+	}
+	if plan.ShouldSetBackupReserve || plan.ShouldEnableSelfPoweredMode || plan.WouldWrite {
+		t.Fatalf("reserve/self-powered/write = %t/%t/%t, want all false", plan.ShouldSetBackupReserve, plan.ShouldEnableSelfPoweredMode, plan.WouldWrite)
+	}
+	if plan.CommandFingerprint != "none" {
+		t.Fatalf("CommandFingerprint = %q, want none", plan.CommandFingerprint)
+	}
+	if strings.Contains(plan.ActionSummary, "self-powered modeへ切り替え") || strings.Contains(plan.ActionSummary, "バックアップリザーブ") {
+		t.Fatalf("ActionSummary = %q, want no self-powered or reserve restore action", plan.ActionSummary)
+	}
+}
+
+func TestPlanNightChargingHighPriceImportEnablesSelfPoweredDischarge(t *testing.T) {
+	nextLow := time.Date(2026, 5, 19, 14, 0, 0, 0, time.UTC)
+	highPrice := &domain.TariffControlContext{
+		CurrentPeriod:  "day",
+		CurrentRateYen: 34.06,
+		LowestRateYen:  16.11,
+		HighestRateYen: 34.06,
+		IsHighPrice:    true,
+		NextLowPriceAt: &nextLow,
+	}
+	reserve := 55
+	selfPowered := false
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                time.Date(2026, 5, 19, 15, 30, 0, 0, time.UTC),
+		GridW:              1200,
+		BatterySoc:         55,
+		BackupReserveSoc:   &reserve,
+		SelfPoweredEnabled: &selfPowered,
+		Forecast:           &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 12, SunshineDurationHours: 4, CloudCoverMeanPercent: 70, PrecipitationProbabilityMax: 100, PrecipitationSumMM: 8},
+		SolarSettings:      &domain.WeatherLocation{MinimumReserveSoc: 10, BatteryCapacityKWh: 12.288},
+		TariffControl:      highPrice,
+		SimulationMode:     false,
+		EnableRealControl:  true,
+		AutoControl:        true,
+	}, DefaultSettings())
+
+	if plan.RecommendedMode != "self-powered-discharge" {
+		t.Fatalf("RecommendedMode = %q, want self-powered-discharge", plan.RecommendedMode)
+	}
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 10 {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want 10", plan.RecommendedBackupReserveSoc)
+	}
+	if !plan.ShouldSetBackupReserve || !plan.ShouldEnableSelfPoweredMode || !plan.WouldWrite {
+		t.Fatalf("reserve/self-powered/write = %t/%t/%t, want all true", plan.ShouldSetBackupReserve, plan.ShouldEnableSelfPoweredMode, plan.WouldWrite)
+	}
+	if plan.ShouldChargeTonight || plan.ShouldEnableTOUMode || plan.ShouldDisableEnergyModes {
+		t.Fatalf("charge/tou/disable = %t/%t/%t, want false/false/false", plan.ShouldChargeTonight, plan.ShouldEnableTOUMode, plan.ShouldDisableEnergyModes)
+	}
+	if plan.CommandFingerprint != "self-powered=on|reserve=10" {
+		t.Fatalf("CommandFingerprint = %q, want self-powered=on|reserve=10", plan.CommandFingerprint)
+	}
+	for _, want := range []string{"高単価買電中はself-powered放電を優先", "バックアップリザーブを10%へ設定"} {
+		if !strings.Contains(plan.ActionSummary, want) {
+			t.Fatalf("ActionSummary = %q, want contains %q", plan.ActionSummary, want)
+		}
+	}
+}
+
+func TestPlanNightChargingHighPriceImportNoWriteWhenDischargeSettingsAlreadyApplied(t *testing.T) {
+	reserve := 10
+	selfPowered := true
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                time.Date(2026, 5, 19, 15, 30, 0, 0, time.UTC),
+		GridW:              1200,
+		BatterySoc:         55,
+		BackupReserveSoc:   &reserve,
+		SelfPoweredEnabled: &selfPowered,
+		Forecast:           &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 12, SunshineDurationHours: 4, CloudCoverMeanPercent: 70, PrecipitationProbabilityMax: 100, PrecipitationSumMM: 8},
+		SolarSettings:      &domain.WeatherLocation{MinimumReserveSoc: 10, BatteryCapacityKWh: 12.288},
+		TariffControl:      &domain.TariffControlContext{IsHighPrice: true},
+		SimulationMode:     false,
+		EnableRealControl:  true,
+		AutoControl:        true,
+	}, DefaultSettings())
+
+	if plan.RecommendedMode != "self-powered-discharge" {
+		t.Fatalf("RecommendedMode = %q, want self-powered-discharge", plan.RecommendedMode)
+	}
+	if plan.ShouldSetBackupReserve || plan.ShouldEnableSelfPoweredMode || plan.WouldWrite {
+		t.Fatalf("reserve/self-powered/write = %t/%t/%t, want all false", plan.ShouldSetBackupReserve, plan.ShouldEnableSelfPoweredMode, plan.WouldWrite)
+	}
+	if plan.CommandBlockReason != "current SOC is already above the recommended night target" {
+		t.Fatalf("CommandBlockReason = %q, want already above target", plan.CommandBlockReason)
+	}
+}
+
 func TestPlanNightChargingWouldWriteOnlyInsideNightChargeWindow(t *testing.T) {
 	forecast := &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 3, SunshineDurationHours: 1, CloudCoverMeanPercent: 95, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 12}
 	baseInput := NightChargePlanInput{

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Surplus Duplicate Retry Guard Implementation Plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; margin: 40px; color: #111827; }
+    h1, h2 { line-height: 1.25; }
+    h1 { font-size: 28px; }
+    h2 { margin-top: 28px; font-size: 20px; border-bottom: 1px solid #d1d5db; padding-bottom: 4px; }
+    code { background: #f3f4f6; padding: 1px 4px; border-radius: 4px; }
+    ul, ol { padding-left: 24px; }
+    .note { background: #f9fafb; border: 1px solid #d1d5db; border-radius: 8px; padding: 12px 16px; }
+  </style>
+</head>
+<body>
+  <h1>Surplus Duplicate Retry Guard Implementation Plan</h1>
+
+  <h2>Goal</h2>
+  <p>買電中かつ料金上放電したい状態で、DELTA Pro 3 の余剰制御候補が <code>duplicate command candidate</code> として抑制され続ける問題を修正する。</p>
+  <p>現在の観測では、余剰制御は <code>backupReserveSoc=10</code> と energy strategy modes OFF を候補に出しているが、実機状態は <code>backupReserveSoc=54</code> のまま残っている。直前候補と fingerprint が同じという理由だけで再送を止めると、実機が目標状態に到達していない場合でも復旧しない。</p>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li>実機制御ゲートを緩和しない。</li>
+    <li>手動の実機 write API や追加の操作 UI は作らない。</li>
+    <li>夜間充電プラン、料金マスタ、機器優先順位の再設計はしない。</li>
+    <li>DELTA 3 Max Plus や補助バッテリー制御へ同じ修正を横展開しない。</li>
+  </ul>
+
+  <h2>Current State</h2>
+  <ul>
+    <li><code>backend/internal/control/surplus_executor.go</code> の <code>surplusCommandSuppressedReason</code> は、前回 write 候補と今回候補の <code>CommandFingerprint</code> が一致すると即座に <code>duplicate command candidate</code> を返す。</li>
+    <li>そのため、前回送信後に実機状態がまだ目標へ反映されていない場合も同じ候補が抑制される。</li>
+    <li>実運用では <code>previousBackupReserveSoc=54</code>、<code>targetBackupReserveSoc=10</code> のまま同一候補が抑制され続けている。</li>
+  </ul>
+
+  <h2>Data And Contracts</h2>
+  <ul>
+    <li>入力は既存の <code>domain.Status</code> と <code>domain.SurplusControlCommandLog</code> のみを使う。</li>
+    <li><code>ShouldAdjustACChargeLimit</code>: 現在の <code>ACChargeLimitW</code> が <code>TargetACChargeLimitW</code> と一致しているか。</li>
+    <li><code>ShouldSetBackupReserve</code>: 現在の <code>BackupReserveSoc</code> が <code>TargetBackupReserveSoc</code> と一致しているか。</li>
+    <li><code>ShouldDisableEnergyModes</code>: すべての energy strategy mode が OFF になっているか。</li>
+    <li><code>ShouldEnableTOUMode</code>: TOU が ON になっているか。</li>
+    <li>目標状態に一致していない場合は、同一 fingerprint でも最小コマンド間隔経過後に再送候補として扱えるようにする。</li>
+  </ul>
+
+  <h2>Safety Boundaries</h2>
+  <ul>
+    <li><code>MockMode</code>、<code>SimulationMode</code>、<code>EnableRealControl</code>、<code>AutoControl</code>、<code>ConfirmEcoFlowWrite</code>、<code>RealControlTrialActive</code> の既存ゲートは維持する。</li>
+    <li><code>backup reserve status unavailable</code> と mode status guard は維持する。</li>
+    <li><code>settings.MinCommandInterval</code> 未満の再送は抑制する。</li>
+    <li>前回エラー後の retry interval は維持する。</li>
+    <li>実機に未反映の同一候補だけを再送対象にし、既に目標状態なら duplicate として抑制する。</li>
+  </ul>
+
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li><code>surplus_executor.go</code> に、今回候補が現在の実機観測値に反映済みか判定する helper を追加する。</li>
+    <li>同一 fingerprint の duplicate 判定を変更する。</li>
+    <li><code>surplus_executor_test.go</code> に再送許可・抑制のテストを追加または修正する。</li>
+    <li>既存の実機 write path test が通ることを確認する。</li>
+  </ol>
+
+  <h2>Review Points</h2>
+  <ul>
+    <li>同一候補の無制限連打にならないこと。</li>
+    <li>目標未反映時だけ再送すること。</li>
+    <li>mode status が不明な場合に再送許可しないこと。</li>
+    <li>既存の安全ゲートと最小コマンド間隔が維持されること。</li>
+  </ul>
+
+  <h2>Verification Commands</h2>
+  <ul>
+    <li><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./internal/control</code></li>
+    <li><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./...</code></li>
+    <li><code>rtk git diff --check</code></li>
+  </ul>
+
+  <h2>Operational Notes</h2>
+  <p class="note">実装後に <code>docker compose up -d --build</code> で反映すると、現在の実機状態がまだ目標未反映で、かつ既存の実機制御ゲートがすべて有効な場合、コントローラの通常周期で再送が発生する可能性がある。これは手動 write ではなく、既存ゲート内の自動制御として扱う。</p>
+</body>
+</html>
