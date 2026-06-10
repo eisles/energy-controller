@@ -449,6 +449,74 @@ func TestPlanSurplusChargingHighPriceImportDoesNotRestoreTOUWhenModesAreOff(t *t
 	}
 }
 
+func TestPlanSurplusChargingMidPriceImportDoesNotRestoreTOUWhenModesAreOff(t *testing.T) {
+	reserve := 54
+	tou := false
+	selfPowered := false
+	scheduled := false
+	intelligent := false
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:                  1300,
+		BatterySoc:             54,
+		ACChargeLimitW:         minImportRecoveryChargeW,
+		BackupReserveSoc:       &reserve,
+		DefaultReserveSoc:      30,
+		MinDischargeReserveSoc: 10,
+		TOUModeEnabled:         &tou,
+		SelfPoweredEnabled:     &selfPowered,
+		ScheduledEnabled:       &scheduled,
+		IntelligentEnabled:     &intelligent,
+		SimulationMode:         false,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		TariffControl:          &domain.TariffControlContext{CurrentPeriod: "mid", CurrentRateYen: 26.4, LowestRateYen: 16.1, HighestRateYen: 34.1, IsLowPrice: false, IsHighPrice: false},
+	}, DefaultSettings())
+
+	if plan.ShouldEnableTOUMode || plan.ShouldDisableEnergyModes {
+		t.Fatalf("enable/disable modes = %t/%t, want false/false", plan.ShouldEnableTOUMode, plan.ShouldDisableEnergyModes)
+	}
+	if !plan.ShouldLowerBackupReserve {
+		t.Fatal("ShouldLowerBackupReserve = false, want true")
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true for reserve recovery")
+	}
+	if !strings.Contains(plan.TariffControlReason, "non-low-price period") {
+		t.Fatalf("TariffControlReason = %q, want non-low-price context", plan.TariffControlReason)
+	}
+}
+
+func TestPlanSurplusChargingFlatRateImportCanRestoreTOU(t *testing.T) {
+	reserve := 54
+	tou := false
+	selfPowered := false
+	scheduled := false
+	intelligent := false
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:                  1300,
+		BatterySoc:             54,
+		ACChargeLimitW:         minImportRecoveryChargeW,
+		BackupReserveSoc:       &reserve,
+		DefaultReserveSoc:      30,
+		MinDischargeReserveSoc: 10,
+		TOUModeEnabled:         &tou,
+		SelfPoweredEnabled:     &selfPowered,
+		ScheduledEnabled:       &scheduled,
+		IntelligentEnabled:     &intelligent,
+		SimulationMode:         false,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		TariffControl:          &domain.TariffControlContext{CurrentPeriod: "flat", CurrentRateYen: 25, LowestRateYen: 25, HighestRateYen: 25},
+	}, DefaultSettings())
+
+	if !plan.ShouldEnableTOUMode {
+		t.Fatal("ShouldEnableTOUMode = false, want flat-rate tariff to keep neutral recovery behavior")
+	}
+	if strings.Contains(plan.TariffControlReason, "non-low-price period") {
+		t.Fatalf("TariffControlReason = %q, want no non-low-price context for flat-rate tariff", plan.TariffControlReason)
+	}
+}
+
 func TestPlanSurplusChargingDoesNotLowerReserveAtDischargeFloorWhenImporting(t *testing.T) {
 	reserve := 15
 	plan := PlanSurplusCharging(SurplusPlanInput{

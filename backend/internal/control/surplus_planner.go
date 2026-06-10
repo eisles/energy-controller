@@ -58,9 +58,9 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		}
 		plan.ActionSummary = surplusActionSummary(plan)
 		plan.Reason = "importing from grid; recover by stopping surplus charge and allowing discharge to reserve floor"
-		if input.TariffControl != nil && input.TariffControl.IsHighPrice {
-			plan.TariffControlReason = "high-price period; prioritize battery discharge and suppress grid charging"
-			plan.Reason += "; high-price period prioritizes battery discharge"
+		if tariffPrefersImportDischarge(input.TariffControl) {
+			plan.TariffControlReason = "non-low-price period; prioritize battery discharge and suppress grid charging"
+			plan.Reason += "; non-low-price period prioritizes battery discharge"
 		}
 		plan.WouldWrite = writeAllowed(input) && (plan.ShouldAdjustACChargeLimit || plan.ShouldLowerBackupReserve || plan.ShouldDisableEnergyModes || plan.ShouldEnableTOUMode)
 		return plan
@@ -177,7 +177,7 @@ func surplusActionSummary(plan domain.SurplusPlan) string {
 }
 
 func applyRecoveryModePlan(plan *domain.SurplusPlan, input SurplusPlanInput, settings Settings) {
-	if highPriceImportDischargeRecovery(input, settings) {
+	if tariffImportDischargeRecovery(input, settings) {
 		return
 	}
 	if boolPtrTrue(input.TOUModeEnabled) {
@@ -190,10 +190,9 @@ func applyRecoveryModePlan(plan *domain.SurplusPlan, input SurplusPlanInput, set
 	plan.ShouldEnableTOUMode = boolPtrFalse(input.TOUModeEnabled)
 }
 
-func highPriceImportDischargeRecovery(input SurplusPlanInput, settings Settings) bool {
+func tariffImportDischargeRecovery(input SurplusPlanInput, settings Settings) bool {
 	return input.GridW > 0 &&
-		input.TariffControl != nil &&
-		input.TariffControl.IsHighPrice &&
+		tariffPrefersImportDischarge(input.TariffControl) &&
 		input.BatterySoc > importRecoveryReserveSoc(input, settings)
 }
 

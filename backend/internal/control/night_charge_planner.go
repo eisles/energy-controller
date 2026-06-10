@@ -121,7 +121,11 @@ func applyTariffContextToNightPlan(plan *domain.NightChargePlan, tariff *domain.
 		plan.TariffControlReason = "high-price period; suppress night charge and prefer battery discharge"
 		return
 	}
-	plan.TariffControlReason = "mid-price period; observe unless surplus or forecast target requires action"
+	if tariffPrefersImportDischarge(tariff) {
+		plan.TariffControlReason = "mid-price period; prefer battery discharge while importing, otherwise observe unless surplus or forecast target requires action"
+		return
+	}
+	plan.TariffControlReason = "neutral tariff period; observe unless surplus or forecast target requires action"
 }
 
 func nightChargeStrategyState(now time.Time, shouldChargeTonight bool, batterySoc int, targetSoc int, tariff *domain.TariffControlContext) string {
@@ -364,7 +368,7 @@ func nightChargeActionSummary(plan domain.NightChargePlan) string {
 		actions = append(actions, "self-powered modeへ切り替え")
 	}
 	if plan.RecommendedMode == "self-powered-discharge" {
-		actions = append(actions, "高単価買電中はself-powered放電を優先")
+		actions = append(actions, "中/高単価買電中はself-powered放電を優先")
 	}
 	if plan.ShouldSetBackupReserve && plan.RecommendedBackupReserveSoc != nil {
 		actions = append(actions, fmt.Sprintf("バックアップリザーブを%d%%へ設定", *plan.RecommendedBackupReserveSoc))
@@ -382,7 +386,7 @@ func nightChargeActionSummary(plan domain.NightChargePlan) string {
 }
 
 func applyNightModeRecommendation(plan *domain.NightChargePlan, input NightChargePlanInput, settings Settings) {
-	if highPriceNightSelfPoweredDischargeRecovery(input, *plan) {
+	if tariffNightSelfPoweredDischargeRecovery(input, *plan) {
 		plan.RecommendedMode = "self-powered-discharge"
 		plan.StrategyState = "NIGHT_RECOVER"
 		plan.ShouldChargeTonight = false
@@ -390,7 +394,7 @@ func applyNightModeRecommendation(plan *domain.NightChargePlan, input NightCharg
 		plan.ShouldEnableTOUMode = false
 		return
 	}
-	if highPriceTariff(input.TariffControl) {
+	if tariffPrefersImportDischarge(input.TariffControl) {
 		plan.RecommendedMode = "observe"
 		return
 	}
@@ -421,18 +425,26 @@ func touChargeIneffective(input NightChargePlanInput, settings Settings) bool {
 	return boolPtrTrue(input.TOUModeEnabled) && input.BatteryInputW < settings.MinChargeW
 }
 
-func highPriceTariff(tariff *domain.TariffControlContext) bool {
-	return tariff != nil && tariff.IsHighPrice
+func tariffPrefersImportDischarge(tariff *domain.TariffControlContext) bool {
+	if tariff == nil || tariff.IsLowPrice {
+		return false
+	}
+	if tariff.IsHighPrice {
+		return true
+	}
+	const tariffRateTolerance = 0.001
+	hasPriceSpread := tariff.HighestRateYen > tariff.LowestRateYen+tariffRateTolerance
+	return hasPriceSpread && tariff.CurrentRateYen > tariff.LowestRateYen+tariffRateTolerance
 }
 
-func highPriceNightSelfPoweredDischargeRecovery(input NightChargePlanInput, plan domain.NightChargePlan) bool {
-	reserveSoc := highPriceNightSelfPoweredDischargeReserveSoc(input, plan)
+func tariffNightSelfPoweredDischargeRecovery(input NightChargePlanInput, plan domain.NightChargePlan) bool {
+	reserveSoc := tariffNightSelfPoweredDischargeReserveSoc(input, plan)
 	return input.GridW > 0 &&
-		highPriceTariff(input.TariffControl) &&
+		tariffPrefersImportDischarge(input.TariffControl) &&
 		input.BatterySoc > reserveSoc
 }
 
-func highPriceNightSelfPoweredDischargeReserveSoc(input NightChargePlanInput, plan domain.NightChargePlan) int {
+func tariffNightSelfPoweredDischargeReserveSoc(input NightChargePlanInput, plan domain.NightChargePlan) int {
 	if input.SolarSettings != nil && input.SolarSettings.MinimumReserveSoc > 0 {
 		return normalizeReserveSoc(input.SolarSettings.MinimumReserveSoc)
 	}
@@ -441,12 +453,12 @@ func highPriceNightSelfPoweredDischargeReserveSoc(input NightChargePlanInput, pl
 
 func applyNightChargeCommandPlan(plan *domain.NightChargePlan, input NightChargePlanInput, settings Settings) {
 	if plan.RecommendedMode == "self-powered-discharge" {
-		recommendedReserve := highPriceNightSelfPoweredDischargeReserveSoc(input, *plan)
+		recommendedReserve := tariffNightSelfPoweredDischargeReserveSoc(input, *plan)
 		plan.RecommendedBackupReserveSoc = &recommendedReserve
 		plan.ShouldSetBackupReserve = input.BackupReserveSoc == nil || *input.BackupReserveSoc != recommendedReserve
 		return
 	}
-	if highPriceTariff(input.TariffControl) {
+	if tariffPrefersImportDischarge(input.TariffControl) {
 		return
 	}
 	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" && !(plan.StrategyState == "NIGHT_RECOVER" && isNightChargeControlTime(input)) {

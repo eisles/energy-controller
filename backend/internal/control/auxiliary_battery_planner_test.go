@@ -1,6 +1,7 @@
 package control
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -468,6 +469,9 @@ func TestPlanDelta3AuxChargingWaitsForPro3Candidate(t *testing.T) {
 	}
 	if plan.ShouldAdjustACChargeLimit {
 		t.Fatal("ShouldAdjustACChargeLimit = true, want false")
+	}
+	if !strings.Contains(plan.Reason, "DELTA Pro 3 first") {
+		t.Fatalf("Reason = %q, want explicit Pro3-first priority", plan.Reason)
 	}
 }
 

@@ -170,7 +170,7 @@ func PlanDelta3AuxCharging(input Delta3AuxPlanInput, settings Delta3AuxSettings,
 		}
 		if shouldWaitForPro3(status, pro3Settings) {
 			plan.StrategyState = "WAIT_PRO3"
-			plan.Reason = "DELTA Pro 3 still has priority surplus absorption candidate"
+			plan.Reason = "charging priority keeps DELTA Pro 3 first; auxiliary battery waits while Pro3 has a surplus absorption candidate"
 			return plan
 		}
 	}

@@ -680,10 +680,122 @@ func TestPlanNightChargingHighPriceImportEnablesSelfPoweredDischarge(t *testing.
 	if plan.CommandFingerprint != "self-powered=on|reserve=10" {
 		t.Fatalf("CommandFingerprint = %q, want self-powered=on|reserve=10", plan.CommandFingerprint)
 	}
-	for _, want := range []string{"高単価買電中はself-powered放電を優先", "バックアップリザーブを10%へ設定"} {
+	for _, want := range []string{"中/高単価買電中はself-powered放電を優先", "バックアップリザーブを10%へ設定"} {
 		if !strings.Contains(plan.ActionSummary, want) {
 			t.Fatalf("ActionSummary = %q, want contains %q", plan.ActionSummary, want)
 		}
+	}
+}
+
+func TestPlanNightChargingMidPriceImportEnablesSelfPoweredDischarge(t *testing.T) {
+	reserve := 55
+	selfPowered := false
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                time.Date(2026, 5, 19, 15, 30, 0, 0, time.UTC),
+		GridW:              900,
+		BatterySoc:         55,
+		BackupReserveSoc:   &reserve,
+		SelfPoweredEnabled: &selfPowered,
+		Forecast:           &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 12, SunshineDurationHours: 4, CloudCoverMeanPercent: 70, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 4},
+		SolarSettings:      &domain.WeatherLocation{MinimumReserveSoc: 10, BatteryCapacityKWh: 12.288},
+		TariffControl:      &domain.TariffControlContext{CurrentPeriod: "mid", CurrentRateYen: 26.4, LowestRateYen: 16.1, HighestRateYen: 34.1},
+		SimulationMode:     false,
+		EnableRealControl:  true,
+		AutoControl:        true,
+	}, DefaultSettings())
+
+	if plan.RecommendedMode != "self-powered-discharge" {
+		t.Fatalf("RecommendedMode = %q, want self-powered-discharge", plan.RecommendedMode)
+	}
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 10 {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want 10", plan.RecommendedBackupReserveSoc)
+	}
+	if !plan.ShouldSetBackupReserve || !plan.ShouldEnableSelfPoweredMode || !plan.WouldWrite {
+		t.Fatalf("reserve/self-powered/write = %t/%t/%t, want all true", plan.ShouldSetBackupReserve, plan.ShouldEnableSelfPoweredMode, plan.WouldWrite)
+	}
+	if !strings.Contains(plan.TariffControlReason, "mid-price period") {
+		t.Fatalf("TariffControlReason = %q, want mid-price context", plan.TariffControlReason)
+	}
+	if !strings.Contains(plan.ActionSummary, "中/高単価買電中はself-powered放電を優先") {
+		t.Fatalf("ActionSummary = %q, want non-low-price discharge action", plan.ActionSummary)
+	}
+}
+
+func TestPlanNightChargingLowPriceImportDoesNotUseSelfPoweredDischarge(t *testing.T) {
+	reserve := 55
+	selfPowered := false
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                time.Date(2026, 5, 19, 15, 30, 0, 0, time.UTC),
+		GridW:              900,
+		BatterySoc:         55,
+		BackupReserveSoc:   &reserve,
+		SelfPoweredEnabled: &selfPowered,
+		Forecast:           &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 12, SunshineDurationHours: 4, CloudCoverMeanPercent: 70, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 4},
+		SolarSettings:      &domain.WeatherLocation{MinimumReserveSoc: 10, BatteryCapacityKWh: 12.288},
+		TariffControl:      &domain.TariffControlContext{CurrentPeriod: "low", CurrentRateYen: 16.1, LowestRateYen: 16.1, HighestRateYen: 34.1, IsLowPrice: true},
+		SimulationMode:     false,
+		EnableRealControl:  true,
+		AutoControl:        true,
+	}, DefaultSettings())
+
+	if plan.RecommendedMode == "self-powered-discharge" {
+		t.Fatalf("RecommendedMode = self-powered-discharge, want low-price import to keep charge-capable behavior")
+	}
+	if strings.Contains(plan.ActionSummary, "self-powered放電を優先") {
+		t.Fatalf("ActionSummary = %q, want no discharge-priority action during low-price import", plan.ActionSummary)
+	}
+}
+
+func TestPlanNightChargingEmptyTariffContextDoesNotUseSelfPoweredDischarge(t *testing.T) {
+	reserve := 55
+	selfPowered := false
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                time.Date(2026, 5, 19, 15, 30, 0, 0, time.UTC),
+		GridW:              900,
+		BatterySoc:         55,
+		BackupReserveSoc:   &reserve,
+		SelfPoweredEnabled: &selfPowered,
+		Forecast:           &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 12, SunshineDurationHours: 4, CloudCoverMeanPercent: 70, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 4},
+		SolarSettings:      &domain.WeatherLocation{MinimumReserveSoc: 10, BatteryCapacityKWh: 12.288},
+		TariffControl:      &domain.TariffControlContext{},
+		SimulationMode:     false,
+		EnableRealControl:  true,
+		AutoControl:        true,
+	}, DefaultSettings())
+
+	if plan.RecommendedMode == "self-powered-discharge" {
+		t.Fatalf("RecommendedMode = self-powered-discharge, want empty tariff context to keep safe existing behavior")
+	}
+	if strings.Contains(plan.ActionSummary, "self-powered放電を優先") {
+		t.Fatalf("ActionSummary = %q, want no discharge-priority action for empty tariff context", plan.ActionSummary)
+	}
+}
+
+func TestPlanNightChargingFlatRateTariffDoesNotUseSelfPoweredDischarge(t *testing.T) {
+	reserve := 55
+	selfPowered := false
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                time.Date(2026, 5, 19, 15, 30, 0, 0, time.UTC),
+		GridW:              900,
+		BatterySoc:         55,
+		BackupReserveSoc:   &reserve,
+		SelfPoweredEnabled: &selfPowered,
+		Forecast:           &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 12, SunshineDurationHours: 4, CloudCoverMeanPercent: 70, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 4},
+		SolarSettings:      &domain.WeatherLocation{MinimumReserveSoc: 10, BatteryCapacityKWh: 12.288},
+		TariffControl:      &domain.TariffControlContext{CurrentPeriod: "flat", CurrentRateYen: 25, LowestRateYen: 25, HighestRateYen: 25},
+		SimulationMode:     false,
+		EnableRealControl:  true,
+		AutoControl:        true,
+	}, DefaultSettings())
+
+	if plan.RecommendedMode == "self-powered-discharge" {
+		t.Fatalf("RecommendedMode = self-powered-discharge, want flat-rate tariff to keep neutral behavior")
+	}
+	if strings.Contains(plan.ActionSummary, "self-powered放電を優先") {
+		t.Fatalf("ActionSummary = %q, want no discharge-priority action for flat-rate tariff", plan.ActionSummary)
+	}
+	if strings.Contains(plan.TariffControlReason, "prefer battery discharge") {
+		t.Fatalf("TariffControlReason = %q, want neutral tariff reason", plan.TariffControlReason)
 	}
 }
 
