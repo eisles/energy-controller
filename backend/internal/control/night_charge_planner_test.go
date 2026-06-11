@@ -687,6 +687,47 @@ func TestPlanNightChargingHighPriceImportEnablesSelfPoweredDischarge(t *testing.
 	}
 }
 
+func TestPlanNightChargingHighPriceExportDoesNotOwnSurplusCharging(t *testing.T) {
+	nextLow := time.Date(2026, 5, 19, 14, 0, 0, 0, time.UTC)
+	highPrice := &domain.TariffControlContext{
+		CurrentPeriod:  "day",
+		CurrentRateYen: 34.06,
+		LowestRateYen:  16.11,
+		HighestRateYen: 34.06,
+		IsHighPrice:    true,
+		NextLowPriceAt: &nextLow,
+	}
+	reserve := 63
+	selfPowered := false
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                time.Date(2026, 5, 19, 15, 30, 0, 0, time.UTC),
+		GridW:              -920,
+		BatterySoc:         61,
+		BackupReserveSoc:   &reserve,
+		SelfPoweredEnabled: &selfPowered,
+		ACChargeLimitW:     800,
+		Forecast:           &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 24, SunshineDurationHours: 10, CloudCoverMeanPercent: 20},
+		SolarSettings:      &domain.WeatherLocation{MinimumReserveSoc: 10, BatteryCapacityKWh: 12.288},
+		TariffControl:      highPrice,
+		SimulationMode:     false,
+		EnableRealControl:  true,
+		AutoControl:        true,
+	}, DefaultSettings())
+
+	if plan.RecommendedMode == "self-powered-discharge" {
+		t.Fatalf("RecommendedMode = self-powered-discharge, want export surplus to avoid tariff discharge ownership")
+	}
+	if plan.ShouldSetBackupReserve || plan.ShouldSetACChargeLimit || plan.ShouldEnableSelfPoweredMode || plan.WouldWrite {
+		t.Fatalf("reserve/ac/self-powered/write = %t/%t/%t/%t, want all false while exporting", plan.ShouldSetBackupReserve, plan.ShouldSetACChargeLimit, plan.ShouldEnableSelfPoweredMode, plan.WouldWrite)
+	}
+	if plan.CommandFingerprint != "none" {
+		t.Fatalf("CommandFingerprint = %q, want none while surplus plan should own export charging", plan.CommandFingerprint)
+	}
+	if strings.Contains(plan.ActionSummary, "self-powered放電を優先") || strings.Contains(plan.ActionSummary, "AC充電上限を400W") {
+		t.Fatalf("ActionSummary = %q, want no tariff discharge or 400W recovery action while exporting", plan.ActionSummary)
+	}
+}
+
 func TestPlanNightChargingMidPriceImportEnablesSelfPoweredDischarge(t *testing.T) {
 	reserve := 55
 	selfPowered := false

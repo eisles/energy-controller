@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Export Surplus Over Tariff Discharge Plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.65; max-width: 960px; margin: 32px auto; padding: 0 24px; color: #172033; }
+    h1, h2 { line-height: 1.25; }
+    code { background: #f3f5f7; padding: 0.1em 0.35em; border-radius: 4px; }
+    li { margin: 0.25em 0; }
+  </style>
+</head>
+<body>
+  <h1>Export Surplus Over Tariff Discharge Plan</h1>
+  <h2>Goal</h2>
+  <p>売電中は高単価時間帯であっても DELTA Pro 3 の余剰吸収充電を優先し、night charge 側の「高単価なので self-powered 放電へ戻す」候補が surplus charge と競合しないようにする。</p>
+  <h2>Non-goals</h2>
+  <ul>
+    <li>実機 write gate、最小コマンド間隔、実制御フラグの緩和はしない。</li>
+    <li>充電優先順位マスタや UI は変更しない。</li>
+    <li>DELTA 3 Max Plus / DELTA 3 Plus 2 の write payload は変更しない。</li>
+    <li>料金マスタや料金時間帯 UI は変更しない。</li>
+  </ul>
+  <h2>Current State</h2>
+  <ul>
+    <li><code>surplus_planner.go</code> は売電中に Pro3 の AC 充電上限を上げる候補を出す。</li>
+    <li><code>night_charge_planner.go</code> は高単価/中間単価の買電中に self-powered 放電候補を出す。</li>
+    <li>ただし night charge 側の候補が control ownership を持つと、売電中でも AC 充電上限を 400W へ戻す候補が出て、surplus plan の <code>1200W</code> などの余剰吸収候補と競合する。</li>
+  </ul>
+  <h2>Data And Contracts</h2>
+  <ul>
+    <li>入力は既存の <code>NightChargePlanInput.GridW</code> と <code>TariffControlContext</code> を使う。</li>
+    <li><code>GridW &gt; 0</code> のときだけ料金優先放電を許可する。</li>
+    <li><code>GridW &lt; 0</code> のときは、料金が高単価でも night charge 側は放電優先 write 候補を所有しない。</li>
+    <li><code>SurplusPlan</code> の既存出力 contract は維持する。</li>
+  </ul>
+  <h2>Safety Boundaries</h2>
+  <ul>
+    <li><code>ENABLE_REAL_CONTROL=true</code>、<code>SIMULATION_MODE=false</code>、<code>AUTO_CONTROL_ENABLED=true</code> など既存 write gate は変更しない。</li>
+    <li>コマンド間隔、差分閾値、duplicate suppression は変更しない。</li>
+    <li>新しい実機 write 種別は追加しない。</li>
+    <li>変更は planner の候補条件と単体テストに限定する。</li>
+  </ul>
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li><code>night_charge_planner.go</code> に料金優先放電を許可する入力条件 helper を追加する。</li>
+    <li><code>tariffNightSelfPoweredDischargeRecovery</code> と <code>applyNightChargeCommandPlan</code> の料金優先分岐を、その helper 経由にする。</li>
+    <li>売電中は <code>self-powered=on|ac=400|reserve=...</code> の night charge command candidate が出ないテストを追加する。</li>
+    <li>買電中の高単価/中間単価では従来どおり self-powered 放電候補が出るテストを維持・追加する。</li>
+    <li>低単価/中立料金の既存テストを壊さない。</li>
+  </ol>
+  <h2>Review Points</h2>
+  <ul>
+    <li>売電中に night charge 側が surplus charge を上書きしないこと。</li>
+    <li>買電中の料金優先放電が維持されること。</li>
+    <li>単一単価/低単価では放電優先にならないこと。</li>
+    <li>実機 write gate に変更がないこと。</li>
+  </ul>
+  <h2>Verification Commands</h2>
+  <ul>
+    <li><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./internal/control</code></li>
+    <li><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./cmd/server</code></li>
+    <li><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./...</code></li>
+    <li><code>rtk git diff --check</code></li>
+    <li><code>rtk codex review --uncommitted</code></li>
+  </ul>
+  <h2>Rollback Notes</h2>
+  <p>問題があれば <code>night_charge_planner.go</code> の helper 適用と追加テストを戻す。DB migration や設定変更は行わないため rollback はコード差分の revert で完結する。</p>
+</body>
+</html>

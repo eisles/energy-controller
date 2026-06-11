@@ -439,9 +439,15 @@ func tariffPrefersImportDischarge(tariff *domain.TariffControlContext) bool {
 
 func tariffNightSelfPoweredDischargeRecovery(input NightChargePlanInput, plan domain.NightChargePlan) bool {
 	reserveSoc := tariffNightSelfPoweredDischargeReserveSoc(input, plan)
-	return input.GridW > 0 &&
-		tariffPrefersImportDischarge(input.TariffControl) &&
+	return tariffImportDischargeActive(input) &&
 		input.BatterySoc > reserveSoc
+}
+
+func tariffImportDischargeActive(input NightChargePlanInput) bool {
+	if !tariffPrefersImportDischarge(input.TariffControl) {
+		return false
+	}
+	return input.GridW > 0
 }
 
 func tariffNightSelfPoweredDischargeReserveSoc(input NightChargePlanInput, plan domain.NightChargePlan) int {
@@ -458,7 +464,7 @@ func applyNightChargeCommandPlan(plan *domain.NightChargePlan, input NightCharge
 		plan.ShouldSetBackupReserve = input.BackupReserveSoc == nil || *input.BackupReserveSoc != recommendedReserve
 		return
 	}
-	if tariffPrefersImportDischarge(input.TariffControl) {
+	if tariffImportDischargeActive(input) {
 		return
 	}
 	if plan.StrategyState != "NIGHT_CHARGE_WINDOW" && !(plan.StrategyState == "NIGHT_RECOVER" && isNightChargeControlTime(input)) {
