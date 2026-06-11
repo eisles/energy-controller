@@ -320,6 +320,51 @@ func TestApplyNightChargeDevicePlansKeepsPro3RecoveryCandidateWhenTargetReached(
 	}
 }
 
+func TestApplyNightChargeDevicePlansBlocksPro3RecoveryCandidateWhileExporting(t *testing.T) {
+	plan := &domain.NightChargePlan{
+		StrategyState:             "NIGHT_RECOVER",
+		RecommendedMode:           "observe",
+		RecommendedNightTargetKWh: 4.0,
+		MinimumReserveSoc:         20,
+	}
+	guard := allowedNightChargeDeviceWriteGuard()
+	guard.GridW = -1064
+
+	ApplyNightChargeDevicePlans(plan, []NightChargeDeviceInput{{
+		DeviceID:                  1,
+		Name:                      "DELTA Pro 3",
+		Kind:                      "ecoflow_delta_pro3",
+		Enabled:                   true,
+		ControlEnabled:            true,
+		WriteTarget:               true,
+		CapacityWh:                12288,
+		CurrentSoc:                intPtr(80),
+		CurrentACChargeLimitW:     intPtr(1500),
+		CurrentBackupReserveSoc:   intPtr(60),
+		CurrentTOUModeEnabled:     boolPtr(true),
+		CurrentSelfPoweredEnabled: boolPtr(false),
+		BackupReserveMinSoc:       20,
+		BackupReserveMaxSoc:       90,
+		MinChargeW:                500,
+		MaxChargeW:                1500,
+		SupportsACChargeLimit:     true,
+		StatusAvailable:           true,
+	}}, DefaultSettings(), guard)
+
+	if plan.RecommendedMode != "observe" {
+		t.Fatalf("RecommendedMode = %q, want observe so surplus plan can own export charging", plan.RecommendedMode)
+	}
+	if plan.ShouldEnableSelfPoweredMode || plan.ShouldSetACChargeLimit || plan.ShouldSetBackupReserve || plan.WouldWrite {
+		t.Fatalf("candidate flags self/ac/reserve/write = %v/%v/%v/%v, want all false while exporting", plan.ShouldEnableSelfPoweredMode, plan.ShouldSetACChargeLimit, plan.ShouldSetBackupReserve, plan.WouldWrite)
+	}
+	if plan.CommandFingerprint != "none" {
+		t.Fatalf("CommandFingerprint = %q, want none while exporting", plan.CommandFingerprint)
+	}
+	if !strings.Contains(plan.CommandBlockReason, "surplus plan owns") {
+		t.Fatalf("CommandBlockReason = %q, want surplus ownership reason", plan.CommandBlockReason)
+	}
+}
+
 func TestApplyNightChargeDevicePlansKeepsHighPriceSelfPoweredDischargeOutsideNightWindow(t *testing.T) {
 	plan := &domain.NightChargePlan{
 		StrategyState:               "NIGHT_RECOVER",

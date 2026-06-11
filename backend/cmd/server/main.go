@@ -922,6 +922,7 @@ func applyNightChargeDevicePlans(ctx context.Context, cfg config.Config, status 
 		ConfirmEcoFlowWrite:     cfg.ConfirmEcoFlowWrite,
 		RealControlTrialActive:  realControlTrialActive(cfg),
 		IsNightChargeTime:       nightChargeDeviceWindowActive(now) || tariffLowPriceWindowActive(status),
+		GridW:                   status.GridW,
 		Delta3AllowAutoWrite:    cfg.Delta3AllowAutoWrite,
 		Delta3ExecuteWrite:      cfg.Delta3ExecuteWrite,
 		Delta3AllowPrivateWrite: cfg.Delta3AllowPrivateWrite,

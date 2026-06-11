@@ -43,6 +43,7 @@ type NightChargeDeviceWriteGuard struct {
 	ConfirmEcoFlowWrite     string
 	RealControlTrialActive  bool
 	IsNightChargeTime       bool
+	GridW                   int
 	Delta3AllowAutoWrite    bool
 	Delta3ExecuteWrite      bool
 	Delta3AllowPrivateWrite bool
@@ -397,6 +398,10 @@ func syncPrimaryPro3NightChargePlan(plan *domain.NightChargePlan, devicePlans []
 				blockPrimaryPro3NightChargePlan(plan, devicePlan.BlockReason)
 				return
 			}
+			if nightChargeDeviceExporting(guard) {
+				blockPrimaryPro3NightChargePlan(plan, "exporting; surplus plan owns DELTA Pro 3 charging recovery")
+				return
+			}
 			syncPrimaryPro3NightRecoveryPlan(plan, devicePlan, input, settings, guard)
 			return
 		}
@@ -544,6 +549,10 @@ func hasUnhandledNightChargeDeviceDemand(devicePlans []domain.NightChargeDeviceP
 
 func nightChargeDeviceWindowActive(plan domain.NightChargePlan, guard NightChargeDeviceWriteGuard) bool {
 	return plan.StrategyState == "NIGHT_CHARGE_WINDOW" || (plan.StrategyState == "NIGHT_RECOVER" && guard.IsNightChargeTime)
+}
+
+func nightChargeDeviceExporting(guard NightChargeDeviceWriteGuard) bool {
+	return guard.GridW < 0
 }
 
 func nightChargeDeviceGuardBlockReason(guard NightChargeDeviceWriteGuard) string {
