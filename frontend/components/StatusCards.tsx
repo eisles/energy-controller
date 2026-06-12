@@ -434,8 +434,7 @@ function cycleCountLabel(status: Delta3Status) {
   if (status.cycleCount === null || status.cycleCount === undefined) {
     return "-";
   }
-  const suffix = status.cycleCountSource === "ecoflow_private_mqtt_candidate" ? "（候補）" : "";
-  return `${status.cycleCount} 回${suffix}`;
+  return `${status.cycleCount} 回`;
 }
 
 

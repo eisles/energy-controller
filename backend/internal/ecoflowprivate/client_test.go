@@ -273,18 +273,18 @@ func TestAppendTelemetryFieldSummariesTracksTotalWhenTruncated(t *testing.T) {
 	}
 }
 
-func TestAppendTelemetryFieldSummariesDerivesCycleCountCandidate(t *testing.T) {
+func TestAppendTelemetryFieldSummariesDoesNotInferCycleCountFromRawField(t *testing.T) {
 	var status Status
 
 	appendTelemetryFieldSummaries(&status, []SnapshotField{
 		{MessageIndex: 0, CmdFunc: 32, CmdID: 50, Field: 37, Wire: wireVarint, Value: "262"},
 	})
 
-	if status.CycleCount == nil || *status.CycleCount != 262 {
-		t.Fatalf("CycleCount = %v, want 262", status.CycleCount)
+	if status.CycleCount != nil {
+		t.Fatalf("CycleCount = %v, want nil for unnamed raw telemetry field", status.CycleCount)
 	}
-	if status.CycleCountSource != "ecoflow_private_mqtt_candidate" {
-		t.Fatalf("CycleCountSource = %q, want candidate source", status.CycleCountSource)
+	if status.CycleCountSource != "" {
+		t.Fatalf("CycleCountSource = %q, want empty source", status.CycleCountSource)
 	}
 }
 

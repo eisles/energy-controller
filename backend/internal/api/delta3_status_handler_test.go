@@ -47,7 +47,6 @@ func TestReadDelta3StatusMapsReadOnlyFields(t *testing.T) {
 	acOutput1Enabled := false
 	acOutput2Enabled := true
 	acOutputProtectionChannel := 2
-	cycleCount := 262
 	response := readDelta3Status(context.Background(), validDelta3Config(), fakeDelta3Client{status: ecoflowprivate.Status{
 		DeviceType:                "DELTA_3_MAX_PLUS",
 		CMSBatterySoc:             &soc,
@@ -59,8 +58,6 @@ func TestReadDelta3StatusMapsReadOnlyFields(t *testing.T) {
 		ACOutput1Enabled:          &acOutput1Enabled,
 		ACOutput2Enabled:          &acOutput2Enabled,
 		ACOutputProtectionChannel: &acOutputProtectionChannel,
-		CycleCount:                &cycleCount,
-		CycleCountSource:          "ecoflow_private_mqtt_candidate",
 	}}, nil)
 	if !response.Available {
 		t.Fatalf("Available = false, lastError=%q", response.LastError)
@@ -69,9 +66,11 @@ func TestReadDelta3StatusMapsReadOnlyFields(t *testing.T) {
 	assertIntPtrResponse(t, "ACInW", response.ACInW, 100)
 	assertIntPtrResponse(t, "ACOutW", response.ACOutW, 380)
 	assertIntPtrResponse(t, "ACChargeLimitW", response.ACChargeLimitW, 100)
-	assertIntPtrResponse(t, "CycleCount", response.CycleCount, 262)
-	if response.CycleCountSource != "ecoflow_private_mqtt_candidate" {
-		t.Fatalf("CycleCountSource = %q, want candidate source", response.CycleCountSource)
+	if response.CycleCount != nil {
+		t.Fatalf("CycleCount = %v, want nil without named cycle quota", response.CycleCount)
+	}
+	if response.CycleCountSource != "" {
+		t.Fatalf("CycleCountSource = %q, want empty source", response.CycleCountSource)
 	}
 	if response.GridBypassDisabled == nil || *response.GridBypassDisabled {
 		t.Fatalf("GridBypassDisabled = %v, want false", response.GridBypassDisabled)
@@ -443,7 +442,7 @@ func TestDelta3StatusReaderReturnsEcoFlowCloudDeviceStatus(t *testing.T) {
 	}
 }
 
-func TestDelta3StatusReaderAugmentsPro3CycleCountFromPrivateMQTT(t *testing.T) {
+func TestDelta3StatusReaderDoesNotAugmentPro3CycleCountFromPrivateMQTTCandidate(t *testing.T) {
 	now := time.Date(2026, 5, 26, 5, 30, 0, 0, time.UTC)
 	cycleCount := 415
 	privateProbeCalls := 0
@@ -468,13 +467,10 @@ func TestDelta3StatusReaderAugmentsPro3CycleCountFromPrivateMQTT(t *testing.T) {
 		}}
 	}
 	reader.clientFactory = func(cfg config.Config) delta3ProbeClient {
-		if cfg.Delta3DeviceSN != "MASTER-SN" || cfg.Delta3DeviceType != "DELTA_PRO3" {
-			t.Fatalf("private cycle probe cfg SN/type = %q/%q, want MASTER-SN/DELTA_PRO3", cfg.Delta3DeviceSN, cfg.Delta3DeviceType)
-		}
 		return fakeDelta3Client{status: ecoflowprivate.Status{
 			DeviceType:       "DELTA_PRO3",
 			CycleCount:       &cycleCount,
-			CycleCountSource: "ecoflow_private_mqtt_candidate",
+			CycleCountSource: "ecoflow_private_mqtt_named",
 		}, calls: &privateProbeCalls}
 	}
 	devices := []domain.ChargingDevice{
@@ -496,12 +492,14 @@ func TestDelta3StatusReaderAugmentsPro3CycleCountFromPrivateMQTT(t *testing.T) {
 	if len(statuses) != 1 {
 		t.Fatalf("CurrentDeviceStatuses len = %d, want 1", len(statuses))
 	}
-	assertIntPtrResponse(t, "CycleCount", statuses[0].Status.CycleCount, 415)
-	if statuses[0].Status.CycleCountSource != "ecoflow_private_mqtt_candidate" {
-		t.Fatalf("CycleCountSource = %q, want private MQTT candidate", statuses[0].Status.CycleCountSource)
+	if statuses[0].Status.CycleCount != nil {
+		t.Fatalf("CycleCount = %v, want nil without named cloud quota cycle", statuses[0].Status.CycleCount)
 	}
-	if privateProbeCalls != 1 {
-		t.Fatalf("private probe calls = %d, want 1", privateProbeCalls)
+	if statuses[0].Status.CycleCountSource != "" {
+		t.Fatalf("CycleCountSource = %q, want empty source", statuses[0].Status.CycleCountSource)
+	}
+	if privateProbeCalls != 0 {
+		t.Fatalf("private probe calls = %d, want 0", privateProbeCalls)
 	}
 }
 
