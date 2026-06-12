@@ -57,6 +57,8 @@ type Delta3StatusResponse struct {
 	SelfPoweredEnabled        *bool                        `json:"selfPoweredEnabled,omitempty"`
 	ScheduledEnabled          *bool                        `json:"scheduledEnabled,omitempty"`
 	IntelligentEnabled        *bool                        `json:"intelligentEnabled,omitempty"`
+	CycleCount                *int                         `json:"cycleCount,omitempty"`
+	CycleCountSource          string                       `json:"cycleCountSource,omitempty"`
 	UpdatedAt                 string                       `json:"updatedAt,omitempty"`
 	LastError                 string                       `json:"lastError,omitempty"`
 	Cached                    bool                         `json:"cached,omitempty"`
@@ -203,6 +205,7 @@ func (r *Delta3StatusReader) CurrentDeviceStatuses(ctx context.Context, devices 
 		} else if canReadEcoFlowCloudStatus(device) {
 			cfg := EcoFlowCloudConfigForDevice(r.cfg, device)
 			status = r.currentEcoFlowCloudStatusForConfig(ctx, cfg, device.DeviceType)
+			status = r.augmentCycleCountFromPrivateMQTT(ctx, status, device)
 		}
 		responses = append(responses, DeviceStatusResponse{
 			ID:                   device.ID,
@@ -320,6 +323,14 @@ func canReadEcoFlowCloudStatus(device domain.ChargingDevice) bool {
 		device.SupportsSocRead
 }
 
+func canReadEcoFlowPrivateMQTTCycle(device domain.ChargingDevice) bool {
+	return device.Enabled &&
+		device.Provider == "ecoflow" &&
+		device.Kind == "ecoflow_delta_pro3" &&
+		strings.TrimSpace(device.DeviceSN) != "" &&
+		strings.TrimSpace(device.DeviceType) != ""
+}
+
 func deviceStatusNotAvailable(device domain.ChargingDevice) Delta3StatusResponse {
 	reason := "read-only status is not implemented for this device"
 	if device.Provider == "ecoflow" && (device.Kind == "ecoflow_delta3_plus" || device.Kind == "ecoflow_delta_pro3" || device.Kind == "ecoflow_river2") && strings.TrimSpace(device.DeviceSN) == "" {
@@ -404,6 +415,20 @@ func readDelta3Status(ctx context.Context, cfg config.Config, client delta3Probe
 	return mapDelta3Status(status, time.Now())
 }
 
+func (r *Delta3StatusReader) augmentCycleCountFromPrivateMQTT(ctx context.Context, status Delta3StatusResponse, device domain.ChargingDevice) Delta3StatusResponse {
+	if status.CycleCount != nil || !canReadEcoFlowPrivateMQTTCycle(device) || !r.cfg.Delta3ReadEnabled {
+		return status
+	}
+	cfg := Delta3ConfigForDevice(r.cfg, device)
+	cycleStatus := r.currentStatusForConfig(ctx, cfg, false)
+	if cycleStatus.CycleCount == nil {
+		return status
+	}
+	status.CycleCount = cycleStatus.CycleCount
+	status.CycleCountSource = cycleStatus.CycleCountSource
+	return status
+}
+
 func (r *Delta3StatusReader) currentEcoFlowCloudStatusForConfig(ctx context.Context, cfg config.Config, deviceType string) Delta3StatusResponse {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -475,6 +500,8 @@ func mapEcoFlowCloudStatus(status domain.BatteryStatus, deviceType string, now t
 		SelfPoweredEnabled:   status.SelfPoweredEnabled,
 		ScheduledEnabled:     status.ScheduledEnabled,
 		IntelligentEnabled:   status.IntelligentEnabled,
+		CycleCount:           status.CycleCount,
+		CycleCountSource:     status.CycleCountSource,
 		UpdatedAt:            now.Format(time.RFC3339),
 	}
 }
@@ -512,6 +539,8 @@ func mapDelta3Status(status ecoflowprivate.Status, now time.Time) Delta3StatusRe
 		MinDischargeSoc:           status.MinDischargeSoc,
 		BackupReserveSoc:          status.BackupReserveSoc,
 		BackupReserveEnabled:      status.BackupReserveEnabled,
+		CycleCount:                status.CycleCount,
+		CycleCountSource:          status.CycleCountSource,
 		UpdatedAt:                 now.Format(time.RFC3339),
 		TelemetryDiagnostics:      privateTelemetryDiagnostics(status, false),
 	}
@@ -569,7 +598,8 @@ func hasReadablePrivateMQTTTelemetry(status ecoflowprivate.Status) bool {
 		status.MaxChargeSoc != nil ||
 		status.MinDischargeSoc != nil ||
 		status.BackupReserveSoc != nil ||
-		status.BackupReserveEnabled != nil
+		status.BackupReserveEnabled != nil ||
+		status.CycleCount != nil
 }
 
 func firstIntPtr(values ...*int) *int {

@@ -11,6 +11,7 @@ func TestBatteryStatusFromQuotas(t *testing.T) {
 		"cmsMaxChgSoc":            100.0,
 		"cmsMinDsgSoc":            0.0,
 		"cmsBattFullEnergy":       12288.0,
+		"cycles":                  321.0,
 		"bmsMasterTemp":           42.0,
 		"outputPowerOffMemory":    1.0,
 		"unrelatedQuota":          "ignored",
@@ -24,13 +25,16 @@ func TestBatteryStatusFromQuotas(t *testing.T) {
 	if status.FullEnergyWh == nil || *status.FullEnergyWh != 12288 {
 		t.Fatalf("FullEnergyWh = %v, want 12288", status.FullEnergyWh)
 	}
+	if status.CycleCount == nil || *status.CycleCount != 321 || status.CycleCountSource != "ecoflow_cloud_quota" {
+		t.Fatalf("CycleCount = %v source=%q, want 321 from cloud quota", status.CycleCount, status.CycleCountSource)
+	}
 	if status.MaxChargeSoc == nil || *status.MaxChargeSoc != 100 {
 		t.Fatalf("MaxChargeSoc = %v, want 100", status.MaxChargeSoc)
 	}
 	if status.MinDischargeSoc == nil || *status.MinDischargeSoc != 0 {
 		t.Fatalf("MinDischargeSoc = %v, want 0", status.MinDischargeSoc)
 	}
-	if status.EcoFlowDiagnostics["bmsMasterTemp"] != 42.0 || status.EcoFlowDiagnostics["outputPowerOffMemory"] != 1.0 {
+	if status.EcoFlowDiagnostics["bmsMasterTemp"] != 42.0 || status.EcoFlowDiagnostics["outputPowerOffMemory"] != 1.0 || status.EcoFlowDiagnostics["cycles"] != 321.0 {
 		t.Fatalf("EcoFlowDiagnostics = %#v, want selected diagnostic quotas", status.EcoFlowDiagnostics)
 	}
 	if _, ok := status.EcoFlowDiagnostics["unrelatedQuota"]; ok {

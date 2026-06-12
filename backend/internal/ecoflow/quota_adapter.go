@@ -26,6 +26,11 @@ func BatteryStatusFromQuotas(quotas map[string]any) (domain.BatteryStatus, error
 	scheduledEnabled := boolPtrFromQuota(quotas, "energyStrategyOperateMode.operateScheduledOpen")
 	intelligentEnabled := boolPtrFromQuota(quotas, "energyStrategyOperateMode.operateIntelligentScheduleModeOpen")
 	fullEnergyWh := intPtrFromQuota(quotas, "cmsBattFullEnergy")
+	cycleCount := intPtrFromQuota(quotas, "cycles", "bmsCycles", "bmsBattCycles", "bms_bmsStatus.cycles", "hs_yj751_bms_slave_addr.1.cycles")
+	cycleCountSource := ""
+	if cycleCount != nil {
+		cycleCountSource = "ecoflow_cloud_quota"
+	}
 
 	return domain.BatteryStatus{
 		Soc:                 int(math.Round(soc)),
@@ -41,6 +46,8 @@ func BatteryStatusFromQuotas(quotas map[string]any) (domain.BatteryStatus, error
 		ScheduledEnabled:    scheduledEnabled,
 		IntelligentEnabled:  intelligentEnabled,
 		FullEnergyWh:        fullEnergyWh,
+		CycleCount:          cycleCount,
+		CycleCountSource:    cycleCountSource,
 		EcoFlowDiagnostics:  diagnosticQuotasFromQuotas(quotas),
 		IsOnline:            true,
 	}, nil
@@ -79,6 +86,9 @@ func isDiagnosticQuotaKey(key string) bool {
 		"acout",
 		"ac_out",
 		"output",
+		"cycle",
+		"soh",
+		"health",
 	} {
 		if strings.Contains(normalized, token) {
 			return true

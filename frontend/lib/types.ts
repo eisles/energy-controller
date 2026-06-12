@@ -140,6 +140,8 @@ export type Delta3Status = {
   selfPoweredEnabled?: boolean | null;
   scheduledEnabled?: boolean | null;
   intelligentEnabled?: boolean | null;
+  cycleCount?: number | null;
+  cycleCountSource?: string;
   updatedAt?: string;
   lastError?: string | null;
   telemetryDiagnostics?: PrivateTelemetryDiagnostics | null;

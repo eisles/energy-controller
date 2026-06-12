@@ -245,6 +245,7 @@ export function Delta3StatusCard({
                           <Detail label="AC出力" value={nullablePositiveWatt(device.status.acOutW)} />
                           <Detail label="実質W" value={formatDeviceNetFlow(flowState.netW)} />
                           <Detail label="AC充電上限" value={nullableWatt(device.status.acChargeLimitW)} />
+                          <Detail label="サイクル数" value={cycleCountLabel(device.status)} />
                           <Detail label="容量" value={formatWhCapacity(device.capacityWh)} />
                           <Detail label="設定範囲" value={`${device.minChargeW}-${device.maxChargeW} W`} />
                         </div>
@@ -310,6 +311,7 @@ export function Delta3StatusCard({
               <Detail label="AC入力" value={nullableWatt(status.acInW)} />
               <Detail label="AC出力" value={nullablePositiveWatt(status.acOutW)} />
               <Detail label="AC充電上限" value={nullableWatt(status.acChargeLimitW)} />
+              <Detail label="サイクル数" value={cycleCountLabel(status)} />
               <Detail label="グリッドバイパス無効化" value={nullableOnOff(status.gridBypassDisabled)} />
               <Detail label="AC output" value={nullableOnOff(status.acOutputEnabled)} />
               {hasSplitACOutput(status) ? (
@@ -426,6 +428,14 @@ function formatWhCapacity(value: number) {
     return "-";
   }
   return `${formatDecimal(value / 1000)} kWh`;
+}
+
+function cycleCountLabel(status: Delta3Status) {
+  if (status.cycleCount === null || status.cycleCount === undefined) {
+    return "-";
+  }
+  const suffix = status.cycleCountSource === "ecoflow_private_mqtt_candidate" ? "（候補）" : "";
+  return `${status.cycleCount} 回${suffix}`;
 }
 
 

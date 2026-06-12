@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -125,6 +126,9 @@ func (c *Client) probeRawWithSession(ctx context.Context, session Session) (Stat
 func appendTelemetryFieldSummaries(status *Status, fields []SnapshotField) {
 	status.FieldCount += len(fields)
 	for _, field := range fields {
+		deriveCycleCountCandidate(status, field)
+	}
+	for _, field := range fields {
 		if len(status.FieldSummaries) >= telemetryFieldSummaryLimit {
 			status.FieldSummaryTruncated = true
 			return
@@ -138,6 +142,21 @@ func appendTelemetryFieldSummaries(status *Status, fields []SnapshotField) {
 			Value:        field.Value,
 		})
 	}
+}
+
+func deriveCycleCountCandidate(status *Status, field SnapshotField) {
+	if status.CycleCount != nil {
+		return
+	}
+	if field.CmdFunc != 32 || field.CmdID != 50 || field.Field != 37 || field.Wire != wireVarint {
+		return
+	}
+	value, err := strconv.Atoi(field.Value)
+	if err != nil || value < 0 || value > 10000 {
+		return
+	}
+	status.CycleCount = &value
+	status.CycleCountSource = "ecoflow_private_mqtt_candidate"
 }
 
 func (c *Client) BuildDryRunACChargePower(watts int) (CommandPayload, error) {

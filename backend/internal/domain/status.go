@@ -22,6 +22,8 @@ type BatteryStatus struct {
 	ScheduledEnabled    *bool          `json:"scheduledEnabled,omitempty"`
 	IntelligentEnabled  *bool          `json:"intelligentEnabled,omitempty"`
 	FullEnergyWh        *int           `json:"fullEnergyWh,omitempty"`
+	CycleCount          *int           `json:"cycleCount,omitempty"`
+	CycleCountSource    string         `json:"cycleCountSource,omitempty"`
 	EcoFlowDiagnostics  map[string]any `json:"ecoflowDiagnostics,omitempty"`
 	IsOnline            bool           `json:"isOnline"`
 }

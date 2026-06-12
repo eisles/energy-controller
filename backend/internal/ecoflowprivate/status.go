@@ -28,6 +28,8 @@ type Status struct {
 	BMSChargingState                 *int                    `json:"bmsChargingState,omitempty"`
 	CMSChargingState                 *int                    `json:"cmsChargingState,omitempty"`
 	PCSWorkMode                      *int                    `json:"pcsWorkMode,omitempty"`
+	CycleCount                       *int                    `json:"cycleCount,omitempty"`
+	CycleCountSource                 string                  `json:"cycleCountSource,omitempty"`
 	ReplyCount                       int                     `json:"replyCount"`
 	DecodedMessages                  int                     `json:"decodedMessages"`
 	UnsupportedMessages              int                     `json:"unsupportedMessages"`
@@ -127,6 +129,10 @@ func (s *Status) merge(other Status) {
 	}
 	if other.PCSWorkMode != nil {
 		s.PCSWorkMode = other.PCSWorkMode
+	}
+	if other.CycleCount != nil {
+		s.CycleCount = other.CycleCount
+		s.CycleCountSource = other.CycleCountSource
 	}
 	s.ReplyCount += other.ReplyCount
 	s.InspectErrorCount += other.InspectErrorCount
