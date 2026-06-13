@@ -46,6 +46,9 @@ func TestWriteJSONIncludesCycleCandidates(t *testing.T) {
 		CycleCandidates: []ecoflowdeveloper.CycleCandidate{
 			{Key: "bms_bmsStatus.cycSoh", Value: 98},
 		},
+		DiagnosticKeys: []ecoflowdeveloper.DiagnosticKey{
+			{Key: "bms_bmsStatus.soh", Value: 99},
+		},
 		Write: readOnlyWriteState("test"),
 	})
 	if err != nil {
@@ -62,5 +65,13 @@ func TestWriteJSONIncludesCycleCandidates(t *testing.T) {
 	first, ok := candidates[0].(map[string]any)
 	if !ok || first["key"] != "bms_bmsStatus.cycSoh" {
 		t.Fatalf("first candidate = %#v, want cycSoh key", candidates[0])
+	}
+	diagnostics, ok := decoded["diagnosticKeys"].([]any)
+	if !ok || len(diagnostics) != 1 {
+		t.Fatalf("diagnosticKeys = %#v, want one diagnostic key", decoded["diagnosticKeys"])
+	}
+	firstDiagnostic, ok := diagnostics[0].(map[string]any)
+	if !ok || firstDiagnostic["key"] != "bms_bmsStatus.soh" {
+		t.Fatalf("first diagnostic = %#v, want soh key", diagnostics[0])
 	}
 }

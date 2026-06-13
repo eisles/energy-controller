@@ -15,6 +15,7 @@ import (
 const CycleCountSource = "ecoflow_developer_mqtt_quota"
 
 const maxCycleCandidates = 20
+const maxDiagnosticKeys = 80
 
 var CycleCountKeys = []string{
 	"cycles",
@@ -39,12 +40,18 @@ type CycleCandidate struct {
 	Value any    `json:"value"`
 }
 
+type DiagnosticKey struct {
+	Key   string `json:"key"`
+	Value any    `json:"value"`
+}
+
 type CycleStatus struct {
 	CycleCount       *int
 	CycleCountSource string
 	Key              string
 	QuotaKeyCount    int
 	CycleCandidates  []CycleCandidate
+	DiagnosticKeys   []DiagnosticKey
 }
 
 type QuotaMessage struct {
@@ -88,6 +95,7 @@ func CycleStatusFromQuotaPayload(raw []byte) (CycleStatus, error) {
 	status := CycleStatus{
 		QuotaKeyCount:   len(quotas),
 		CycleCandidates: cycleCandidatesFromQuota(quotas),
+		DiagnosticKeys:  diagnosticKeysFromQuota(quotas),
 	}
 	for _, key := range CycleCountKeys {
 		rawValue, ok := quotaValue(quotas, key)
@@ -156,6 +164,110 @@ func cycleCandidatesFromQuota(quotas map[string]any) []CycleCandidate {
 	return candidates
 }
 
+func diagnosticKeysFromQuota(quotas map[string]any) []DiagnosticKey {
+	flattened := make(map[string]any)
+	flattenQuotaValues("", quotas, flattened)
+	keys := make([]string, 0, len(flattened))
+	for key := range flattened {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	diagnostics := make([]DiagnosticKey, 0)
+	seen := make(map[string]struct{})
+	appendMatches := func(match func(string) bool) {
+		for _, key := range keys {
+			if len(diagnostics) >= maxDiagnosticKeys {
+				return
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			if !match(key) {
+				continue
+			}
+			value, ok := diagnosticScalar(flattened[key])
+			if !ok {
+				continue
+			}
+			diagnostics = append(diagnostics, DiagnosticKey{Key: key, Value: value})
+			seen[key] = struct{}{}
+		}
+	}
+	appendMatches(isSpecificDiagnosticKey)
+	appendMatches(isBMSDiagnosticKey)
+	return diagnostics
+}
+
+func isSpecificDiagnosticKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	if isSensitiveDiagnosticKey(key) {
+		return false
+	}
+	for _, token := range []string{"cyc", "cycle", "soh"} {
+		if strings.Contains(normalized, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func isBMSDiagnosticKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	if isSensitiveDiagnosticKey(key) {
+		return false
+	}
+	return strings.Contains(normalized, "bms")
+}
+
+func isSensitiveDiagnosticKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	if hasSensitiveSNToken(key) {
+		return true
+	}
+	for _, token := range []string{
+		"serial",
+		"devicesn",
+		"device_sn",
+		"productsn",
+		"product_sn",
+		"access",
+		"accesskey",
+		"access_key",
+		"apikey",
+		"api_key",
+		"token",
+		"secret",
+		"secretkey",
+		"secret_key",
+		"password",
+		"email",
+		"account",
+		"cert",
+		"clientid",
+		"client_id",
+		"userid",
+		"user_id",
+	} {
+		if strings.Contains(normalized, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSensitiveSNToken(key string) bool {
+	parts := strings.FieldsFunc(strings.TrimSpace(key), func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
+	})
+	for _, part := range parts {
+		lowerPart := strings.ToLower(part)
+		if lowerPart == "sn" || strings.HasSuffix(lowerPart, "sn") {
+			return true
+		}
+	}
+	return false
+}
+
 func flattenQuotaValues(prefix string, value any, out map[string]any) {
 	object, ok := value.(map[string]any)
 	if !ok {
@@ -194,6 +306,30 @@ func candidateScalar(value any) (any, bool) {
 	case json.Number:
 		return typed, true
 	case string:
+		return typed, true
+	case float64:
+		return typed, true
+	case int:
+		return typed, true
+	case int64:
+		return typed, true
+	default:
+		return nil, false
+	}
+}
+
+func diagnosticScalar(value any) (any, bool) {
+	switch typed := value.(type) {
+	case json.Number:
+		return typed, true
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		parsed, err := strconv.ParseFloat(trimmed, 64)
+		if err == nil && !math.IsNaN(parsed) && !math.IsInf(parsed, 0) {
+			return parsed, true
+		}
+		return nil, false
+	case bool:
 		return typed, true
 	case float64:
 		return typed, true

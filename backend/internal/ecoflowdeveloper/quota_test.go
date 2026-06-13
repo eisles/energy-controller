@@ -1,6 +1,10 @@
 package ecoflowdeveloper
 
-import "testing"
+import (
+	"encoding/json"
+	"fmt"
+	"testing"
+)
 
 func TestCycleStatusFromQuotaPayloadReadsNamedCycleKeys(t *testing.T) {
 	status, err := CycleStatusFromQuotaPayload([]byte(`{"params":{"cycles":12,"soc":88}}`))
@@ -72,6 +76,118 @@ func TestCycleStatusFromQuotaPayloadReportsNestedNamedCycleCandidate(t *testing.
 	if len(status.CycleCandidates) != 1 || status.CycleCandidates[0].Key != "bms_bmsStatus.cycles" {
 		t.Fatalf("CycleCandidates = %+v, want nested named cycle candidate", status.CycleCandidates)
 	}
+}
+
+func TestCycleStatusFromQuotaPayloadReportsDiagnosticKeys(t *testing.T) {
+	status, err := CycleStatusFromQuotaPayload([]byte(`{
+		"params": {
+			"soc": 88,
+			"cycleSNum": 5,
+			"cyclesNum": 6,
+			"sn": 123456,
+			"device_sn": 123456,
+			"deviceSn": 123456,
+			"productSn": 123456,
+			"bms_bmsStatus": {
+				"bmssn": 123456,
+				"bmsSn": 123456,
+				"soh": 99,
+				"cycSoh": 7,
+				"bmsNaN": "NaN",
+				"bmsInf": "+Inf",
+				"bmsLeadingZero": "01",
+				"bmsPlus": "+1",
+				"bmsPoint": ".5",
+				"bmsTrailingPoint": "1.",
+				"serial": "hidden",
+				"access_key": "hidden",
+				"client_id": "hidden",
+				"device": "hidden",
+				"user_id": "hidden",
+				"nested": {"cycleTotal": 4}
+			},
+			"packSn": 123456,
+			"pack": {"cycleHealth": true},
+			"other": {"temperature": 33}
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.CycleCount != nil {
+		t.Fatalf("status = %+v, want diagnostic keys not to set cycle count", status)
+	}
+	got := diagnosticKeyMap(status.DiagnosticKeys)
+	for key, want := range map[string]string{
+		"bms_bmsStatus.cycSoh":            "7",
+		"bms_bmsStatus.bmsLeadingZero":    "1",
+		"bms_bmsStatus.bmsPlus":           "1",
+		"bms_bmsStatus.bmsPoint":          "0.5",
+		"bms_bmsStatus.bmsTrailingPoint":  "1",
+		"bms_bmsStatus.nested.cycleTotal": "4",
+		"bms_bmsStatus.soh":               "99",
+		"cycleSNum":                       "5",
+		"cyclesNum":                       "6",
+		"pack.cycleHealth":                "true",
+	} {
+		if fmt.Sprint(got[key]) != want {
+			t.Fatalf("DiagnosticKeys[%s] = %#v, want %#v; all=%+v", key, got[key], want, status.DiagnosticKeys)
+		}
+	}
+	for _, forbidden := range []string{
+		"soc",
+		"bms_bmsStatus.access_key",
+		"bms_bmsStatus.bmsInf",
+		"bms_bmsStatus.bmsNaN",
+		"bms_bmsStatus.bmsSn",
+		"bms_bmsStatus.bmssn",
+		"bms_bmsStatus.client_id",
+		"bms_bmsStatus.device",
+		"bms_bmsStatus.serial",
+		"bms_bmsStatus.user_id",
+		"device_sn",
+		"deviceSn",
+		"other.temperature",
+		"packSn",
+		"productSn",
+		"sn",
+	} {
+		if _, ok := got[forbidden]; ok {
+			t.Fatalf("DiagnosticKeys contains %s; all=%+v", forbidden, status.DiagnosticKeys)
+		}
+	}
+}
+
+func TestCycleStatusFromQuotaPayloadPrioritizesCycleDiagnosticsBeforeBMSContext(t *testing.T) {
+	params := map[string]any{
+		"zz_cycleTotal": 12,
+	}
+	for i := 0; i < maxDiagnosticKeys+5; i++ {
+		params[fmt.Sprintf("bms_%03d", i)] = i
+	}
+	raw, err := json.Marshal(map[string]any{"params": params})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := CycleStatusFromQuotaPayload(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.DiagnosticKeys) != maxDiagnosticKeys {
+		t.Fatalf("DiagnosticKeys length = %d, want cap %d", len(status.DiagnosticKeys), maxDiagnosticKeys)
+	}
+	got := diagnosticKeyMap(status.DiagnosticKeys)
+	if fmt.Sprint(got["zz_cycleTotal"]) != "12" {
+		t.Fatalf("DiagnosticKeys missing priority cycle key; all=%+v", status.DiagnosticKeys)
+	}
+}
+
+func diagnosticKeyMap(keys []DiagnosticKey) map[string]any {
+	result := make(map[string]any, len(keys))
+	for _, key := range keys {
+		result[key.Key] = key.Value
+	}
+	return result
 }
 
 func TestCycleStatusFromQuotaPayloadRejectsUncertainCycleValues(t *testing.T) {

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>EcoFlow DELTA 3 系サイクル数フィールド特定計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.65; margin: 40px; color: #111827; background: #f8fafc; }
+    main { max-width: 980px; margin: 0 auto; background: #fff; border: 1px solid #d8dee8; border-radius: 8px; padding: 32px 40px; }
+    h1 { font-size: 28px; margin-top: 0; }
+    h2 { font-size: 20px; margin-top: 32px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+    code { background: #eef2f7; padding: 1px 5px; border-radius: 4px; }
+    pre { background: #111827; color: #f9fafb; padding: 16px; border-radius: 8px; overflow-x: auto; }
+    ul, ol { padding-left: 24px; }
+    .note { border-left: 4px solid #0f766e; padding: 10px 14px; background: #ecfdf5; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>EcoFlow DELTA 3 系サイクル数フィールド特定計画</h1>
+
+  <h2>Goal</h2>
+  <p>DELTA 3 Plus、DELTA 3 Max Plus、DELTA 3 Plus 2 のサイクル数取得に向けて、EcoFlow Developer MQTT quota と private MQTT telemetry からサイクル数に関係しそうなキーだけを安全に観測できるようにする。</p>
+  <p>今回の成果は「フィールド特定用の読み取り probe」と「観測結果を機種別対応表へ反映するための足場」までとする。未確認フィールドを正式な <code>cycleCount</code> として UI や制御判断へ採用しない。</p>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li>EcoFlow 実機への write command は追加しない。</li>
+    <li><code>cycSoh</code> など意味が未確定の値を正式なサイクル数として採用しない。</li>
+    <li>生の MQTT payload、シリアル番号、認証情報、トークンをログ、docs、画面へ出さない。</li>
+    <li>充放電制御、料金最適化、AC 出力制御は変更しない。</li>
+  </ul>
+
+  <h2>Current State</h2>
+  <ul>
+    <li>DELTA Pro 3 は Developer MQTT quota の <code>cycles</code> から <code>cycleCount=65</code> を取得できている。</li>
+    <li>DELTA 3 Max Plus は Developer MQTT quota message を受信できているが、現在の <code>cycleCandidates</code> では候補キーが見つかっていない。</li>
+    <li>DELTA 3 Plus と DELTA 3 Plus 2 は直近の短時間 watch で Developer MQTT quota message を受信できていない。</li>
+    <li><code>backend/internal/ecoflowdeveloper/quota.go</code> は確定キーと候補キーを抽出できるが、候補の範囲が <code>cycle</code> / <code>cycSoh</code> 系に狭い。</li>
+    <li><code>backend/cmd/ecoflow-developer-mqtt-probe</code> は <code>keyNames</code> を出せるが、キー一覧が多い場合にサイクル調査に必要な関連キーだけを見やすく整理できない。</li>
+  </ul>
+
+  <h2>Files Likely To Change</h2>
+  <ul>
+    <li><code>backend/internal/ecoflowdeveloper/quota.go</code>: quota payload から <code>bms</code> / <code>cyc</code> / <code>cycle</code> / <code>soh</code> を含む関連キーを抽出する read-only helper を追加する。</li>
+    <li><code>backend/internal/ecoflowdeveloper/quota_test.go</code>: 関連キー抽出、上限、確定 <code>cycleCount</code> への非反映を検証する。</li>
+    <li><code>backend/cmd/ecoflow-developer-mqtt-probe/main.go</code>: watch output に <code>diagnosticKeys</code> または同等の安全な関連キー一覧を追加する。</li>
+    <li><code>backend/cmd/ecoflow-developer-mqtt-probe/main_test.go</code>: JSON 出力に関連キー一覧が含まれることを検証する。</li>
+    <li><code>docs/20260613-132725-ecoflow-cycle-count-source-matrix.md</code>: 今回の調査方法と、実機確認で確定しない限り DELTA 3 系は未対応のまま扱う旨を追記する。</li>
+  </ul>
+
+  <h2>Data And API Contracts</h2>
+  <pre><code>{
+  "mode": "read-only-watch",
+  "event": "message",
+  "topicKind": "quota",
+  "quotaKeyCount": 42,
+  "cycleCandidates": [],
+  "diagnosticKeys": [
+    {"key": "bms_bmsStatus.soh", "value": 99},
+    {"key": "bms_slave.cycSoh", "value": 7}
+  ],
+  "write": {
+    "wouldSend": false,
+    "sent": false,
+    "reason": "read-only Developer MQTT quota/status subscribe"
+  }
+}</code></pre>
+  <ul>
+    <li><code>diagnosticKeys</code> は <code>bms</code> / <code>cyc</code> / <code>cycle</code> / <code>soh</code> を含む flatten path のみ。</li>
+    <li>値は数値または bool の scalar のみ。非数値 string は、パス名だけでは秘密情報でないと保証できないため出力しない。</li>
+    <li>最大件数を設け、巨大 payload をそのまま表示しない。</li>
+    <li><code>cycleCount</code> は既存の確定キーに一致した場合だけ設定する。</li>
+    <li><code>diagnosticKeys</code> は UI の正式サイクル数や制御判断には使わない。</li>
+  </ul>
+
+  <h2>Safety Boundaries</h2>
+  <div class="note">変更は read-only probe と docs に限定する。EcoFlow write path、制御判断、DB migration、Docker runtime flag は変更しない。</div>
+  <ul>
+    <li><code>.env</code>、SN、Access Key、Secret Key、private email/password は出力しない。</li>
+    <li>実機確認コマンドを実行する場合も <code>--watch-sec</code> の読み取り購読だけにする。</li>
+  </ul>
+
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li><code>quota.go</code> に安全な関連キー抽出型と helper を追加する。</li>
+    <li><code>QuotaMessage</code> と probe watch output に関連キー一覧を追加する。</li>
+    <li><code>cycleCandidates</code> と同様、関連キーは調査用の出力だけに留める。</li>
+    <li>単体テストで関連キー抽出、除外、非反映を検証する。</li>
+    <li>既存の対応表 docs に、次の調査手順と注意点を追記する。</li>
+    <li>必要なら実機読み取り probe を短時間実行し、DELTA 3 Max Plus の関連キーが出るか確認する。</li>
+  </ol>
+
+  <h2>Review Points</h2>
+  <ul>
+    <li>未確定値が正式 <code>cycleCount</code> に混入していないか。</li>
+    <li>生 payload、SN、credential を出す経路がないか。</li>
+    <li>probe 追加が制御処理や通常 API を壊していないか。</li>
+    <li>出力名が用途を誤解させないか。</li>
+  </ul>
+
+  <h2>Verification Commands</h2>
+  <pre><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./internal/ecoflowdeveloper ./cmd/ecoflow-developer-mqtt-probe
+cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./...
+rtk codex review --uncommitted</code></pre>
+  <p>Optional read-only live check:</p>
+  <pre><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go run ./cmd/ecoflow-developer-mqtt-probe --sn '&lt;redacted&gt;' --watch-sec 120</code></pre>
+
+  <h2>Rollback And Operational Notes</h2>
+  <p>問題があれば、追加した関連キー抽出 helper、probe JSON フィールド、対応表追記を戻せば、既存の <code>cycleCount</code> 取得挙動に戻る。</p>
+  <p>この変更は読み取り専用であり、実機制御の開始、停止、充電量、放電量には影響しない。</p>
+</main>
+</body>
+</html>

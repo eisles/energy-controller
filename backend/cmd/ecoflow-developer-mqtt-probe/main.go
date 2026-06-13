@@ -30,6 +30,7 @@ type output struct {
 	Key              string                            `json:"key,omitempty"`
 	QuotaKeyCount    int                               `json:"quotaKeyCount"`
 	CycleCandidates  []ecoflowdeveloper.CycleCandidate `json:"cycleCandidates,omitempty"`
+	DiagnosticKeys   []ecoflowdeveloper.DiagnosticKey  `json:"diagnosticKeys,omitempty"`
 	Write            map[string]any                    `json:"write"`
 }
 
@@ -45,6 +46,7 @@ type watchOutput struct {
 	Key               string                            `json:"key,omitempty"`
 	QuotaKeyCount     int                               `json:"quotaKeyCount,omitempty"`
 	CycleCandidates   []ecoflowdeveloper.CycleCandidate `json:"cycleCandidates,omitempty"`
+	DiagnosticKeys    []ecoflowdeveloper.DiagnosticKey  `json:"diagnosticKeys,omitempty"`
 	KeyNames          []string                          `json:"keyNames,omitempty"`
 	ParseError        string                            `json:"parseError,omitempty"`
 	Write             map[string]any                    `json:"write"`
@@ -78,6 +80,7 @@ func run(ctx context.Context, args []string, getenv envGetter, out io.Writer) er
 		Key:              status.Key,
 		QuotaKeyCount:    status.QuotaKeyCount,
 		CycleCandidates:  status.CycleCandidates,
+		DiagnosticKeys:   status.DiagnosticKeys,
 		Write: map[string]any{
 			"wouldSend": false,
 			"sent":      false,
@@ -182,6 +185,7 @@ func watchQuota(ctx context.Context, client *ecoflowdeveloper.Client, duration t
 			Key:              msg.CycleStatus.Key,
 			QuotaKeyCount:    msg.CycleStatus.QuotaKeyCount,
 			CycleCandidates:  msg.CycleStatus.CycleCandidates,
+			DiagnosticKeys:   msg.CycleStatus.DiagnosticKeys,
 			KeyNames:         msg.KeyNames,
 			ParseError:       msg.ParseError,
 		})

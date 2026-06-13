@@ -23,6 +23,7 @@
 <main>
   <h1>EcoFlow cycle count source matrix</h1>
   <p>作成日時: 2026-06-13 13:27:25 JST</p>
+  <p>更新日時: 2026-06-13 21:36 JST</p>
 
   <h2>Summary</h2>
   <p>EcoFlow 各機器のサイクル数取得元を、現時点の read-only API / Developer MQTT quota / private MQTT status の観測結果に基づいて整理する。</p>
@@ -34,11 +35,11 @@
       <tr><th>Device</th><th>Device type</th><th>Current UI/API cycle count</th><th>Developer MQTT quota</th><th>Private MQTT status</th><th>Current decision</th></tr>
     </thead>
     <tbody>
-      <tr><td>DELTA Pro 3</td><td>DELTA_PRO3</td><td>取得済み</td><td><code>cycles</code> key confirmed</td><td>Cloud status primary. Private status not needed for cycle count</td><td class="ok">Supported</td></tr>
-      <tr><td>DELTA 3 Plus</td><td>DELTA_3_PLUS</td><td>未取得</td><td>Current short probe: quota timeout</td><td>Status telemetry available. No verified cycle field</td><td class="no">Unsupported until named key or verified field is found</td></tr>
-      <tr><td>DELTA 3 Max Plus</td><td>DELTA_3_MAX_PLUS</td><td>未取得</td><td>Current short probe: quota received, but no accepted cycle key before timeout</td><td>Status telemetry available. No verified cycle field</td><td class="no">Unsupported until cycle key/field is identified</td></tr>
-      <tr><td>DELTA 3 Plus 2</td><td>DELTA_3_PLUS</td><td>未取得</td><td>Current short probe: quota timeout</td><td>Status telemetry available. No verified cycle field</td><td class="no">Unsupported until named key or verified field is found</td></tr>
-      <tr><td>RIVER 2</td><td>RIVER_2</td><td>未取得</td><td>Current short probe: quota timeout. Device is expected to be powered off</td><td>Status timeout</td><td class="no">Unsupported until device is online and probe succeeds</td></tr>
+      <tr><td>DELTA Pro 3</td><td>DELTA_PRO3</td><td>取得済み</td><td>2026-06-13 live watch: <code>cycles</code> key confirmed, values observed at 54/60/65 across repeated BMS packets</td><td>Cloud status primary. Private status not needed for cycle count</td><td class="ok">Supported</td></tr>
+      <tr><td>DELTA 3 Plus</td><td>DELTA_3_PLUS</td><td>未取得</td><td>2026-06-13 live watch 60s: no quota messages</td><td>Status telemetry available. No verified cycle field</td><td class="no">Unsupported until named key or verified field is found</td></tr>
+      <tr><td>DELTA 3 Max Plus</td><td>DELTA_3_MAX_PLUS</td><td>未取得</td><td>2026-06-13 live watch: quota received, only <code>powGetAcIn</code>, <code>powGetAcOutList</code>, <code>powInSumW</code>, <code>powOutSumW</code>; no cycle/BMS/SOH diagnostic key</td><td>Status telemetry available. No verified cycle field</td><td class="no">Unsupported until cycle key/field is identified</td></tr>
+      <tr><td>DELTA 3 Plus 2</td><td>DELTA_3_PLUS</td><td>未取得</td><td>2026-06-13 live watch 60s: no quota messages</td><td>Status telemetry available. No verified cycle field</td><td class="no">Unsupported until named key or verified field is found</td></tr>
+      <tr><td>RIVER 2</td><td>RIVER_2</td><td>未取得</td><td>2026-06-13 live watch 60s: no quota messages. Device is expected to be powered off</td><td>Status timeout</td><td class="no">Unsupported until device is online and probe succeeds</td></tr>
     </tbody>
   </table>
 
@@ -50,10 +51,11 @@
     <tbody>
       <tr><td><code>/api/devices/statuses</code></td><td>DELTA Pro 3 returns <code>cycleCount</code> with <code>ecoflow_developer_mqtt_quota</code></td><td>Current display path works for Pro 3</td></tr>
       <tr><td>Developer MQTT quota probe for DELTA Pro 3</td><td><code>cycles</code> key returned</td><td>Safe to keep <code>cycles</code> as accepted named key</td></tr>
-      <tr><td>Developer MQTT quota probe for DELTA 3 Plus</td><td>timed out waiting for quota</td><td>No Developer MQTT cycle source confirmed</td></tr>
-      <tr><td>Developer MQTT quota probe for DELTA 3 Max Plus</td><td>timed out waiting for cycle count quota</td><td>Quota can arrive, but accepted cycle key was not present during the probe</td></tr>
-      <tr><td>Developer MQTT quota probe for DELTA 3 Plus 2</td><td>timed out waiting for quota</td><td>No Developer MQTT cycle source confirmed</td></tr>
-      <tr><td>Developer MQTT quota probe for RIVER 2</td><td>timed out waiting for quota</td><td>Expected while device is powered off</td></tr>
+      <tr><td>2026-06-13 live Developer MQTT quota watch for DELTA Pro 3</td><td><code>cycles</code> key returned repeatedly. Observed values included 54/60/65 from quota packets</td><td><code>cycles</code> remains the only accepted cycle source</td></tr>
+      <tr><td>2026-06-13 live Developer MQTT quota watch for DELTA 3 Plus</td><td>60s watch completed with 0 messages</td><td>No Developer MQTT cycle source confirmed</td></tr>
+      <tr><td>2026-06-13 live Developer MQTT quota watch for DELTA 3 Max Plus</td><td>60s watch received quota messages, but <code>cycleCandidates</code> and <code>diagnosticKeys</code> were empty. A 25s key-name-only check saw only <code>powGetAcIn</code>, <code>powGetAcOutList</code>, <code>powInSumW</code>, <code>powOutSumW</code></td><td>Current Developer MQTT quota stream does not expose a cycle key for this device under the observed conditions</td></tr>
+      <tr><td>2026-06-13 live Developer MQTT quota watch for DELTA 3 Plus 2</td><td>60s watch completed with 0 messages</td><td>No Developer MQTT cycle source confirmed</td></tr>
+      <tr><td>2026-06-13 live Developer MQTT quota watch for RIVER 2</td><td>60s watch completed with 0 messages</td><td>Expected while device is powered off</td></tr>
       <tr><td>Private MQTT telemetry diagnostics for DELTA 3 series</td><td>decoded field summaries exist</td><td>Useful for investigation, but not enough to accept cycle count</td></tr>
     </tbody>
   </table>
@@ -98,7 +100,8 @@
   <pre><code>cd backend
 go run ./cmd/ecoflow-developer-mqtt-probe --sn &lt;DEVICE_SN&gt; --timeout-sec 60
 go run ./cmd/ecoflow-developer-mqtt-probe --sn &lt;DEVICE_SN&gt; --watch-sec 300</code></pre>
-  <p>Record only device display name, device type, quota arrival, accepted cycle key status, accepted key name, and whether the value was displayed by <code>/api/devices/statuses</code>.</p>
+  <p>The watch output includes investigation-only <code>diagnosticKeys</code> for quota keys containing <code>bms</code>, <code>cyc</code>, <code>cycle</code>, or <code>soh</code>. Sensitive-looking paths such as serial numbers, tokens, accounts, emails, and secrets are filtered out. Non-numeric string values are also omitted because path names alone cannot prove they are safe to print. These values are not accepted as <code>cycleCount</code> until this matrix marks a source as confirmed.</p>
+  <p>Record only device display name, device type, quota arrival, accepted cycle key status, accepted key name, relevant diagnostic key names and numeric/bool scalar values, and whether the value was displayed by <code>/api/devices/statuses</code>.</p>
 
   <h2>Implementation readiness</h2>
   <table>
