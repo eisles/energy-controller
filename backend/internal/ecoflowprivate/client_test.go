@@ -586,6 +586,17 @@ func (f fakeTransport) Publish(context.Context, string, []byte, time.Duration) e
 	return nil
 }
 
+func (f fakeTransport) SubscribeOnce(context.Context, string, time.Duration) (MQTTMessage, error) {
+	if len(f.replies) == 0 {
+		return MQTTMessage{}, nil
+	}
+	return f.replies[0], nil
+}
+
+func (f fakeTransport) Subscribe(context.Context, string, time.Duration, func(MQTTMessage)) error {
+	return nil
+}
+
 func (f fakeTransport) Disconnect() {}
 
 type authRetryTransport struct {
@@ -603,6 +614,14 @@ func (t *authRetryTransport) Request(context.Context, string, []byte, []string, 
 }
 
 func (t *authRetryTransport) Publish(context.Context, string, []byte, time.Duration) error {
+	return nil
+}
+
+func (t *authRetryTransport) SubscribeOnce(context.Context, string, time.Duration) (MQTTMessage, error) {
+	return MQTTMessage{}, nil
+}
+
+func (t *authRetryTransport) Subscribe(context.Context, string, time.Duration, func(MQTTMessage)) error {
 	return nil
 }
 

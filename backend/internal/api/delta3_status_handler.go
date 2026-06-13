@@ -12,6 +12,7 @@ import (
 	"github.com/eisles/energy-controller/backend/internal/config"
 	"github.com/eisles/energy-controller/backend/internal/domain"
 	"github.com/eisles/energy-controller/backend/internal/ecoflow"
+	"github.com/eisles/energy-controller/backend/internal/ecoflowdeveloper"
 	"github.com/eisles/energy-controller/backend/internal/ecoflowprivate"
 )
 
@@ -19,6 +20,8 @@ const (
 	delta3StatusSuccessCacheTTL = 30 * time.Second
 	delta3StatusErrorCacheTTL   = 5 * time.Minute
 	delta3StatusBusyBackoffTTL  = 10 * time.Minute
+	delta3CycleSuccessCacheTTL  = 10 * time.Minute
+	delta3CycleErrorCacheTTL    = 10 * time.Second
 )
 
 type delta3ProbeClient interface {
@@ -27,6 +30,10 @@ type delta3ProbeClient interface {
 
 type ecoFlowCloudBatteryReader interface {
 	GetBatteryStatus(ctx context.Context) (domain.BatteryStatus, error)
+}
+
+type ecoFlowDeveloperCycleReader interface {
+	ReadCycleStatus(ctx context.Context) (ecoflowdeveloper.CycleStatus, error)
 }
 
 type Delta3StatusTargetProvider interface {
@@ -144,17 +151,24 @@ type ecoFlowCloudStatusCacheEntry struct {
 	cacheUntil time.Time
 }
 
+type ecoFlowDeveloperCycleCacheEntry struct {
+	response   ecoflowdeveloper.CycleStatus
+	cacheUntil time.Time
+}
+
 type Delta3StatusReader struct {
-	cfg                       config.Config
-	logger                    *slog.Logger
-	client                    delta3ProbeClient
-	clientFactory             func(config.Config) delta3ProbeClient
-	ecoFlowCloudReaderFactory func(ecoflow.Config) ecoFlowCloudBatteryReader
-	targetProvider            Delta3StatusTargetProvider
-	now                       func() time.Time
-	mu                        sync.Mutex
-	cache                     map[string]delta3StatusCacheEntry
-	ecoFlowCloudCache         map[string]ecoFlowCloudStatusCacheEntry
+	cfg                                config.Config
+	logger                             *slog.Logger
+	client                             delta3ProbeClient
+	clientFactory                      func(config.Config) delta3ProbeClient
+	ecoFlowCloudReaderFactory          func(ecoflow.Config) ecoFlowCloudBatteryReader
+	ecoFlowDeveloperCycleReaderFactory func(ecoflowdeveloper.Config) ecoFlowDeveloperCycleReader
+	targetProvider                     Delta3StatusTargetProvider
+	now                                func() time.Time
+	mu                                 sync.Mutex
+	cache                              map[string]delta3StatusCacheEntry
+	ecoFlowCloudCache                  map[string]ecoFlowCloudStatusCacheEntry
+	ecoFlowDeveloperCycleCache         map[string]ecoFlowDeveloperCycleCacheEntry
 }
 
 func NewDelta3StatusReader(cfg config.Config, logger *slog.Logger) *Delta3StatusReader {
@@ -181,9 +195,13 @@ func newDelta3StatusReader(cfg config.Config, logger *slog.Logger, client delta3
 		ecoFlowCloudReaderFactory: func(cfg ecoflow.Config) ecoFlowCloudBatteryReader {
 			return ecoflow.NewSignedClient(cfg)
 		},
-		now:               time.Now,
-		cache:             make(map[string]delta3StatusCacheEntry),
-		ecoFlowCloudCache: make(map[string]ecoFlowCloudStatusCacheEntry),
+		ecoFlowDeveloperCycleReaderFactory: func(cfg ecoflowdeveloper.Config) ecoFlowDeveloperCycleReader {
+			return ecoflowdeveloper.NewClient(cfg)
+		},
+		now:                        time.Now,
+		cache:                      make(map[string]delta3StatusCacheEntry),
+		ecoFlowCloudCache:          make(map[string]ecoFlowCloudStatusCacheEntry),
+		ecoFlowDeveloperCycleCache: make(map[string]ecoFlowDeveloperCycleCacheEntry),
 	}
 }
 
@@ -206,6 +224,7 @@ func (r *Delta3StatusReader) CurrentDeviceStatuses(ctx context.Context, devices 
 			cfg := EcoFlowCloudConfigForDevice(r.cfg, device)
 			status = r.currentEcoFlowCloudStatusForConfig(ctx, cfg, device.DeviceType)
 		}
+		status = r.augmentCycleCountFromDeveloperMQTT(ctx, status, device)
 		responses = append(responses, DeviceStatusResponse{
 			ID:                   device.ID,
 			Name:                 device.Name,
@@ -304,6 +323,20 @@ func EcoFlowCloudConfigForDevice(cfg config.Config, device domain.ChargingDevice
 	return cfg
 }
 
+func EcoFlowDeveloperMQTTConfigForDevice(cfg config.Config, device domain.ChargingDevice) ecoflowdeveloper.Config {
+	return ecoflowdeveloper.Config{
+		AccessKey:      cfg.EcoFlowAccessKey,
+		SecretKey:      cfg.EcoFlowSecretKey,
+		BaseURL:        cfg.EcoFlowBaseURL,
+		PrivateAPIHost: cfg.Delta3PrivateAPIHost,
+		Email:          cfg.Delta3PrivateEmail,
+		Password:       cfg.Delta3PrivatePassword,
+		DeviceSN:       strings.TrimSpace(device.DeviceSN),
+		MQTTClientID:   cfg.Delta3MQTTClientID,
+		Timeout:        cfg.Delta3Timeout,
+	}
+}
+
 func canReadEcoFlowPrivateMQTTStatus(device domain.ChargingDevice) bool {
 	return device.Enabled &&
 		device.Provider == "ecoflow" &&
@@ -318,6 +351,14 @@ func canReadEcoFlowCloudStatus(device domain.ChargingDevice) bool {
 		device.Provider == "ecoflow" &&
 		device.Kind == "ecoflow_delta_pro3" &&
 		device.StatusSource == "ecoflow_cloud" &&
+		strings.TrimSpace(device.DeviceSN) != "" &&
+		device.SupportsSocRead
+}
+
+func canReadEcoFlowDeveloperMQTTCycle(device domain.ChargingDevice) bool {
+	return device.Enabled &&
+		device.Provider == "ecoflow" &&
+		device.Kind == "ecoflow_delta_pro3" &&
 		strings.TrimSpace(device.DeviceSN) != "" &&
 		device.SupportsSocRead
 }
@@ -340,6 +381,10 @@ func delta3StatusCacheKey(cfg config.Config) string {
 
 func ecoFlowCloudStatusCacheKey(cfg config.Config) string {
 	return cfg.EcoFlowBaseURL + "\x00" + cfg.EcoFlowDeviceSN
+}
+
+func ecoFlowDeveloperCycleCacheKey(cfg ecoflowdeveloper.Config) string {
+	return cfg.PrivateAPIHost + "\x00" + cfg.DeviceSN
 }
 
 func shouldCacheDelta3StatusResponse(response Delta3StatusResponse) bool {
@@ -459,6 +504,72 @@ func readEcoFlowCloudStatus(ctx context.Context, cfg config.Config, factory func
 		}
 	}
 	return mapEcoFlowCloudStatus(status, deviceType, now)
+}
+
+func (r *Delta3StatusReader) augmentCycleCountFromDeveloperMQTT(ctx context.Context, status Delta3StatusResponse, device domain.ChargingDevice) Delta3StatusResponse {
+	if !status.Available || status.CycleCount != nil || !canReadEcoFlowDeveloperMQTTCycle(device) {
+		return status
+	}
+	cycleStatus, err := r.currentEcoFlowDeveloperCycleStatusForConfig(ctx, EcoFlowDeveloperMQTTConfigForDevice(r.cfg, device))
+	if err != nil {
+		if r.logger != nil {
+			r.logger.Warn("failed to read EcoFlow Developer MQTT cycle count", "deviceKind", device.Kind, "deviceName", device.Name, "error", err)
+		}
+		return status
+	}
+	if cycleStatus.CycleCount == nil {
+		return status
+	}
+	status.CycleCount = cycleStatus.CycleCount
+	status.CycleCountSource = cycleStatus.CycleCountSource
+	return status
+}
+
+func (r *Delta3StatusReader) currentEcoFlowDeveloperCycleStatusForConfig(ctx context.Context, cfg ecoflowdeveloper.Config) (ecoflowdeveloper.CycleStatus, error) {
+	r.mu.Lock()
+	now := r.now()
+	key := ecoFlowDeveloperCycleCacheKey(cfg)
+	entry := r.ecoFlowDeveloperCycleCache[key]
+	if !entry.cacheUntil.IsZero() && now.Before(entry.cacheUntil) {
+		response := entry.response
+		r.mu.Unlock()
+		return response, nil
+	}
+	previous := entry.response
+	r.mu.Unlock()
+
+	status, err := readEcoFlowDeveloperCycleStatus(ctx, cfg, r.ecoFlowDeveloperCycleReaderFactory)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err != nil {
+		if previous.CycleCount != nil {
+			entry.response = previous
+			entry.cacheUntil = now.Add(delta3StatusSuccessCacheTTL)
+			r.ecoFlowDeveloperCycleCache[key] = entry
+			return previous, nil
+		}
+		entry.response = status
+		entry.cacheUntil = now.Add(delta3CycleErrorCacheTTL)
+	} else {
+		entry.response = status
+		entry.cacheUntil = now.Add(delta3CycleSuccessCacheTTL)
+	}
+	r.ecoFlowDeveloperCycleCache[key] = entry
+	return status, err
+}
+
+func readEcoFlowDeveloperCycleStatus(ctx context.Context, cfg ecoflowdeveloper.Config, factory func(ecoflowdeveloper.Config) ecoFlowDeveloperCycleReader) (ecoflowdeveloper.CycleStatus, error) {
+	if missing := cfg.MissingReadCredentials(); len(missing) > 0 {
+		return ecoflowdeveloper.CycleStatus{}, fmt.Errorf("EcoFlow Developer MQTT cycle count missing required env: %v", missing)
+	}
+	if factory == nil {
+		factory = func(cfg ecoflowdeveloper.Config) ecoFlowDeveloperCycleReader {
+			return ecoflowdeveloper.NewClient(cfg)
+		}
+	}
+	reader := factory(cfg)
+	return reader.ReadCycleStatus(ctx)
 }
 
 func mapEcoFlowCloudStatus(status domain.BatteryStatus, deviceType string, now time.Time) Delta3StatusResponse {

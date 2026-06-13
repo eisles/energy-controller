@@ -43,6 +43,14 @@ func NewClientWithTransport(cfg Config, transport MQTTTransport) *Client {
 	return &Client{cfg: cfg, auth: NewAuthClient(cfg), transport: transport, sessionKey: privateSessionCacheKey(cfg), cache: cfg.SessionCache}
 }
 
+func (c *Client) CachedSession(ctx context.Context) (Session, bool, error) {
+	return c.cachedSession(ctx)
+}
+
+func (c *Client) InvalidateCachedSession() {
+	c.invalidateSession()
+}
+
 func (c *Client) Probe(ctx context.Context) (Status, error) {
 	if missing := c.cfg.MissingReadCredentials(); len(missing) > 0 {
 		return Status{DeviceType: c.cfg.DeviceType, DeviceSN: c.cfg.DeviceSN}, fmt.Errorf("EcoFlow private probe missing required env: %v", missing)

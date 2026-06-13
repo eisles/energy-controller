@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>EcoFlow Developer MQTT サイクル数取得 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.65; margin: 40px; color: #111827; background: #f8fafc; }
+    main { max-width: 960px; margin: 0 auto; background: #fff; border: 1px solid #d9e2ec; border-radius: 8px; padding: 32px; }
+    h1 { margin-top: 0; font-size: 28px; }
+    h2 { margin-top: 28px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
+    code, pre { background: #f1f5f9; border-radius: 6px; }
+    code { padding: 1px 4px; }
+    pre { padding: 14px; overflow-x: auto; }
+    ul, ol { padding-left: 24px; }
+    .note { border-left: 4px solid #0f766e; padding: 10px 14px; background: #ecfdf5; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>EcoFlow Developer MQTT サイクル数取得 実装計画</h1>
+  <h2>Goal</h2>
+  <p>EcoFlow のサイクル数を、未命名の private MQTT protobuf field ではなく、Developer MQTT quota の名前付き key から read-only で取得して画面に表示する。</p>
+  <p>対象はまず DELTA Pro 3 と、将来同じ Developer MQTT quota で <code>cycles</code> 系 key が得られる EcoFlow 機器。DELTA 3 Plus / DELTA 3 Max Plus の既存 private MQTT による SOC、AC 入出力、AC1/AC2、充電上限などの取得と制御は維持する。</p>
+  <h2>Non-Goals</h2>
+  <ul>
+    <li>実機 write コマンドは追加しない。</li>
+    <li>private MQTT の <code>field=37</code> など未命名 raw field をサイクル数として再採用しない。</li>
+    <li>Developer MQTT の set topic 実装は行わない。</li>
+    <li>Home Assistant 連携や TarasKhust 実装の全面移植は行わない。</li>
+  </ul>
+  <h2>Current State</h2>
+  <ul>
+    <li>EcoFlow Cloud REST <code>GET /iot-open/sign/device/quota/all</code> は DELTA Pro 3 の SOC、入出力、SOH、設定値を返すが、現在確認した直接レスポンスには <code>cycles</code> が含まれていない。</li>
+    <li><code>backend/internal/ecoflow/quota_adapter.go</code> は Cloud quota に <code>cycles</code> 系 key が存在する場合だけ <code>cycleCount</code> を採用できる。</li>
+    <li>直前コミットで、EcoFlow app private MQTT の未命名 protobuf <code>field=37</code> はサイクル数として扱わないよう修正済み。</li>
+    <li>TarasKhust/ecoflow-api-mqtt の <code>const.py</code> では DELTA Pro 3 の <code>bmsCycles</code> が <code>key: "cycles"</code>、<code>mqtt_only: True</code> と定義されている。</li>
+    <li>同実装の MQTT topic は <code>/open/{certificateAccount}/{sn}/quota</code> で、payload は JSON の直下、<code>params</code>、または <code>param</code> に quota data が入る形を扱っている。</li>
+  </ul>
+  <h2>Data/API Contract</h2>
+  <p>新しい read-only adapter は Developer MQTT quota payload から <code>cycles</code>、<code>bmsCycles</code>、<code>bmsBattCycles</code>、<code>bms_bmsStatus.cycles</code>、<code>hs_yj751_bms_slave_addr.1.cycles</code> を探す。</p>
+  <pre><code>{
+  "cycleCount": 123,
+  "cycleCountSource": "ecoflow_developer_mqtt_quota"
+}</code></pre>
+  <p>取得できない場合は <code>cycleCount</code> を <code>null</code>、<code>cycleCountSource</code> を空にする。Developer MQTT quota の raw payload は通常保存しない。</p>
+  <h2>Files Likely To Change</h2>
+  <ul>
+    <li><code>backend/internal/ecoflowdeveloper/</code>: Developer MQTT quota の topic、payload parser、read-only client を追加する。</li>
+    <li><code>backend/internal/api/delta3_status_handler.go</code>: 名前付き Developer MQTT quota のサイクル数だけを補完する。</li>
+    <li><code>backend/internal/api/delta3_status_handler_test.go</code>: 補完と欠損時 nil を検証する。</li>
+    <li><code>backend/cmd/ecoflow-developer-mqtt-probe/</code>: read-only probe CLI を追加する。</li>
+    <li><code>frontend/components/StatusCards.tsx</code>: 取得元ラベルを追加する。</li>
+    <li><code>README.md</code> / <code>.env.example</code>: 設定と注意点を追記する。</li>
+  </ul>
+  <h2>Safety Boundaries</h2>
+  <div class="note">
+    <p>read-only の MQTT subscribe のみ行う。<code>/open/{certificateAccount}/{sn}/set</code> は実装しない。既存 write gate と実機制御経路は触らない。</p>
+  </div>
+  <ul>
+    <li>credential、token、password、full serial number はログ、計画、テスト、画面に出さない。</li>
+    <li>Developer MQTT quota が失敗しても既存 status は壊さず、<code>cycleCount</code> を nil のままにする。</li>
+    <li>MQTT 接続回数を増やしすぎないよう、既存 status cache / timeout 方針に合わせる。</li>
+  </ul>
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li>Developer MQTT quota adapter を追加する。</li>
+    <li>quota parser を単体テストする。</li>
+    <li>read-only probe CLI を追加する。</li>
+    <li>API status 補完を追加する。</li>
+    <li>Frontend の source label に <code>ecoflow_developer_mqtt_quota</code> を追加する。</li>
+    <li>README / <code>.env.example</code> を更新する。</li>
+  </ol>
+  <h2>Review Points</h2>
+  <ul>
+    <li>未命名 protobuf field が cycleCount に戻っていないこと。</li>
+    <li>Developer MQTT quota の失敗が制御判断や status 全体を壊さないこと。</li>
+    <li>write topic を publish するコードが入っていないこと。</li>
+    <li>secrets や full SN がログや画面に出ないこと。</li>
+    <li>テストが network なしで通ること。</li>
+  </ul>
+  <h2>Verification Commands</h2>
+  <pre><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build
+rtk git diff --check
+rtk codex review --uncommitted</code></pre>
+  <p>必要に応じて read-only 実機 probe を行う。</p>
+  <pre><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go run ./cmd/ecoflow-developer-mqtt-probe --sn '&lt;redacted&gt;' --timeout 20s</code></pre>
+  <h2>Rollback / Operational Notes</h2>
+  <ul>
+    <li>問題があれば Developer MQTT quota 補完呼び出しを外せば既存 status に戻せる。</li>
+    <li>サイクル数は制御判断に使わず表示専用にする。</li>
+    <li>実機確認は read-only probe と <code>/api/devices/statuses</code> の表示確認に限定する。</li>
+  </ul>
+</main>
+</body>
+</html>

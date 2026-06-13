@@ -10,6 +10,7 @@ import (
 	"github.com/eisles/energy-controller/backend/internal/config"
 	"github.com/eisles/energy-controller/backend/internal/domain"
 	"github.com/eisles/energy-controller/backend/internal/ecoflow"
+	"github.com/eisles/energy-controller/backend/internal/ecoflowdeveloper"
 	"github.com/eisles/energy-controller/backend/internal/ecoflowprivate"
 )
 
@@ -503,6 +504,178 @@ func TestDelta3StatusReaderDoesNotAugmentPro3CycleCountFromPrivateMQTTCandidate(
 	}
 }
 
+func TestDelta3StatusReaderAugmentsPro3CycleCountFromDeveloperMQTTQuota(t *testing.T) {
+	now := time.Date(2026, 6, 12, 19, 45, 0, 0, time.UTC)
+	developerCycleCalls := 0
+	reader := newDelta3StatusReader(config.Config{
+		EcoFlowAccessKey:      "access",
+		EcoFlowSecretKey:      "secret",
+		EcoFlowBaseURL:        "https://api.test",
+		Delta3PrivateAPIHost:  "api.test",
+		Delta3PrivateEmail:    "user@example.com",
+		Delta3PrivatePassword: "secret",
+		Delta3Timeout:         time.Second,
+	}, nil, nil)
+	reader.now = func() time.Time { return now }
+	reader.ecoFlowCloudReaderFactory = func(cfg ecoflow.Config) ecoFlowCloudBatteryReader {
+		return fakeEcoFlowCloudReader{status: domain.BatteryStatus{
+			Soc:            67,
+			InputW:         100,
+			OutputW:        320,
+			ACChargeLimitW: 400,
+			IsOnline:       true,
+		}}
+	}
+	reader.ecoFlowDeveloperCycleReaderFactory = func(cfg ecoflowdeveloper.Config) ecoFlowDeveloperCycleReader {
+		if cfg.DeviceSN != "MASTER-SN" {
+			t.Fatalf("Developer MQTT device SN = %q, want MASTER-SN", cfg.DeviceSN)
+		}
+		cycle := 12
+		return fakeEcoFlowDeveloperCycleReader{
+			status: ecoflowdeveloper.CycleStatus{
+				CycleCount:       &cycle,
+				CycleCountSource: ecoflowdeveloper.CycleCountSource,
+				Key:              "cycles",
+				QuotaKeyCount:    4,
+			},
+			calls: &developerCycleCalls,
+		}
+	}
+	devices := []domain.ChargingDevice{
+		{
+			ID:              1,
+			Name:            "DELTA Pro 3",
+			Kind:            "ecoflow_delta_pro3",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			DeviceSN:        "MASTER-SN",
+			DeviceType:      "DELTA_PRO3",
+			StatusSource:    "ecoflow_cloud",
+		},
+	}
+
+	first := reader.CurrentDeviceStatuses(context.Background(), devices)
+	second := reader.CurrentDeviceStatuses(context.Background(), devices)
+
+	assertIntPtrResponse(t, "CycleCount", first[0].Status.CycleCount, 12)
+	if first[0].Status.CycleCountSource != ecoflowdeveloper.CycleCountSource {
+		t.Fatalf("CycleCountSource = %q, want Developer MQTT quota", first[0].Status.CycleCountSource)
+	}
+	assertIntPtrResponse(t, "CycleCount", second[0].Status.CycleCount, 12)
+	if developerCycleCalls != 1 {
+		t.Fatalf("Developer cycle calls = %d, want cached single call", developerCycleCalls)
+	}
+}
+
+func TestDelta3StatusReaderKeepsLastDeveloperMQTTCycleOnRefreshError(t *testing.T) {
+	now := time.Date(2026, 6, 12, 19, 45, 0, 0, time.UTC)
+	developerCycleCalls := 0
+	reader := newDelta3StatusReader(config.Config{
+		EcoFlowAccessKey:      "access",
+		EcoFlowSecretKey:      "secret",
+		EcoFlowBaseURL:        "https://api.test",
+		Delta3PrivateAPIHost:  "api.test",
+		Delta3PrivateEmail:    "user@example.com",
+		Delta3PrivatePassword: "secret",
+		Delta3Timeout:         time.Second,
+	}, nil, nil)
+	reader.now = func() time.Time { return now }
+	reader.ecoFlowCloudReaderFactory = func(cfg ecoflow.Config) ecoFlowCloudBatteryReader {
+		return fakeEcoFlowCloudReader{status: domain.BatteryStatus{
+			Soc:            67,
+			InputW:         100,
+			OutputW:        320,
+			ACChargeLimitW: 400,
+			IsOnline:       true,
+		}}
+	}
+	reader.ecoFlowDeveloperCycleReaderFactory = func(cfg ecoflowdeveloper.Config) ecoFlowDeveloperCycleReader {
+		developerCycleCalls++
+		if developerCycleCalls == 1 {
+			cycle := 12
+			return fakeEcoFlowDeveloperCycleReader{status: ecoflowdeveloper.CycleStatus{
+				CycleCount:       &cycle,
+				CycleCountSource: ecoflowdeveloper.CycleCountSource,
+				Key:              "cycles",
+			}}
+		}
+		return fakeEcoFlowDeveloperCycleReader{err: errors.New("cycle quota missing")}
+	}
+	devices := []domain.ChargingDevice{
+		{
+			ID:              1,
+			Name:            "DELTA Pro 3",
+			Kind:            "ecoflow_delta_pro3",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			DeviceSN:        "MASTER-SN",
+			DeviceType:      "DELTA_PRO3",
+			StatusSource:    "ecoflow_cloud",
+		},
+	}
+
+	first := reader.CurrentDeviceStatuses(context.Background(), devices)
+	now = now.Add(delta3CycleSuccessCacheTTL + time.Second)
+	second := reader.CurrentDeviceStatuses(context.Background(), devices)
+
+	assertIntPtrResponse(t, "first CycleCount", first[0].Status.CycleCount, 12)
+	assertIntPtrResponse(t, "second CycleCount", second[0].Status.CycleCount, 12)
+	if second[0].Status.CycleCountSource != ecoflowdeveloper.CycleCountSource {
+		t.Fatalf("CycleCountSource = %q, want Developer MQTT quota", second[0].Status.CycleCountSource)
+	}
+	if developerCycleCalls != 2 {
+		t.Fatalf("Developer cycle calls = %d, want refresh after success cache expiry", developerCycleCalls)
+	}
+}
+
+func TestDelta3StatusReaderKeepsPro3StatusWhenDeveloperMQTTCycleMissing(t *testing.T) {
+	reader := newDelta3StatusReader(config.Config{
+		EcoFlowAccessKey:      "access",
+		EcoFlowSecretKey:      "secret",
+		EcoFlowBaseURL:        "https://api.test",
+		Delta3PrivateAPIHost:  "api.test",
+		Delta3PrivateEmail:    "user@example.com",
+		Delta3PrivatePassword: "secret",
+		Delta3Timeout:         time.Second,
+	}, nil, nil)
+	reader.ecoFlowCloudReaderFactory = func(cfg ecoflow.Config) ecoFlowCloudBatteryReader {
+		return fakeEcoFlowCloudReader{status: domain.BatteryStatus{
+			Soc:            67,
+			InputW:         100,
+			OutputW:        320,
+			ACChargeLimitW: 400,
+			IsOnline:       true,
+		}}
+	}
+	reader.ecoFlowDeveloperCycleReaderFactory = func(cfg ecoflowdeveloper.Config) ecoFlowDeveloperCycleReader {
+		return fakeEcoFlowDeveloperCycleReader{status: ecoflowdeveloper.CycleStatus{QuotaKeyCount: 3}}
+	}
+	devices := []domain.ChargingDevice{
+		{
+			ID:              1,
+			Name:            "DELTA Pro 3",
+			Kind:            "ecoflow_delta_pro3",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			DeviceSN:        "MASTER-SN",
+			DeviceType:      "DELTA_PRO3",
+			StatusSource:    "ecoflow_cloud",
+		},
+	}
+
+	statuses := reader.CurrentDeviceStatuses(context.Background(), devices)
+
+	if !statuses[0].Status.Available {
+		t.Fatalf("status should remain available when Developer MQTT cycle is missing: %+v", statuses[0].Status)
+	}
+	if statuses[0].Status.CycleCount != nil || statuses[0].Status.CycleCountSource != "" {
+		t.Fatalf("cycle = %v source=%q, want missing cycle only", statuses[0].Status.CycleCount, statuses[0].Status.CycleCountSource)
+	}
+}
+
 func TestEcoFlowCloudConfigForDeviceDoesNotFallbackToEnvSN(t *testing.T) {
 	cfg := EcoFlowCloudConfigForDevice(config.Config{EcoFlowDeviceSN: "ENV-SN"}, domain.ChargingDevice{DeviceSN: "   "})
 	if cfg.EcoFlowDeviceSN != "" {
@@ -550,7 +723,20 @@ type fakeEcoFlowCloudReader struct {
 	err    error
 }
 
+type fakeEcoFlowDeveloperCycleReader struct {
+	status ecoflowdeveloper.CycleStatus
+	err    error
+	calls  *int
+}
+
 func (r fakeEcoFlowCloudReader) GetBatteryStatus(context.Context) (domain.BatteryStatus, error) {
+	return r.status, r.err
+}
+
+func (r fakeEcoFlowDeveloperCycleReader) ReadCycleStatus(context.Context) (ecoflowdeveloper.CycleStatus, error) {
+	if r.calls != nil {
+		*r.calls++
+	}
 	return r.status, r.err
 }
 

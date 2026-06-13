@@ -434,9 +434,17 @@ function cycleCountLabel(status: Delta3Status) {
   if (status.cycleCount === null || status.cycleCount === undefined) {
     return "-";
   }
-  return `${status.cycleCount} 回`;
+  const source = cycleCountSourceLabel(status.cycleCountSource || "");
+  return source ? `${status.cycleCount} 回 / ${source}` : `${status.cycleCount} 回`;
 }
 
+function cycleCountSourceLabel(value: string) {
+  const labels: Record<string, string> = {
+    ecoflow_cloud_quota: "Cloud quota",
+    ecoflow_developer_mqtt_quota: "Developer MQTT quota"
+  };
+  return labels[value] || value;
+}
 
 function statusSourceLabel(value: string) {
   const labels: Record<string, string> = {

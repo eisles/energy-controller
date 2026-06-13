@@ -3,6 +3,8 @@ package ecoflow
 import (
 	"context"
 	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -157,4 +159,52 @@ func TestNewSignedPUTRequestBuildsEnergyModeRequestWithoutSending(t *testing.T) 
 	if string(body) != wantBody {
 		t.Fatalf("body = %s, want %s", body, wantBody)
 	}
+}
+
+func TestMQTTCertificationUsesSignedDeveloperAPI(t *testing.T) {
+	var gotPath string
+	client := NewSignedClient(Config{
+		AccessKey: "access-key",
+		SecretKey: "secret-key",
+		BaseURL:   "https://api-e.ecoflow.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			gotPath = r.URL.Path
+			if r.Header.Get("accessKey") != "access-key" || r.Header.Get("sign") == "" {
+				t.Fatalf("missing signed headers: accessKey=%q sign=%q", r.Header.Get("accessKey"), r.Header.Get("sign"))
+			}
+			return &http.Response{
+				StatusCode: 200,
+				Body: io.NopCloser(strings.NewReader(`{
+					"code":"0",
+					"message":"Success",
+					"data":{
+						"url":"mqtt.ecoflow.com",
+						"port":"8883",
+						"certificateAccount":"acct",
+						"certificatePassword":"pass"
+					}
+				}`)),
+				Header: make(http.Header),
+			}, nil
+		})},
+	})
+	client.nonce = func() string { return "123456" }
+	client.now = func() time.Time { return time.UnixMilli(1700000000000) }
+
+	cert, err := client.MQTTCertification(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/iot-open/sign/certification" {
+		t.Fatalf("path = %q, want certification endpoint", gotPath)
+	}
+	if cert.URL != "mqtt.ecoflow.com" || cert.Port != 8883 || cert.CertificateAccount != "acct" || cert.CertificatePassword != "pass" {
+		t.Fatalf("cert = %+v, want MQTT certification data", cert)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }

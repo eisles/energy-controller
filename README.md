@@ -180,6 +180,8 @@ tail -f data/real-control-continuous.log
 
 DELTA Pro 3 の SN は充電機器マスタで管理します。`ECOFLOW_ACCESS_KEY` / `ECOFLOW_SECRET_KEY` / `ECOFLOW_BASE_URL` は EcoFlow Cloud 認証情報として使い、通常の読み取り・余剰追従/夜間充電 write 対象は `kind=ecoflow_delta_pro3`、`statusSource=ecoflow_cloud`、`enabled=true`、`deviceSn` 設定済みのマスタ行から解決します。実機 write はさらに `controlEnabled=true` と既存の real-control gate が必要です。`ECOFLOW_DEVICE_SN` は移行期間の読み取りフォールバックと one-shot CLI 検証用に残していますが、自動 write のフォールバックには使いません。
 
+DELTA Pro 3 のサイクル数は、Cloud REST quota に `cycles` 系 key が含まれる場合はその値を使います。Cloud 側に key がない場合だけ、EcoFlow app private 認証から取得した MQTT 証明書で Developer MQTT quota topic (`/open/{certificateAccount}/{sn}/quota`) を read-only subscribe し、`cycles` / `bmsCycles` / `bmsBattCycles` など名前付き key がある場合だけ表示用に補完します。未命名 protobuf field はサイクル数として扱わず、Developer MQTT quota の取得失敗は SOC や充電制御 status には影響させません。
+
 ## ロールバック
 
 実制御を止める場合は、`.env` を以下に戻して再起動します。
@@ -250,6 +252,15 @@ ECOFLOW_DELTA3_ALLOW_PRIVATE_API_WRITE=false
 DELTA 3 Plus の `deviceSn` と `deviceType` は dashboard の「設定」→「充電機器マスタ」で管理します。`statusSource=ecoflow_private_mqtt` の EcoFlow 機器は、上記の `ECOFLOW_PRIVATE_EMAIL` / `ECOFLOW_PRIVATE_PASSWORD` を共通認証として使い、機器ごとの SN/type はマスタ値を使います。one-shot CLI 検証だけは `ecoflow-delta3-probe --sn ... --device-type ...` で指定できます。
 
 DELTA 3 Plus 補助充電の自動 write は機器マスターを正とします。対象機器を `enabled=true`、`controlEnabled=true`、`supportsAcChargeLimit=true` にしたうえで、既存の real-control gate（`ENABLE_REAL_CONTROL=true`、`SIMULATION_MODE=false`、`AUTO_CONTROL_ENABLED=true`、`CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND`、実制御期限内）と DELTA 3 Plus private API 用の追加安全 gate（`ECOFLOW_DELTA3_ALLOW_WRITE_WITH_AUTO_CONTROL=true`、`ECOFLOW_DELTA3_EXECUTE=true`、`ECOFLOW_DELTA3_ALLOW_PRIVATE_API_WRITE=true`）を満たす場合だけ実行候補になります。SN/type は機器マスター、送信可否はマスターと安全 gate の両方で判定します。
+
+Developer MQTT quota のサイクル数だけを確認する場合は、write 機能を持たない read-only CLI を使います。
+
+```bash
+cd backend
+go run ./cmd/ecoflow-developer-mqtt-probe --sn <DEVICE_SN>
+```
+
+出力には `cycleCount`、`cycleCountSource`、採用 key、受信 key 数だけを含め、SN や認証情報は表示しません。
 
 read-only probe:
 

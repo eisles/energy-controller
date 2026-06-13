@@ -38,6 +38,35 @@ type SignedClient struct {
 	now        func() time.Time
 }
 
+type MQTTCertification struct {
+	URL                 string `json:"url"`
+	Port                int    `json:"port"`
+	CertificateAccount  string `json:"certificateAccount"`
+	CertificatePassword string `json:"certificatePassword"`
+}
+
+func (c *MQTTCertification) UnmarshalJSON(raw []byte) error {
+	type alias struct {
+		URL                 string `json:"url"`
+		Port                any    `json:"port"`
+		CertificateAccount  string `json:"certificateAccount"`
+		CertificatePassword string `json:"certificatePassword"`
+	}
+	var decoded alias
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return err
+	}
+	port, err := mqttPortNumber(decoded.Port)
+	if err != nil {
+		return err
+	}
+	c.URL = decoded.URL
+	c.Port = port
+	c.CertificateAccount = decoded.CertificateAccount
+	c.CertificatePassword = decoded.CertificatePassword
+	return nil
+}
+
 func NewSignedClient(cfg Config) *SignedClient {
 	baseURL := strings.TrimRight(cfg.BaseURL, "/")
 	if baseURL == "" {
@@ -116,6 +145,23 @@ func (c *SignedClient) DeviceList(ctx context.Context) ([]Device, error) {
 	}
 	if payload.Code != "0" {
 		return nil, fmt.Errorf("EcoFlow device/list returned code=%s message=%s", payload.Code, payload.Message)
+	}
+	return payload.Data, nil
+}
+
+func (c *SignedClient) MQTTCertification(ctx context.Context) (MQTTCertification, error) {
+	if c.accessKey == "" || c.secretKey == "" {
+		return MQTTCertification{}, fmt.Errorf("EcoFlow access key or secret key is empty")
+	}
+	var payload mqttCertificationResponse
+	if err := c.getJSON(ctx, "/iot-open/sign/certification", nil, &payload); err != nil {
+		return MQTTCertification{}, err
+	}
+	if payload.Code != "0" {
+		return MQTTCertification{}, fmt.Errorf("EcoFlow certification returned code=%s message=%s", payload.Code, payload.Message)
+	}
+	if payload.Data.URL == "" || payload.Data.Port == 0 || payload.Data.CertificateAccount == "" || payload.Data.CertificatePassword == "" {
+		return MQTTCertification{}, fmt.Errorf("EcoFlow certification response data is incomplete")
 	}
 	return payload.Data, nil
 }
@@ -245,6 +291,21 @@ func flattenSigningValue(params map[string]string, prefix string, value any) {
 	}
 }
 
+func mqttPortNumber(value any) (int, error) {
+	switch typed := value.(type) {
+	case float64:
+		return int(typed), nil
+	case string:
+		port, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err != nil {
+			return 0, fmt.Errorf("parse EcoFlow MQTT certification port: %w", err)
+		}
+		return port, nil
+	default:
+		return 0, fmt.Errorf("EcoFlow MQTT certification port has unsupported type %T", value)
+	}
+}
+
 type quotaResponse struct {
 	Code    string         `json:"code"`
 	Message string         `json:"message"`
@@ -255,6 +316,12 @@ type deviceListResponse struct {
 	Code    string   `json:"code"`
 	Message string   `json:"message"`
 	Data    []Device `json:"data"`
+}
+
+type mqttCertificationResponse struct {
+	Code    string            `json:"code"`
+	Message string            `json:"message"`
+	Data    MQTTCertification `json:"data"`
 }
 
 type Device struct {

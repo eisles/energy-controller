@@ -12,6 +12,8 @@ import (
 type MQTTTransport interface {
 	Request(ctx context.Context, publishTopic string, payload []byte, replyTopics []string, timeout time.Duration) ([]MQTTMessage, error)
 	Publish(ctx context.Context, topic string, payload []byte, timeout time.Duration) error
+	SubscribeOnce(ctx context.Context, topic string, timeout time.Duration) (MQTTMessage, error)
+	Subscribe(ctx context.Context, topic string, timeout time.Duration, onMessage func(MQTTMessage)) error
 	Disconnect()
 }
 
@@ -119,6 +121,61 @@ func (t *PahoTransport) Publish(ctx context.Context, topic string, payload []byt
 		}
 		return nil
 	}
+}
+
+func (t *PahoTransport) SubscribeOnce(ctx context.Context, topic string, timeout time.Duration) (MQTTMessage, error) {
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+	messages := make(chan MQTTMessage, 1)
+	token := t.client.Subscribe(topic, 1, func(_ mqtt.Client, msg mqtt.Message) {
+		copied := append([]byte(nil), msg.Payload()...)
+		select {
+		case messages <- MQTTMessage{Topic: msg.Topic(), Payload: copied}:
+		default:
+		}
+	})
+	if !token.WaitTimeout(timeout) {
+		return MQTTMessage{}, fmt.Errorf("EcoFlow MQTT subscribe timed out")
+	}
+	if err := token.Error(); err != nil {
+		return MQTTMessage{}, fmt.Errorf("EcoFlow MQTT subscribe failed: %w", err)
+	}
+	defer t.client.Unsubscribe(topic)
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return MQTTMessage{}, ctx.Err()
+	case msg := <-messages:
+		return msg, nil
+	case <-timer.C:
+		return MQTTMessage{}, fmt.Errorf("EcoFlow MQTT subscribe timed out waiting for quota")
+	}
+}
+
+func (t *PahoTransport) Subscribe(ctx context.Context, topic string, timeout time.Duration, onMessage func(MQTTMessage)) error {
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+	token := t.client.Subscribe(topic, 1, func(_ mqtt.Client, msg mqtt.Message) {
+		if onMessage == nil {
+			return
+		}
+		copied := append([]byte(nil), msg.Payload()...)
+		onMessage(MQTTMessage{Topic: msg.Topic(), Payload: copied})
+	})
+	if !token.WaitTimeout(timeout) {
+		return fmt.Errorf("EcoFlow MQTT subscribe timed out")
+	}
+	if err := token.Error(); err != nil {
+		return fmt.Errorf("EcoFlow MQTT subscribe failed: %w", err)
+	}
+	defer t.client.Unsubscribe(topic)
+
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func (t *PahoTransport) Disconnect() {
