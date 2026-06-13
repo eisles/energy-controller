@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EcoFlow cycle count source matrix</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.65; margin: 32px; color: #111827; background: #f8fafc; }
+    main { max-width: 1120px; margin: 0 auto; background: #fff; border: 1px solid #dbe3ef; border-radius: 8px; padding: 28px; }
+    h1, h2, h3 { line-height: 1.25; }
+    h1 { font-size: 28px; margin-top: 0; }
+    h2 { border-top: 1px solid #e5e7eb; padding-top: 20px; margin-top: 28px; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+    th, td { border: 1px solid #d1d5db; padding: 8px 10px; vertical-align: top; }
+    th { background: #eef2f7; text-align: left; }
+    code { background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+    pre { background: #111827; color: #f9fafb; padding: 14px; overflow-x: auto; border-radius: 6px; }
+    .ok { color: #047857; font-weight: 700; }
+    .no { color: #b91c1c; font-weight: 700; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>EcoFlow cycle count source matrix</h1>
+  <p>作成日時: 2026-06-13 13:27:25 JST</p>
+
+  <h2>Summary</h2>
+  <p>EcoFlow 各機器のサイクル数取得元を、現時点の read-only API / Developer MQTT quota / private MQTT status の観測結果に基づいて整理する。</p>
+  <p>結論として、現時点で実装済み・表示可能なのは DELTA Pro 3 の Developer MQTT quota <code>cycles</code> key のみ。DELTA 3 Plus 系は private MQTT status は取得できているが、サイクル数として採用できる名前付き key または検証済み field はまだない。</p>
+
+  <h2>Coverage matrix</h2>
+  <table>
+    <thead>
+      <tr><th>Device</th><th>Device type</th><th>Current UI/API cycle count</th><th>Developer MQTT quota</th><th>Private MQTT status</th><th>Current decision</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>DELTA Pro 3</td><td>DELTA_PRO3</td><td>取得済み</td><td><code>cycles</code> key confirmed</td><td>Cloud status primary. Private status not needed for cycle count</td><td class="ok">Supported</td></tr>
+      <tr><td>DELTA 3 Plus</td><td>DELTA_3_PLUS</td><td>未取得</td><td>Current short probe: quota timeout</td><td>Status telemetry available. No verified cycle field</td><td class="no">Unsupported until named key or verified field is found</td></tr>
+      <tr><td>DELTA 3 Max Plus</td><td>DELTA_3_MAX_PLUS</td><td>未取得</td><td>Current short probe: quota received, but no accepted cycle key before timeout</td><td>Status telemetry available. No verified cycle field</td><td class="no">Unsupported until cycle key/field is identified</td></tr>
+      <tr><td>DELTA 3 Plus 2</td><td>DELTA_3_PLUS</td><td>未取得</td><td>Current short probe: quota timeout</td><td>Status telemetry available. No verified cycle field</td><td class="no">Unsupported until named key or verified field is found</td></tr>
+      <tr><td>RIVER 2</td><td>RIVER_2</td><td>未取得</td><td>Current short probe: quota timeout. Device is expected to be powered off</td><td>Status timeout</td><td class="no">Unsupported until device is online and probe succeeds</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Evidence table</h2>
+  <table>
+    <thead>
+      <tr><th>Check</th><th>Result</th><th>Interpretation</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>/api/devices/statuses</code></td><td>DELTA Pro 3 returns <code>cycleCount</code> with <code>ecoflow_developer_mqtt_quota</code></td><td>Current display path works for Pro 3</td></tr>
+      <tr><td>Developer MQTT quota probe for DELTA Pro 3</td><td><code>cycles</code> key returned</td><td>Safe to keep <code>cycles</code> as accepted named key</td></tr>
+      <tr><td>Developer MQTT quota probe for DELTA 3 Plus</td><td>timed out waiting for quota</td><td>No Developer MQTT cycle source confirmed</td></tr>
+      <tr><td>Developer MQTT quota probe for DELTA 3 Max Plus</td><td>timed out waiting for cycle count quota</td><td>Quota can arrive, but accepted cycle key was not present during the probe</td></tr>
+      <tr><td>Developer MQTT quota probe for DELTA 3 Plus 2</td><td>timed out waiting for quota</td><td>No Developer MQTT cycle source confirmed</td></tr>
+      <tr><td>Developer MQTT quota probe for RIVER 2</td><td>timed out waiting for quota</td><td>Expected while device is powered off</td></tr>
+      <tr><td>Private MQTT telemetry diagnostics for DELTA 3 series</td><td>decoded field summaries exist</td><td>Useful for investigation, but not enough to accept cycle count</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Accepted source rules</h2>
+  <h3>Accepted</h3>
+  <ul>
+    <li>Developer MQTT quota key is named and semantically clear: <code>cycles</code>, <code>bmsCycles</code>, <code>bmsBattCycles</code>, <code>bms_bmsStatus.cycles</code>, <code>hs_yj751_bms_slave_addr.1.cycles</code></li>
+    <li>Cloud REST quota exposes a named cycle key.</li>
+  </ul>
+  <h3>Not accepted</h3>
+  <ul>
+    <li>Unknown private MQTT protobuf field numbers.</li>
+    <li>Values that merely look plausible, such as small integers near expected cycle counts.</li>
+    <li>Values from an offline or timed-out device.</li>
+    <li>Any value requiring real-device write to verify.</li>
+  </ul>
+
+  <h2>Per-device next actions</h2>
+  <table>
+    <thead><tr><th>Device type</th><th>Next action</th><th>Acceptance condition</th></tr></thead>
+    <tbody>
+      <tr><td>DELTA_3_PLUS</td><td>Run a longer Developer MQTT quota watch while device is online and active</td><td>A named accepted cycle key appears in quota payload</td></tr>
+      <tr><td>DELTA_3_MAX_PLUS</td><td>Capture quota key names over a longer window and compare against app-visible data if available</td><td>A named cycle key appears, or a private field is validated by repeated observations</td></tr>
+      <tr><td>RIVER_2</td><td>Power on device and run the same quota watch</td><td>Quota arrives and named cycle key is present</td></tr>
+      <tr><td>DELTA_PRO3</td><td>Keep current implementation</td><td>Continue using Developer MQTT quota <code>cycles</code> key</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Future implementation guardrails</h2>
+  <ul>
+    <li>Keep all EcoFlow external details inside adapter packages.</li>
+    <li>Do not expose raw EcoFlow response structures to the domain layer.</li>
+    <li>Add device-type-specific mapping only after the matrix marks the source as accepted.</li>
+    <li>Add unit tests for each accepted key or field.</li>
+    <li>Preserve read-only behavior for status acquisition.</li>
+    <li>Do not add real-device write for cycle count discovery.</li>
+    <li>Do not store or document serial numbers, access keys, secret keys, private app credentials, or tokens.</li>
+  </ul>
+
+  <h2>Suggested probe workflow</h2>
+  <pre><code>cd backend
+go run ./cmd/ecoflow-developer-mqtt-probe --sn &lt;DEVICE_SN&gt; --timeout-sec 60
+go run ./cmd/ecoflow-developer-mqtt-probe --sn &lt;DEVICE_SN&gt; --watch-sec 300</code></pre>
+  <p>Record only device display name, device type, quota arrival, accepted cycle key status, accepted key name, and whether the value was displayed by <code>/api/devices/statuses</code>.</p>
+
+  <h2>Implementation readiness</h2>
+  <table>
+    <thead><tr><th>Device type</th><th>Ready for code implementation?</th><th>Reason</th></tr></thead>
+    <tbody>
+      <tr><td>DELTA_PRO3</td><td class="ok">Yes</td><td>Named <code>cycles</code> key confirmed and already implemented</td></tr>
+      <tr><td>DELTA_3_PLUS</td><td class="no">No</td><td>No named cycle key confirmed</td></tr>
+      <tr><td>DELTA_3_MAX_PLUS</td><td class="no">No</td><td>Quota was observed but no accepted cycle key confirmed</td></tr>
+      <tr><td>RIVER_2</td><td class="no">No</td><td>Device offline during probe</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Operational note</h2>
+  <p>The DELTA 3 series may still expose the cycle count through private MQTT protobuf fields, but those fields must remain investigation-only until a reliable mapping is established. The current table intentionally prefers missing data over a plausible but unverified number.</p>
+</main>
+</body>
+</html>

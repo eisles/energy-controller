@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EcoFlow cycle count source matrix implementation plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.65; margin: 32px; color: #111827; background: #f8fafc; }
+    main { max-width: 1040px; margin: 0 auto; background: #fff; border: 1px solid #dbe3ef; border-radius: 8px; padding: 28px; }
+    h1, h2, h3 { line-height: 1.25; }
+    h1 { font-size: 28px; margin-top: 0; }
+    h2 { border-top: 1px solid #e5e7eb; padding-top: 20px; margin-top: 28px; }
+    table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+    th, td { border: 1px solid #d1d5db; padding: 8px 10px; vertical-align: top; }
+    th { background: #eef2f7; text-align: left; }
+    code { background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+    pre { background: #111827; color: #f9fafb; padding: 14px; overflow-x: auto; border-radius: 6px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>EcoFlow cycle count source matrix implementation plan</h1>
+  <p>作成日時: 2026-06-13 13:27:25 JST</p>
+
+  <h2>Goal</h2>
+  <p>DELTA 3 Plus / DELTA 3 Max Plus / DELTA 3 Plus 2 のサイクル数が画面で <code>-</code> のままになっているため、機種ごとにどの read-only source からサイクル数を取得できるかを整理した対応表を作成する。</p>
+  <p>この対応表は、次に全機種対応を実装するときの判断材料にする。推測値や未命名 protobuf field をサイクル数として採用しない。</p>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li>この計画では実機 write 制御を追加しない。</li>
+    <li>この計画では DELTA 3 Plus 系のサイクル数表示実装を追加しない。</li>
+    <li>シリアル番号、API key、secret、メールアドレス、password をドキュメントへ記載しない。</li>
+    <li>private MQTT の未命名 protobuf field を根拠なしに cycle と断定しない。</li>
+  </ul>
+
+  <h2>Current state</h2>
+  <table>
+    <thead>
+      <tr><th>Device</th><th>Device type</th><th>Current UI/API cycle status</th><th>Developer MQTT quota probe</th><th>Private MQTT status</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>DELTA Pro 3</td><td>DELTA_PRO3</td><td>取得済み。Developer MQTT quota 由来</td><td><code>cycles</code> key で取得済み</td><td>Cloud status が主</td></tr>
+      <tr><td>DELTA 3 Plus</td><td>DELTA_3_PLUS</td><td>未取得</td><td>短時間 probe では quota 未受信</td><td>status telemetry は取得済み。ただし cycle の名前付き field は未確認</td></tr>
+      <tr><td>DELTA 3 Max Plus</td><td>DELTA_3_MAX_PLUS</td><td>未取得</td><td>quota は来るが cycle key 未検出</td><td>status telemetry は取得済み。ただし cycle の名前付き field は未確認</td></tr>
+      <tr><td>DELTA 3 Plus 2</td><td>DELTA_3_PLUS</td><td>未取得</td><td>短時間 probe では quota 未受信</td><td>status telemetry は取得済み。ただし cycle の名前付き field は未確認</td></tr>
+      <tr><td>RIVER 2</td><td>RIVER_2</td><td>未取得</td><td>電源OFF想定。quota 未受信</td><td>status timeout</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Data/API contracts</h2>
+  <h3>Developer MQTT quota</h3>
+  <ul>
+    <li>Source: EcoFlow official Developer MQTT certification and <code>/open/{certificateAccount}/{deviceSN}/quota</code></li>
+    <li>Current accepted cycle keys: <code>cycles</code>, <code>bmsCycles</code>, <code>bmsBattCycles</code>, <code>bms_bmsStatus.cycles</code>, <code>hs_yj751_bms_slave_addr.1.cycles</code></li>
+    <li>Only named keys are acceptable.</li>
+    <li>If quota arrives without cycle key, record it as <code>quota-received-no-cycle-key</code>.</li>
+    <li>If quota does not arrive within probe timeout, record it as <code>quota-timeout</code>.</li>
+  </ul>
+  <h3>Private MQTT status</h3>
+  <ul>
+    <li>Source: EcoFlow private MQTT protobuf status telemetry.</li>
+    <li>Current status endpoint can expose decoded field diagnostics for DELTA 3 series.</li>
+    <li>Unknown numeric fields must be listed as <code>candidate/unverified</code> only when there is explicit evidence.</li>
+    <li>A field can become accepted only after known public mapping, repeated app-side observation, or named Developer MQTT quota availability.</li>
+  </ul>
+
+  <h2>Files likely to change</h2>
+  <ul>
+    <li><code>docs/20260613-132725-ecoflow-cycle-count-source-matrix.md</code></li>
+    <li><code>docs/20260613-132725-ecoflow-cycle-count-source-matrix.html</code></li>
+  </ul>
+  <p>No backend/frontend code change is planned for this step.</p>
+
+  <h2>Implementation steps</h2>
+  <ol>
+    <li>Create the compatibility matrix document in Markdown.</li>
+    <li>Include current device coverage table, evidence/probe result table, source acceptance rule, per-device next action, and implementation guardrails.</li>
+    <li>Render the same content as standalone HTML.</li>
+    <li>Keep all identifiers generic: device names and device types are allowed; serial numbers and credentials are not.</li>
+  </ol>
+
+  <h2>Safety boundaries</h2>
+  <ul>
+    <li>Read-only only.</li>
+    <li>No real-device write.</li>
+    <li>No control behavior changes.</li>
+    <li>No credentials or serial numbers in docs.</li>
+    <li>Do not treat uncertain private MQTT fields as production cycle count.</li>
+  </ul>
+
+  <h2>Review points</h2>
+  <ul>
+    <li>The plan and matrix must separate confirmed data from unverified candidates.</li>
+    <li>The matrix must not leak secrets or serial numbers.</li>
+    <li>The matrix must not imply DELTA 3 Plus cycle count is implemented.</li>
+    <li>The matrix must provide a clear next step for each unsupported device.</li>
+  </ul>
+
+  <h2>Verification commands</h2>
+  <pre><code>rtk git status --short --untracked-files=all
+rtk sed -n '1,220p' docs/20260613-132725-ecoflow-cycle-count-source-matrix-plan.md
+rtk sed -n '1,260p' docs/20260613-132725-ecoflow-cycle-count-source-matrix.md
+rtk codex review --uncommitted</code></pre>
+  <p>No Go or frontend build is required because this step only adds documentation.</p>
+
+  <h2>Rollback notes</h2>
+  <p>The change is documentation-only. Rollback is removing the added matrix Markdown/HTML files and the plan files.</p>
+</main>
+</body>
+</html>
