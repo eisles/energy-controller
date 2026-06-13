@@ -13,6 +13,9 @@ func TestCycleStatusFromQuotaPayloadReadsNamedCycleKeys(t *testing.T) {
 	if status.QuotaKeyCount != 2 {
 		t.Fatalf("QuotaKeyCount = %d, want 2", status.QuotaKeyCount)
 	}
+	if len(status.CycleCandidates) != 1 || status.CycleCandidates[0].Key != "cycles" {
+		t.Fatalf("CycleCandidates = %+v, want cycles candidate", status.CycleCandidates)
+	}
 }
 
 func TestCycleStatusFromQuotaPayloadReadsNestedCycleKeys(t *testing.T) {
@@ -42,6 +45,32 @@ func TestCycleStatusFromQuotaPayloadKeepsMissingCycleNil(t *testing.T) {
 	}
 	if status.CycleCount != nil || status.CycleCountSource != "" || status.Key != "" {
 		t.Fatalf("status = %+v, want no cycle count", status)
+	}
+}
+
+func TestCycleStatusFromQuotaPayloadReportsCycSohAsCandidateOnly(t *testing.T) {
+	status, err := CycleStatusFromQuotaPayload([]byte(`{"params":{"bms_bmsStatus":{"cycSoh":98},"bms_slave":{"cycSoh":"7"},"soc":88}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.CycleCount != nil || status.CycleCountSource != "" || status.Key != "" {
+		t.Fatalf("status = %+v, want cycSoh only as candidate", status)
+	}
+	if len(status.CycleCandidates) != 2 {
+		t.Fatalf("CycleCandidates = %+v, want two cycSoh candidates", status.CycleCandidates)
+	}
+	if status.CycleCandidates[0].Key != "bms_bmsStatus.cycSoh" || status.CycleCandidates[1].Key != "bms_slave.cycSoh" {
+		t.Fatalf("CycleCandidates = %+v, want flattened cycSoh paths", status.CycleCandidates)
+	}
+}
+
+func TestCycleStatusFromQuotaPayloadReportsNestedNamedCycleCandidate(t *testing.T) {
+	status, err := CycleStatusFromQuotaPayload([]byte(`{"params":{"bms_bmsStatus":{"cycles":34}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.CycleCandidates) != 1 || status.CycleCandidates[0].Key != "bms_bmsStatus.cycles" {
+		t.Fatalf("CycleCandidates = %+v, want nested named cycle candidate", status.CycleCandidates)
 	}
 }
 

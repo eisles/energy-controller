@@ -24,28 +24,30 @@ type options struct {
 }
 
 type output struct {
-	Mode             string         `json:"mode"`
-	CycleCount       *int           `json:"cycleCount,omitempty"`
-	CycleCountSource string         `json:"cycleCountSource,omitempty"`
-	Key              string         `json:"key,omitempty"`
-	QuotaKeyCount    int            `json:"quotaKeyCount"`
-	Write            map[string]any `json:"write"`
+	Mode             string                            `json:"mode"`
+	CycleCount       *int                              `json:"cycleCount,omitempty"`
+	CycleCountSource string                            `json:"cycleCountSource,omitempty"`
+	Key              string                            `json:"key,omitempty"`
+	QuotaKeyCount    int                               `json:"quotaKeyCount"`
+	CycleCandidates  []ecoflowdeveloper.CycleCandidate `json:"cycleCandidates,omitempty"`
+	Write            map[string]any                    `json:"write"`
 }
 
 type watchOutput struct {
-	Mode              string         `json:"mode"`
-	Event             string         `json:"event"`
-	TopicKind         string         `json:"topicKind,omitempty"`
-	PayloadBytes      int            `json:"payloadBytes,omitempty"`
-	MessageCount      *int           `json:"messageCount,omitempty"`
-	QuotaMessageCount *int           `json:"quotaMessageCount,omitempty"`
-	CycleCount        *int           `json:"cycleCount,omitempty"`
-	CycleCountSource  string         `json:"cycleCountSource,omitempty"`
-	Key               string         `json:"key,omitempty"`
-	QuotaKeyCount     int            `json:"quotaKeyCount,omitempty"`
-	KeyNames          []string       `json:"keyNames,omitempty"`
-	ParseError        string         `json:"parseError,omitempty"`
-	Write             map[string]any `json:"write"`
+	Mode              string                            `json:"mode"`
+	Event             string                            `json:"event"`
+	TopicKind         string                            `json:"topicKind,omitempty"`
+	PayloadBytes      int                               `json:"payloadBytes,omitempty"`
+	MessageCount      *int                              `json:"messageCount,omitempty"`
+	QuotaMessageCount *int                              `json:"quotaMessageCount,omitempty"`
+	CycleCount        *int                              `json:"cycleCount,omitempty"`
+	CycleCountSource  string                            `json:"cycleCountSource,omitempty"`
+	Key               string                            `json:"key,omitempty"`
+	QuotaKeyCount     int                               `json:"quotaKeyCount,omitempty"`
+	CycleCandidates   []ecoflowdeveloper.CycleCandidate `json:"cycleCandidates,omitempty"`
+	KeyNames          []string                          `json:"keyNames,omitempty"`
+	ParseError        string                            `json:"parseError,omitempty"`
+	Write             map[string]any                    `json:"write"`
 }
 
 func main() {
@@ -75,6 +77,7 @@ func run(ctx context.Context, args []string, getenv envGetter, out io.Writer) er
 		CycleCountSource: status.CycleCountSource,
 		Key:              status.Key,
 		QuotaKeyCount:    status.QuotaKeyCount,
+		CycleCandidates:  status.CycleCandidates,
 		Write: map[string]any{
 			"wouldSend": false,
 			"sent":      false,
@@ -178,6 +181,7 @@ func watchQuota(ctx context.Context, client *ecoflowdeveloper.Client, duration t
 			CycleCountSource: msg.CycleStatus.CycleCountSource,
 			Key:              msg.CycleStatus.Key,
 			QuotaKeyCount:    msg.CycleStatus.QuotaKeyCount,
+			CycleCandidates:  msg.CycleStatus.CycleCandidates,
 			KeyNames:         msg.KeyNames,
 			ParseError:       msg.ParseError,
 		})

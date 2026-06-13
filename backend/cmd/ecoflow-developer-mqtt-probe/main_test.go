@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/eisles/energy-controller/backend/internal/ecoflowdeveloper"
 )
 
 func TestBuildConfigUsesReadOnlyEnvAndExplicitSN(t *testing.T) {
@@ -31,5 +35,32 @@ func TestBuildConfigUsesReadOnlyEnvAndExplicitSN(t *testing.T) {
 	}
 	if cfg.Timeout != 30*time.Second {
 		t.Fatalf("Timeout = %s, want 30s", cfg.Timeout)
+	}
+}
+
+func TestWriteJSONIncludesCycleCandidates(t *testing.T) {
+	var buf bytes.Buffer
+	err := writeJSON(&buf, output{
+		Mode:          "read-only",
+		QuotaKeyCount: 2,
+		CycleCandidates: []ecoflowdeveloper.CycleCandidate{
+			{Key: "bms_bmsStatus.cycSoh", Value: 98},
+		},
+		Write: readOnlyWriteState("test"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	candidates, ok := decoded["cycleCandidates"].([]any)
+	if !ok || len(candidates) != 1 {
+		t.Fatalf("cycleCandidates = %#v, want one candidate", decoded["cycleCandidates"])
+	}
+	first, ok := candidates[0].(map[string]any)
+	if !ok || first["key"] != "bms_bmsStatus.cycSoh" {
+		t.Fatalf("first candidate = %#v, want cycSoh key", candidates[0])
 	}
 }

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EcoFlow cycle candidate probe implementation plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.65; margin: 32px; color: #111827; background: #f8fafc; }
+    main { max-width: 1080px; margin: 0 auto; background: #fff; border: 1px solid #dbe3ef; border-radius: 8px; padding: 28px; }
+    h1, h2, h3 { line-height: 1.25; }
+    h1 { font-size: 28px; margin-top: 0; }
+    h2 { border-top: 1px solid #e5e7eb; padding-top: 20px; margin-top: 28px; }
+    code { background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+    pre { background: #111827; color: #f9fafb; padding: 14px; overflow-x: auto; border-radius: 6px; }
+    li { margin: 4px 0; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>EcoFlow cycle candidate probe implementation plan</h1>
+  <p>作成日時: 2026-06-13 14:35:22 JST</p>
+
+  <h2>Goal</h2>
+  <p>DELTA 3 Plus / DELTA 3 Max Plus / DELTA 3 Plus 2 のサイクル数候補を、Developer MQTT quota の read-only probe で安全に観測できるようにする。</p>
+  <p><code>cycSoh</code> 系の key は、コミュニティ実装では cycle / SOH 系の診断値として扱われている可能性がある。ただし現時点では、このリポジトリでサイクル数として採用できるほどの実機検証がない。そのため、今回の実装では <code>cycleCount</code> には採用せず、<code>cycleCandidates</code> として probe 出力にだけ表示する。</p>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li>実機 write 制御は追加しない。</li>
+    <li>DELTA 3 Plus 系の画面/API <code>cycleCount</code> 表示はまだ有効化しない。</li>
+    <li><code>cycSoh</code> をサイクル数として確定採用しない。</li>
+    <li>private MQTT の未命名 protobuf field をサイクル数として採用しない。</li>
+    <li>raw payload、シリアル番号、Access Key、Secret Key、メールアドレス、パスワード、token は保存・表示しない。</li>
+  </ul>
+
+  <h2>Current State</h2>
+  <ul>
+    <li><code>backend/internal/ecoflowdeveloper/quota.go</code> は確定サイクル key として <code>cycles</code>, <code>bmsCycles</code>, <code>bmsBattCycles</code>, <code>bms_bmsStatus.cycles</code>, <code>hs_yj751_bms_slave_addr.1.cycles</code> だけを採用している。</li>
+    <li><code>backend/internal/api/delta3_status_handler.go</code> は Developer MQTT サイクル補完を <code>ecoflow_delta_pro3</code> に限定している。</li>
+    <li><code>backend/cmd/ecoflow-developer-mqtt-probe</code> の watch mode は quota key 名を表示できるが、cycle-like key と値の候補を分類して表示しない。</li>
+    <li>直近の対応表では DELTA 3 系は「未対応、次に長めの quota watch で key を確認」と整理している。</li>
+  </ul>
+
+  <h2>Data/API Contract</h2>
+  <h3>Accepted cycle count</h3>
+  <p>既存どおり、以下の名前付き key だけが <code>cycleCount</code> として採用される。</p>
+  <ul>
+    <li><code>cycles</code></li>
+    <li><code>bmsCycles</code></li>
+    <li><code>bmsBattCycles</code></li>
+    <li><code>bms_bmsStatus.cycles</code></li>
+    <li><code>hs_yj751_bms_slave_addr.1.cycles</code></li>
+  </ul>
+  <h3>Candidate cycle-like values</h3>
+  <p>今回追加する <code>cycleCandidates</code> は調査用の read-only 出力であり、制御判断や UI の正式サイクル数には使わない。</p>
+  <ul>
+    <li>quota payload の直下、<code>params</code>、<code>param</code> を対象にする。</li>
+    <li>nested object は <code>a.b.c</code> の dot path に flatten する。</li>
+    <li>key path の最終 segment または full path が <code>cycSoh</code>, <code>cycleSoh</code>, <code>cycles</code>, <code>bmsCycles</code>, <code>bmsBattCycles</code>, <code>bms_bmsStatus.cycles</code>, <code>hs_yj751_bms_slave_addr.1.cycles</code> に該当するものを候補にする。</li>
+    <li>値は整数・小数・文字列をそのまま JSON 表示できる範囲で保持する。</li>
+    <li>object / array は出力しない。</li>
+    <li>候補数が多い場合は上限を設ける。</li>
+  </ul>
+  <pre><code>{
+  "cycleCount": null,
+  "cycleCandidates": [
+    {"key": "bms_bmsStatus.cycSoh", "value": 98},
+    {"key": "bms_slave.cycSoh", "value": 100}
+  ]
+}</code></pre>
+
+  <h2>Files Likely To Change</h2>
+  <ul>
+    <li><code>backend/internal/ecoflowdeveloper/quota.go</code></li>
+    <li><code>backend/internal/ecoflowdeveloper/quota_test.go</code></li>
+    <li><code>backend/cmd/ecoflow-developer-mqtt-probe/main.go</code></li>
+  </ul>
+
+  <h2>Safety Boundaries</h2>
+  <ul>
+    <li>read-only Developer MQTT subscribe のみ。</li>
+    <li><code>cycleCandidates</code> は調査出力であり、<code>cycleCount</code> には反映しない。</li>
+    <li>API / UI / 制御ロジックには正式値として流さない。</li>
+    <li>raw payload と secrets は出さない。</li>
+    <li>実機 write topic や REST SET は使わない。</li>
+  </ul>
+
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li><code>ecoflowdeveloper</code> adapter に cycle-like candidate 抽出用の型と helper を追加する。</li>
+    <li><code>CycleStatusFromQuotaPayload</code> は既存の確定 <code>CycleCount</code> 挙動を維持しつつ、候補一覧を <code>CycleStatus</code> に持たせる。</li>
+    <li><code>QuotaMessageFromMQTT</code> で watch message に candidate 情報を含める。</li>
+    <li><code>ecoflow-developer-mqtt-probe</code> の watch mode の JSON 出力に <code>cycleCandidates</code> を追加する。通常 mode も確定サイクル数が取得できた場合は同じ field を出せるようにするが、確定サイクル数なしの timeout 挙動は既存どおり維持する。</li>
+    <li>単体テストを追加する。</li>
+    <li>実機の長時間 watch は今回のコード変更後の運用確認として実施できるが、結果をドキュメントへ保存する場合も secrets/SN は記載しない。</li>
+  </ol>
+
+  <h2>Review Points</h2>
+  <ul>
+    <li><code>cycSoh</code> を正式サイクル数として扱っていないこと。</li>
+    <li>既存 DELTA Pro 3 の <code>cycles</code> 取得が壊れていないこと。</li>
+    <li>候補抽出が raw payload や secrets を出さないこと。</li>
+    <li><code>cycleCandidates</code> が probe 出力に限定され、制御判断に入っていないこと。</li>
+  </ul>
+
+  <h2>Verification Commands</h2>
+  <pre><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./internal/ecoflowdeveloper ./cmd/ecoflow-developer-mqtt-probe
+rtk codex review --uncommitted</code></pre>
+  <p>必要に応じて read-only 実機確認:</p>
+  <pre><code>cd backend
+GOCACHE=$PWD/.gocache rtk go run ./cmd/ecoflow-developer-mqtt-probe --sn '&lt;redacted&gt;' --watch-sec 120</code></pre>
+
+  <h2>Rollback Notes</h2>
+  <p>この変更は read-only probe 出力の拡張だけなので、問題があれば <code>cycleCandidates</code> の型・helper・CLI 出力追加を戻せば既存の <code>cycleCount</code> 採用挙動に戻せる。</p>
+</main>
+</body>
+</html>

@@ -14,6 +14,8 @@ import (
 
 const CycleCountSource = "ecoflow_developer_mqtt_quota"
 
+const maxCycleCandidates = 20
+
 var CycleCountKeys = []string{
 	"cycles",
 	"bmsCycles",
@@ -22,11 +24,27 @@ var CycleCountKeys = []string{
 	"hs_yj751_bms_slave_addr.1.cycles",
 }
 
+var cycleCandidateKeys = map[string]struct{}{
+	"cycles":                           {},
+	"bmscycles":                        {},
+	"bmsbattcycles":                    {},
+	"bms_bmsstatus.cycles":             {},
+	"hs_yj751_bms_slave_addr.1.cycles": {},
+	"cycsoh":                           {},
+	"cyclesoh":                         {},
+}
+
+type CycleCandidate struct {
+	Key   string `json:"key"`
+	Value any    `json:"value"`
+}
+
 type CycleStatus struct {
 	CycleCount       *int
 	CycleCountSource string
 	Key              string
 	QuotaKeyCount    int
+	CycleCandidates  []CycleCandidate
 }
 
 type QuotaMessage struct {
@@ -67,7 +85,10 @@ func CycleStatusFromQuotaPayload(raw []byte) (CycleStatus, error) {
 		return CycleStatus{}, fmt.Errorf("decode EcoFlow Developer MQTT quota payload: %w", err)
 	}
 	quotas := quotaMapFromPayload(payload)
-	status := CycleStatus{QuotaKeyCount: len(quotas)}
+	status := CycleStatus{
+		QuotaKeyCount:   len(quotas),
+		CycleCandidates: cycleCandidatesFromQuota(quotas),
+	}
 	for _, key := range CycleCountKeys {
 		rawValue, ok := quotaValue(quotas, key)
 		if !ok {
@@ -108,6 +129,81 @@ func quotaMapFromPayload(payload map[string]any) map[string]any {
 		}
 	}
 	return payload
+}
+
+func cycleCandidatesFromQuota(quotas map[string]any) []CycleCandidate {
+	flattened := make(map[string]any)
+	flattenQuotaValues("", quotas, flattened)
+	keys := make([]string, 0, len(flattened))
+	for key := range flattened {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	candidates := make([]CycleCandidate, 0)
+	for _, key := range keys {
+		if len(candidates) >= maxCycleCandidates {
+			break
+		}
+		if !isCycleCandidateKey(key) {
+			continue
+		}
+		value, ok := candidateScalar(flattened[key])
+		if !ok {
+			continue
+		}
+		candidates = append(candidates, CycleCandidate{Key: key, Value: value})
+	}
+	return candidates
+}
+
+func flattenQuotaValues(prefix string, value any, out map[string]any) {
+	object, ok := value.(map[string]any)
+	if !ok {
+		if prefix != "" {
+			out[prefix] = value
+		}
+		return
+	}
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		next := key
+		if prefix != "" {
+			next = prefix + "." + key
+		}
+		flattenQuotaValues(next, object[key], out)
+	}
+}
+
+func isCycleCandidateKey(key string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	if _, ok := cycleCandidateKeys[normalized]; ok {
+		return true
+	}
+	segments := strings.Split(normalized, ".")
+	last := segments[len(segments)-1]
+	_, ok := cycleCandidateKeys[last]
+	return ok
+}
+
+func candidateScalar(value any) (any, bool) {
+	switch typed := value.(type) {
+	case json.Number:
+		return typed, true
+	case string:
+		return typed, true
+	case float64:
+		return typed, true
+	case int:
+		return typed, true
+	case int64:
+		return typed, true
+	default:
+		return nil, false
+	}
 }
 
 func quotaValue(quotas map[string]any, key string) (any, bool) {
