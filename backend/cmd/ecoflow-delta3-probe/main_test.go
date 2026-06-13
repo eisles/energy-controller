@@ -207,6 +207,84 @@ func TestRunOfflineFixtureCanInspectFields(t *testing.T) {
 	}
 }
 
+func TestRunOfflineFixtureCanInspectCycleCandidatesWithoutFieldsOutput(t *testing.T) {
+	payload := privateTelemetryFixturePayload(
+		testIntField(8, 30),
+		testIntField(888, 57),
+	)
+	file, err := os.CreateTemp(t.TempDir(), "fixture-*.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err = run(context.Background(), []string{"--sn", "SN123", "--device-type", "DELTA_3", "--offline-fixture", file.Name(), "--inspect-cycle-candidates"}, emptyEnv, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got output
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Fields) != 0 {
+		t.Fatalf("fields = %#v, want omitted fields without --inspect-fields", got.Fields)
+	}
+	if len(got.CycleFieldCandidates) != 1 {
+		t.Fatalf("cycleFieldCandidates = %#v, want one candidate", got.CycleFieldCandidates)
+	}
+	candidate := got.CycleFieldCandidates[0]
+	if candidate.CmdFunc != 254 || candidate.CmdID != 21 || candidate.Field != 888 || candidate.Value != 57 {
+		t.Fatalf("candidate = %#v, want field 888 value 57", candidate)
+	}
+}
+
+func privateTelemetryFixturePayload(pdataFields ...[]byte) []byte {
+	var pdata []byte
+	for _, field := range pdataFields {
+		pdata = append(pdata, field...)
+	}
+	header := []byte{}
+	header = append(header, testBytesField(1, pdata)...)
+	header = append(header, testIntField(2, 2)...)
+	header = append(header, testIntField(8, 254)...)
+	header = append(header, testIntField(9, 21)...)
+	header = append(header, testIntField(14, 1)...)
+	return testBytesField(1, header)
+}
+
+func testIntField(field int, value int) []byte {
+	out := testEncodeTag(field, 0)
+	return append(out, testEncodeVarint(uint64(value))...)
+}
+
+func testBytesField(field int, value []byte) []byte {
+	out := testEncodeTag(field, 2)
+	out = append(out, testEncodeVarint(uint64(len(value)))...)
+	return append(out, value...)
+}
+
+func testEncodeTag(field int, wire int) []byte {
+	return testEncodeVarint(uint64(field<<3 | wire))
+}
+
+func testEncodeVarint(value uint64) []byte {
+	out := []byte{}
+	for {
+		b := byte(value & 0x7f)
+		value >>= 7
+		if value != 0 {
+			out = append(out, b|0x80)
+			continue
+		}
+		return append(out, b)
+	}
+}
+
 func TestSaveRawMessagesWritesPayloadsWithoutTopicSecretsInFilename(t *testing.T) {
 	dir := t.TempDir()
 	files, err := saveRawMessages(dir, []ecoflowprivate.MQTTMessage{
@@ -228,6 +306,22 @@ func TestSaveRawMessagesWritesPayloadsWithoutTopicSecretsInFilename(t *testing.T
 	}
 	if !bytes.Equal(raw, []byte{4, 5}) {
 		t.Fatalf("raw = %v, want [4 5]", raw)
+	}
+}
+
+func TestSaveRawMessagesForSampleIncludesSampleIndex(t *testing.T) {
+	dir := t.TempDir()
+	files, err := saveRawMessagesForSample(dir, []ecoflowprivate.MQTTMessage{
+		{Topic: "/app/user-1/SN123/thing/property/get_reply", Payload: []byte{1}},
+	}, time.Date(2026, 5, 31, 8, 0, 0, 0, time.UTC), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("files = %#v, want 1", files)
+	}
+	if files[0].Sample != 2 || !strings.Contains(files[0].File, "sample02") || strings.Contains(files[0].File, "SN123") {
+		t.Fatalf("sample raw file metadata = %#v", files[0])
 	}
 }
 

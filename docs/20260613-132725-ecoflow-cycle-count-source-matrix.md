@@ -1,7 +1,7 @@
 # EcoFlow cycle count source matrix
 
 作成日時: 2026-06-13 13:27:25 JST
-更新日時: 2026-06-13 21:36 JST
+更新日時: 2026-06-14 07:14 JST
 
 ## Summary
 
@@ -31,6 +31,11 @@ EcoFlow 各機器のサイクル数取得元を、現時点の read-only API / D
 | 2026-06-13 live Developer MQTT quota watch for DELTA 3 Plus 2 | 60s watch completed with 0 messages | No Developer MQTT cycle source confirmed |
 | 2026-06-13 live Developer MQTT quota watch for RIVER 2 | 60s watch completed with 0 messages | Expected while device is powered off |
 | Private MQTT telemetry diagnostics for DELTA 3 series | decoded field summaries exist | Useful for investigation, but not enough to accept cycle count |
+| Private MQTT cycle field candidate probe | `ecoflow-delta3-probe --inspect-cycle-candidates` reports unknown varint fields in a plausible cycle-count range while excluding known SOC/power/mode fields | Investigation-only. A candidate field must be validated by repeated observations before it can become an accepted `cycleCount` source |
+| 2026-06-14 live private MQTT repeat probe for DELTA 3 Max Plus | 3 read-only samples reduced the latest candidate set to 10. Stable small candidates remained at `32/50 field 85 = 5` and `32/50 field 86 = 8`; other stable values looked like voltage/capacity-style telemetry | Still unaccepted. The remaining small values are plausible investigation targets, not confirmed cycle counts |
+| 2026-06-14 live private MQTT repeat probe for DELTA 3 Plus 2 | 3 read-only samples reduced the latest candidate set to 16 and summary to 12. Stable small candidate remained at `254/22 field 280 = 2`; other stable values looked like voltage/capacity-style telemetry | Still unaccepted. No field is reliable enough to display as cycle count |
+| 2026-06-14 live private MQTT repeat probe for DELTA 3 Plus | 3 read-only samples reduced the latest candidate set to 16 and summary to 12. Stable candidates included `254/21 field 427 = 79`, `254/21 field 428 = 7`, and `254/21 field 431 = 2`; several `32/50` fields changed during the short observation | Still unaccepted. `field 427 = 79` is the most interesting candidate, but it needs longer observation and cross-checking before mapping |
+| 2026-06-14 side-by-side private MQTT repeat probe for two DELTA 3 Plus devices | 10 read-only samples per device. `254/21 field 427` stayed `79` on DELTA 3 Plus and `0` on DELTA 3 Plus 2. Raw field inspection confirmed `field 427/428/431` exists on both devices, but Plus 2 reported `0/0/0`; both devices reported `254/22 field 294 = 2000` | `field 427` is not ready to map as a universal DELTA 3 Plus cycle count. It may be device-specific state/counter, or Plus 2 may need different operating conditions before the field becomes meaningful |
 
 ## Accepted source rules
 
@@ -104,3 +109,29 @@ Record only:
 ## Operational note
 
 The DELTA 3 series may still expose the cycle count through private MQTT protobuf fields, but those fields must remain investigation-only until a reliable mapping is established. The current table intentionally prefers missing data over a plausible but unverified number.
+
+## Private MQTT cycle candidate probe
+
+For DELTA 3 Plus / DELTA 3 Max Plus investigations, run the read-only private probe:
+
+```bash
+cd backend
+go run ./cmd/ecoflow-delta3-probe --sn <DEVICE_SN> --device-type <DEVICE_TYPE> --inspect-cycle-candidates --timeout 60s
+```
+
+For stability checks, repeat the read-only probe:
+
+```bash
+cd backend
+go run ./cmd/ecoflow-delta3-probe --sn <DEVICE_SN> --device-type <DEVICE_TYPE> --inspect-cycle-candidates --inspect-cycle-candidates-repeat 3 --inspect-cycle-candidates-interval 3s --timeout 60s
+```
+
+The `cycleFieldCandidates` output intentionally includes only:
+
+- protobuf varint fields
+- unknown fields not already decoded as SOC, AC input/output, PV input, mode, reserve, charge limit, or AC output status
+- integer values between 2 and 5000
+
+The `cycleFieldSummary` output separates stable candidates from values that change during repeated read-only samples. Stable values are still not accepted automatically: voltage, capacity, mode, and configuration fields can also be stable.
+
+The output must not be treated as the displayed cycle count until the field is validated. Validation should compare the same field across longer repeated observations, device activity, charge/discharge history, and app/device history, then update this matrix before adding a device-type-specific mapping.

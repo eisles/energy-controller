@@ -40,24 +40,30 @@ type options struct {
 	energyBackupStartSocSet bool
 	rawOutputDir            string
 	inspectFields           bool
+	inspectCycleCandidates  bool
+	cycleCandidateRepeats   int
+	cycleCandidateInterval  time.Duration
 	execute                 bool
 	allowPrivateAPIWrite    bool
 	allowAutoControlOverlap bool
 }
 
 type output struct {
-	Mode   string                         `json:"mode"`
-	Status ecoflowprivate.Status          `json:"status"`
-	Write  map[string]interface{}         `json:"write"`
-	Raw    []rawCaptureFile               `json:"raw,omitempty"`
-	Fields []ecoflowprivate.SnapshotField `json:"fields,omitempty"`
+	Mode                 string                                          `json:"mode"`
+	Status               ecoflowprivate.Status                           `json:"status"`
+	Write                map[string]interface{}                          `json:"write"`
+	Raw                  []rawCaptureFile                                `json:"raw,omitempty"`
+	Fields               []ecoflowprivate.SnapshotField                  `json:"fields,omitempty"`
+	CycleFieldCandidates []ecoflowprivate.CycleFieldCandidate            `json:"cycleFieldCandidates,omitempty"`
+	CycleFieldSummary    []ecoflowprivate.CycleFieldCandidateObservation `json:"cycleFieldSummary,omitempty"`
 }
 
 type rawCaptureFile struct {
-	Index int    `json:"index"`
-	Kind  string `json:"kind"`
-	File  string `json:"file"`
-	Bytes int    `json:"bytes"`
+	Sample int    `json:"sample"`
+	Index  int    `json:"index"`
+	Kind   string `json:"kind"`
+	File   string `json:"file"`
+	Bytes  int    `json:"bytes"`
 }
 
 func main() {
@@ -84,44 +90,25 @@ func run(ctx context.Context, args []string, getenv envGetter, out io.Writer) er
 		if err != nil {
 			return err
 		}
-		fields, err := inspectRawFields(raw, opts.inspectFields)
+		fields, err := inspectRawFields(raw, opts.inspectFields || opts.inspectCycleCandidates)
 		if err != nil {
 			return err
 		}
-		return writeJSON(out, output{Mode: "offline-fixture", Status: status, Write: map[string]interface{}{"wouldSend": false, "sent": false, "reason": "offline fixture decode"}, Fields: fields})
+		return writeJSON(out, output{
+			Mode:                 "offline-fixture",
+			Status:               status,
+			Write:                map[string]interface{}{"wouldSend": false, "sent": false, "reason": "offline fixture decode"},
+			Fields:               outputFields(fields, opts.inspectFields),
+			CycleFieldCandidates: cycleFieldCandidates(fields, opts.inspectCycleCandidates),
+		})
 	}
 
 	if opts.hasWriteCandidate() {
 		return runWriteCandidate(ctx, opts, getenv, client, out)
 	}
 
-	if opts.rawOutputDir != "" || opts.inspectFields {
-		status, replies, err := client.ProbeRaw(ctx)
-		if err != nil {
-			return err
-		}
-		var rawFiles []rawCaptureFile
-		if opts.rawOutputDir != "" {
-			rawFiles, err = saveRawMessages(opts.rawOutputDir, replies, time.Now())
-			if err != nil {
-				return err
-			}
-		}
-		fields, err := inspectReplies(replies, opts.inspectFields)
-		if err != nil {
-			return err
-		}
-		reason := "read-only probe"
-		if opts.rawOutputDir != "" {
-			reason = "read-only probe; raw replies saved"
-		}
-		return writeJSON(out, output{
-			Mode:   "read-only",
-			Status: status,
-			Write:  map[string]interface{}{"wouldSend": false, "sent": false, "reason": reason},
-			Raw:    rawFiles,
-			Fields: fields,
-		})
+	if opts.rawOutputDir != "" || opts.inspectFields || opts.inspectCycleCandidates {
+		return runReadOnlyInspect(ctx, opts, client, out)
 	}
 
 	status, err := client.Probe(ctx)
@@ -129,6 +116,58 @@ func run(ctx context.Context, args []string, getenv envGetter, out io.Writer) er
 		return err
 	}
 	return writeJSON(out, output{Mode: "read-only", Status: status, Write: map[string]interface{}{"wouldSend": false, "sent": false, "reason": "read-only probe"}})
+}
+
+func runReadOnlyInspect(ctx context.Context, opts options, client *ecoflowprivate.Client, out io.Writer) error {
+	repeats := opts.cycleCandidateRepeats
+	if repeats < 1 || !opts.inspectCycleCandidates {
+		repeats = 1
+	}
+	var status ecoflowprivate.Status
+	var rawFiles []rawCaptureFile
+	fieldSamples := make([][]ecoflowprivate.SnapshotField, 0, repeats)
+	for i := 0; i < repeats; i++ {
+		if i > 0 && opts.cycleCandidateInterval > 0 {
+			timer := time.NewTimer(opts.cycleCandidateInterval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+		probedStatus, replies, err := client.ProbeRaw(ctx)
+		if err != nil {
+			return err
+		}
+		status = probedStatus
+		if opts.rawOutputDir != "" {
+			files, err := saveRawMessagesForSample(opts.rawOutputDir, replies, time.Now(), i)
+			if err != nil {
+				return err
+			}
+			rawFiles = append(rawFiles, files...)
+		}
+		fields, err := inspectReplies(replies, opts.inspectFields || opts.inspectCycleCandidates)
+		if err != nil {
+			return err
+		}
+		fieldSamples = append(fieldSamples, fields)
+	}
+	fields := latestFieldSample(fieldSamples)
+	reason := "read-only probe"
+	if opts.rawOutputDir != "" {
+		reason = "read-only probe; raw replies saved"
+	}
+	return writeJSON(out, output{
+		Mode:                 "read-only",
+		Status:               status,
+		Write:                map[string]interface{}{"wouldSend": false, "sent": false, "reason": reason, "cycleCandidateRepeats": repeats},
+		Raw:                  rawFiles,
+		Fields:               outputFields(fields, opts.inspectFields),
+		CycleFieldCandidates: cycleFieldCandidates(fields, opts.inspectCycleCandidates),
+		CycleFieldSummary:    cycleFieldSummary(fieldSamples, opts.inspectCycleCandidates && repeats > 1),
+	})
 }
 
 func runWriteCandidate(ctx context.Context, opts options, getenv envGetter, client *ecoflowprivate.Client, out io.Writer) error {
@@ -243,6 +282,9 @@ func parseOptions(args []string) (options, error) {
 	flags.IntVar(&opts.energyBackupStartSoc, "energy-backup-start-soc", 0, "required backup start SOC when --energy-backup-enabled is set")
 	flags.StringVar(&opts.rawOutputDir, "raw-output-dir", "", "optional directory for saving read-only raw MQTT reply payloads")
 	flags.BoolVar(&opts.inspectFields, "inspect-fields", false, "include generic protobuf field observations for read-only or offline-fixture payloads")
+	flags.BoolVar(&opts.inspectCycleCandidates, "inspect-cycle-candidates", false, "include investigation-only private MQTT protobuf cycle-count field candidates")
+	flags.IntVar(&opts.cycleCandidateRepeats, "inspect-cycle-candidates-repeat", 1, "read-only private MQTT probe repeats for cycle candidate stability checks")
+	flags.DurationVar(&opts.cycleCandidateInterval, "inspect-cycle-candidates-interval", 5*time.Second, "delay between repeated cycle candidate read-only probes")
 	flags.BoolVar(&opts.execute, "execute", false, "send one real private MQTT write command")
 	flags.BoolVar(&opts.allowPrivateAPIWrite, "allow-private-api-write", false, "required together with --execute for private MQTT write")
 	flags.BoolVar(&opts.allowAutoControlOverlap, "allow-auto-control-overlap", false, "allow one-shot EcoFlow private write while AUTO_CONTROL_ENABLED=true")
@@ -273,6 +315,14 @@ func parseOptions(args []string) (options, error) {
 }
 
 func saveRawMessages(dir string, replies []ecoflowprivate.MQTTMessage, now time.Time) ([]rawCaptureFile, error) {
+	return saveRawMessagesWithSample(dir, replies, now, -1)
+}
+
+func saveRawMessagesForSample(dir string, replies []ecoflowprivate.MQTTMessage, now time.Time, sample int) ([]rawCaptureFile, error) {
+	return saveRawMessagesWithSample(dir, replies, now, sample)
+}
+
+func saveRawMessagesWithSample(dir string, replies []ecoflowprivate.MQTTMessage, now time.Time, sample int) ([]rawCaptureFile, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -280,11 +330,15 @@ func saveRawMessages(dir string, replies []ecoflowprivate.MQTTMessage, now time.
 	files := make([]rawCaptureFile, 0, len(replies))
 	for index, reply := range replies {
 		kind := rawTopicKind(reply.Topic)
-		path := filepath.Join(dir, fmt.Sprintf("%s-%02d-%s.bin", prefix, index, kind))
+		name := fmt.Sprintf("%s-%02d-%s.bin", prefix, index, kind)
+		if sample >= 0 {
+			name = fmt.Sprintf("%s-sample%02d-%02d-%s.bin", prefix, sample, index, kind)
+		}
+		path := filepath.Join(dir, name)
 		if err := os.WriteFile(path, reply.Payload, 0o600); err != nil {
 			return nil, err
 		}
-		files = append(files, rawCaptureFile{Index: index, Kind: kind, File: path, Bytes: len(reply.Payload)})
+		files = append(files, rawCaptureFile{Sample: max(sample, 0), Index: index, Kind: kind, File: path, Bytes: len(reply.Payload)})
 	}
 	return files, nil
 }
@@ -309,6 +363,34 @@ func inspectRawFields(raw []byte, enabled bool) ([]ecoflowprivate.SnapshotField,
 		return nil, nil
 	}
 	return ecoflowprivate.InspectSnapshotFields(raw)
+}
+
+func outputFields(fields []ecoflowprivate.SnapshotField, enabled bool) []ecoflowprivate.SnapshotField {
+	if !enabled {
+		return nil
+	}
+	return fields
+}
+
+func cycleFieldCandidates(fields []ecoflowprivate.SnapshotField, enabled bool) []ecoflowprivate.CycleFieldCandidate {
+	if !enabled {
+		return nil
+	}
+	return ecoflowprivate.CycleFieldCandidatesFromFields(fields)
+}
+
+func cycleFieldSummary(samples [][]ecoflowprivate.SnapshotField, enabled bool) []ecoflowprivate.CycleFieldCandidateObservation {
+	if !enabled {
+		return nil
+	}
+	return ecoflowprivate.SummarizeCycleFieldCandidates(samples)
+}
+
+func latestFieldSample(samples [][]ecoflowprivate.SnapshotField) []ecoflowprivate.SnapshotField {
+	if len(samples) == 0 {
+		return nil
+	}
+	return samples[len(samples)-1]
 }
 
 func rawTopicKind(topic string) string {
