@@ -142,9 +142,20 @@ export type Delta3Status = {
   intelligentEnabled?: boolean | null;
   cycleCount?: number | null;
   cycleCountSource?: string;
+  cycleCountCandidate?: CycleCountCandidate | null;
   updatedAt?: string;
   lastError?: string | null;
   telemetryDiagnostics?: PrivateTelemetryDiagnostics | null;
+};
+
+export type CycleCountCandidate = {
+  value: number;
+  source: string;
+  cmdFunc: number;
+  cmdId: number;
+  field: number;
+  confidence: string;
+  reason: string;
 };
 
 export type PrivateTelemetryDiagnostics = {

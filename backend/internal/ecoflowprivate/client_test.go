@@ -273,6 +273,27 @@ func TestAppendTelemetryFieldSummariesTracksTotalWhenTruncated(t *testing.T) {
 	}
 }
 
+func TestAppendTelemetryFieldSummariesKeepsCycleCandidatesWhenTruncated(t *testing.T) {
+	fields := make([]SnapshotField, telemetryFieldSummaryLimit+1)
+	for i := range fields {
+		fields[i] = SnapshotField{MessageIndex: 0, CmdFunc: 254, CmdID: 21, Field: i + 1, Wire: wireVarint, Value: "1"}
+	}
+	fields[telemetryFieldSummaryLimit] = SnapshotField{MessageIndex: 0, CmdFunc: 254, CmdID: 21, Field: 427, Wire: wireVarint, Value: "79"}
+	var status Status
+
+	appendTelemetryFieldSummaries(&status, fields)
+
+	if !status.FieldSummaryTruncated {
+		t.Fatal("FieldSummaryTruncated = false, want true")
+	}
+	for _, candidate := range status.CycleFieldCandidates {
+		if candidate.CmdFunc == 254 && candidate.CmdID == 21 && candidate.Field == 427 && candidate.Value == 79 {
+			return
+		}
+	}
+	t.Fatalf("CycleFieldCandidates = %+v, want truncated 254/21/427 candidate", status.CycleFieldCandidates)
+}
+
 func TestAppendTelemetryFieldSummariesDoesNotInferCycleCountFromRawField(t *testing.T) {
 	var status Status
 

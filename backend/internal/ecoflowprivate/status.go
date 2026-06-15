@@ -30,6 +30,7 @@ type Status struct {
 	PCSWorkMode                      *int                    `json:"pcsWorkMode,omitempty"`
 	CycleCount                       *int                    `json:"cycleCount,omitempty"`
 	CycleCountSource                 string                  `json:"cycleCountSource,omitempty"`
+	CycleFieldCandidates             []CycleFieldCandidate   `json:"-"`
 	ReplyCount                       int                     `json:"replyCount"`
 	DecodedMessages                  int                     `json:"decodedMessages"`
 	UnsupportedMessages              int                     `json:"unsupportedMessages"`
@@ -133,6 +134,9 @@ func (s *Status) merge(other Status) {
 	if other.CycleCount != nil {
 		s.CycleCount = other.CycleCount
 		s.CycleCountSource = other.CycleCountSource
+	}
+	if len(other.CycleFieldCandidates) > 0 {
+		s.CycleFieldCandidates = append(s.CycleFieldCandidates, other.CycleFieldCandidates...)
 	}
 	s.ReplyCount += other.ReplyCount
 	s.InspectErrorCount += other.InspectErrorCount

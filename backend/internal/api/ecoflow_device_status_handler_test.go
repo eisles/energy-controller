@@ -88,6 +88,85 @@ func TestReadDelta3StatusMapsReadOnlyFields(t *testing.T) {
 	assertIntPtrResponse(t, "ACOutputProtectionChannel", response.ACOutputProtectionChannel, 2)
 }
 
+func TestReadDelta3StatusMapsDelta3PlusCycleCountCandidate(t *testing.T) {
+	soc := 82
+	response := readDelta3Status(context.Background(), validDelta3Config(), fakeDelta3Client{status: ecoflowprivate.Status{
+		DeviceType:    "DELTA_3_PLUS",
+		CMSBatterySoc: &soc,
+		FieldSummaries: []ecoflowprivate.TelemetryFieldSummary{
+			{MessageIndex: 0, CmdFunc: 254, CmdID: 21, Field: 427, Wire: 0, Value: "79"},
+			{MessageIndex: 0, CmdFunc: 254, CmdID: 22, Field: 280, Wire: 0, Value: "2"},
+		},
+	}}, nil)
+	if response.CycleCountCandidate == nil {
+		t.Fatal("CycleCountCandidate = nil, want DELTA 3 Plus private MQTT candidate")
+	}
+	candidate := response.CycleCountCandidate
+	if candidate.Value != 79 || candidate.Source != cycleCountCandidateSource || candidate.CmdFunc != 254 || candidate.CmdID != 21 || candidate.Field != 427 {
+		t.Fatalf("CycleCountCandidate = %+v, want 79 from 254/21/427", candidate)
+	}
+	if candidate.Confidence != "candidate" || !strings.Contains(candidate.Reason, "not accepted cycleCount") {
+		t.Fatalf("CycleCountCandidate metadata = %+v, want candidate confidence and non-formal reason", candidate)
+	}
+}
+
+func TestReadDelta3StatusMapsDelta3MaxPlusCycleCountCandidate(t *testing.T) {
+	soc := 82
+	response := readDelta3Status(context.Background(), validDelta3Config(), fakeDelta3Client{status: ecoflowprivate.Status{
+		DeviceType:    "DELTA_3_MAX_PLUS",
+		CMSBatterySoc: &soc,
+		FieldSummaries: []ecoflowprivate.TelemetryFieldSummary{
+			{MessageIndex: 0, CmdFunc: 32, CmdID: 50, Field: 86, Wire: 0, Value: "8"},
+			{MessageIndex: 0, CmdFunc: 32, CmdID: 50, Field: 85, Wire: 0, Value: "5"},
+		},
+	}}, nil)
+	if response.CycleCountCandidate == nil {
+		t.Fatal("CycleCountCandidate = nil, want DELTA 3 Max Plus private MQTT candidate")
+	}
+	candidate := response.CycleCountCandidate
+	if candidate.Value != 5 || candidate.CmdFunc != 32 || candidate.CmdID != 50 || candidate.Field != 85 {
+		t.Fatalf("CycleCountCandidate = %+v, want preferred 5 from 32/50/85", candidate)
+	}
+}
+
+func TestReadDelta3StatusMapsCycleCountCandidateFromUntruncatedCandidates(t *testing.T) {
+	soc := 82
+	response := readDelta3Status(context.Background(), validDelta3Config(), fakeDelta3Client{status: ecoflowprivate.Status{
+		DeviceType:    "DELTA_3_PLUS",
+		CMSBatterySoc: &soc,
+		FieldSummaries: []ecoflowprivate.TelemetryFieldSummary{
+			{MessageIndex: 0, CmdFunc: 254, CmdID: 21, Field: 7, Wire: 0, Value: "82"},
+		},
+		FieldCount:            120,
+		FieldSummaryTruncated: true,
+		CycleFieldCandidates: []ecoflowprivate.CycleFieldCandidate{
+			{MessageIndex: 0, CmdFunc: 254, CmdID: 21, Field: 427, Value: 79},
+		},
+	}}, nil)
+	if response.CycleCountCandidate == nil {
+		t.Fatal("CycleCountCandidate = nil, want candidate from untruncated private MQTT fields")
+	}
+	candidate := response.CycleCountCandidate
+	if candidate.Value != 79 || candidate.CmdFunc != 254 || candidate.CmdID != 21 || candidate.Field != 427 {
+		t.Fatalf("CycleCountCandidate = %+v, want 79 from untruncated 254/21/427 candidate", candidate)
+	}
+}
+
+func TestReadDelta3StatusDoesNotExposeCandidateWhenCycleCountIsKnown(t *testing.T) {
+	cycleCount := 412
+	response := readDelta3Status(context.Background(), validDelta3Config(), fakeDelta3Client{status: ecoflowprivate.Status{
+		DeviceType:       "DELTA_3_PLUS",
+		CycleCount:       &cycleCount,
+		CycleCountSource: "ecoflow_private_mqtt_named",
+		FieldSummaries: []ecoflowprivate.TelemetryFieldSummary{
+			{MessageIndex: 0, CmdFunc: 254, CmdID: 21, Field: 427, Wire: 0, Value: "79"},
+		},
+	}}, nil)
+	if response.CycleCountCandidate != nil {
+		t.Fatalf("CycleCountCandidate = %+v, want nil when formal CycleCount exists", response.CycleCountCandidate)
+	}
+}
+
 func TestDelta3StatusReaderCachesSuccessfulProbe(t *testing.T) {
 	calls := 0
 	now := time.Date(2026, 5, 24, 13, 0, 0, 0, time.FixedZone("JST", 9*60*60))

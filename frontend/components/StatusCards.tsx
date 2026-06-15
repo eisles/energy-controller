@@ -246,6 +246,7 @@ export function Delta3StatusCard({
                           <Detail label="実質W" value={formatDeviceNetFlow(flowState.netW)} />
                           <Detail label="AC充電上限" value={nullableWatt(device.status.acChargeLimitW)} />
                           <Detail label="サイクル数" value={cycleCountLabel(device.status)} />
+                          <Detail label="サイクル候補" value={cycleCountCandidateLabel(device.status)} />
                           <Detail label="容量" value={formatWhCapacity(device.capacityWh)} />
                           <Detail label="設定範囲" value={`${device.minChargeW}-${device.maxChargeW} W`} />
                         </div>
@@ -312,6 +313,7 @@ export function Delta3StatusCard({
               <Detail label="AC出力" value={nullablePositiveWatt(status.acOutW)} />
               <Detail label="AC充電上限" value={nullableWatt(status.acChargeLimitW)} />
               <Detail label="サイクル数" value={cycleCountLabel(status)} />
+              <Detail label="サイクル候補" value={cycleCountCandidateLabel(status)} />
               <Detail label="グリッドバイパス無効化" value={nullableOnOff(status.gridBypassDisabled)} />
               <Detail label="AC output" value={nullableOnOff(status.acOutputEnabled)} />
               {hasSplitACOutput(status) ? (
@@ -438,10 +440,20 @@ function cycleCountLabel(status: Delta3Status) {
   return source ? `${status.cycleCount} 回 / ${source}` : `${status.cycleCount} 回`;
 }
 
+function cycleCountCandidateLabel(status: Delta3Status) {
+  const candidate = status.cycleCountCandidate;
+  if (!candidate) {
+    return "-";
+  }
+  const source = cycleCountSourceLabel(candidate.source);
+  return `${candidate.value} 回候補 / ${source} ${candidate.cmdFunc}/${candidate.cmdId}/${candidate.field}`;
+}
+
 function cycleCountSourceLabel(value: string) {
   const labels: Record<string, string> = {
     ecoflow_cloud_quota: "Cloud quota",
-    ecoflow_developer_mqtt_quota: "Developer MQTT quota"
+    ecoflow_developer_mqtt_quota: "Developer MQTT quota",
+    ecoflow_private_mqtt_candidate: "private MQTT"
   };
   return labels[value] || value;
 }

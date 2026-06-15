@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>cycleCountCandidate 診断表示 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; margin: 40px; color: #111827; background: #f8fafc; }
+    main { max-width: 920px; margin: 0 auto; background: #fff; border: 1px solid #dbe3ef; border-radius: 8px; padding: 32px; }
+    h1 { margin-top: 0; font-size: 28px; }
+    h2 { margin-top: 28px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; font-size: 20px; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    pre { background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 6px; overflow-x: auto; }
+    li { margin: 4px 0; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>cycleCountCandidate 診断表示 実装計画</h1>
+
+  <h2>Goal</h2>
+  <p>private MQTT で観測できているサイクル数らしきフィールドを、正式な <code>cycleCount</code> とは分離した <code>cycleCountCandidate</code> として API と画面に読み取り専用表示する。</p>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li><code>cycleCountCandidate</code> を正式な <code>cycleCount</code> として採用しない。</li>
+    <li>制御判断、充放電優先度、料金最適化には使わない。</li>
+    <li>実機 write、EcoFlow 設定変更、追加の MQTT subscribe / command は行わない。</li>
+    <li>シリアル番号、認証情報、トークンをログや画面に追加しない。</li>
+  </ul>
+
+  <h2>Current State</h2>
+  <ul>
+    <li><code>Delta3StatusResponse</code> は正式値として <code>cycleCount</code> / <code>cycleCountSource</code> を返している。</li>
+    <li>private MQTT の生フィールド診断は <code>telemetryDiagnostics.fieldSummaries</code> として返している。</li>
+    <li>private MQTT のサイクル候補抽出ロジックは <code>ecoflowprivate.CycleFieldCandidatesFromFields</code> にある。</li>
+    <li>ただし UI では候補値が <code>-</code> のままで、どの候補フィールドを見ているか分かりにくい。</li>
+  </ul>
+
+  <h2>API Contract</h2>
+  <pre>{
+  "cycleCountCandidate": {
+    "value": 79,
+    "source": "ecoflow_private_mqtt_candidate",
+    "cmdFunc": 254,
+    "cmdId": 21,
+    "field": 427,
+    "confidence": "candidate",
+    "reason": "private MQTT candidate; not accepted cycleCount"
+  }
+}</pre>
+  <p>候補は <code>cycleCount</code> が未取得の機器だけに出す。正式取得できている場合は候補表示を出さない。</p>
+
+  <h2>Candidate Selection</h2>
+  <ul>
+    <li><code>DELTA_3_PLUS</code>: <code>254/21/427</code> を優先し、なければ <code>254/22/280</code></li>
+    <li><code>DELTA_3_MAX_PLUS</code>: <code>32/50/85</code> を優先し、なければ <code>32/50/86</code></li>
+    <li>値は <code>0 &lt; value &lt;= 5000</code> の整数だけを候補にする。</li>
+    <li>未知機種や未知フィールドは候補表示しない。</li>
+  </ul>
+
+  <h2>Frontend</h2>
+  <ul>
+    <li><code>Delta3Status</code> に <code>cycleCountCandidate</code> 型を追加する。</li>
+    <li>機器ステータス行に <code>サイクル候補</code> を追加する。</li>
+    <li>表示例: <code>79 回候補 / private MQTT 254/21/427</code></li>
+    <li>正式値ではないことが分かるように <code>候補</code> を含める。</li>
+  </ul>
+
+  <h2>Safety Boundaries</h2>
+  <ul>
+    <li>読み取り済み telemetry から候補を整形するだけで、実機 write は追加しない。</li>
+    <li>候補値を制御ロジックに渡さない。</li>
+    <li>候補値が見つからない場合は <code>-</code> 表示にする。</li>
+    <li>private MQTT のフィールド名は未確定扱いとし、正式サイクル数とは別フィールドで維持する。</li>
+  </ul>
+
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li><code>backend/internal/api/ecoflow_device_status_handler.go</code> に <code>CycleCountCandidateResponse</code> を追加する。</li>
+    <li>private MQTT status の <code>FieldSummaries</code> から候補を選ぶ helper を追加する。</li>
+    <li><code>mapDelta3Status</code> で正式 <code>CycleCount</code> がない場合だけ候補を設定する。</li>
+    <li>API unit test で DELTA 3 Plus / DELTA 3 Max Plus / 正式 cycleCount ありの場合を確認する。</li>
+    <li><code>frontend/lib/types.ts</code> に型を追加する。</li>
+    <li><code>frontend/components/StatusCards.tsx</code> に <code>サイクル候補</code> 表示と formatter を追加する。</li>
+  </ol>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./internal/api ./internal/ecoflowprivate</code></li>
+    <li><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./...</code></li>
+    <li><code>cd frontend &amp;&amp; rtk npm run build</code></li>
+    <li><code>rtk codex review --uncommitted</code></li>
+  </ul>
+
+  <h2>Rollback</h2>
+  <p>追加フィールドと UI 表示を戻せば既存の正式 <code>cycleCount</code> 表示に戻る。DB migration や実機設定変更はない。</p>
+</main>
+</body>
+</html>

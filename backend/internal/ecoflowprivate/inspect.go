@@ -148,10 +148,18 @@ func InspectSnapshotFields(raw []byte) ([]SnapshotField, error) {
 }
 
 func CycleFieldCandidatesFromFields(fields []SnapshotField) []CycleFieldCandidate {
+	return cycleFieldCandidatesFromFields(fields, maxCycleFieldCandidates)
+}
+
+func AllCycleFieldCandidatesFromFields(fields []SnapshotField) []CycleFieldCandidate {
+	return cycleFieldCandidatesFromFields(fields, 0)
+}
+
+func cycleFieldCandidatesFromFields(fields []SnapshotField, limit int) []CycleFieldCandidate {
 	candidates := make([]CycleFieldCandidate, 0)
 	seen := make(map[[5]int]struct{})
 	for _, field := range fields {
-		if len(candidates) >= maxCycleFieldCandidates {
+		if limit > 0 && len(candidates) >= limit {
 			break
 		}
 		if field.Wire != wireVarint || isKnownDecodedTelemetryField(field.CmdFunc, field.CmdID, field.Field) {

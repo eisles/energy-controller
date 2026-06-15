@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>EcoFlow device status handler ファイル名汎用化計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; margin: 40px; color: #111827; background: #f8fafc; }
+    main { max-width: 920px; margin: 0 auto; background: #fff; border: 1px solid #dbe3ef; border-radius: 8px; padding: 32px; }
+    h1 { margin-top: 0; font-size: 28px; }
+    h2 { margin-top: 28px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; font-size: 20px; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+    li { margin: 4px 0; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>EcoFlow device status handler ファイル名汎用化計画</h1>
+
+  <h2>Goal</h2>
+  <p><code>backend/internal/api/delta3_status_handler.go</code> / <code>delta3_status_handler_test.go</code> のファイル名を、現在の役割に合う汎用名へ変更する。</p>
+  <ul>
+    <li><code>backend/internal/api/delta3_status_handler.go</code> → <code>backend/internal/api/ecoflow_device_status_handler.go</code></li>
+    <li><code>backend/internal/api/delta3_status_handler_test.go</code> → <code>backend/internal/api/ecoflow_device_status_handler_test.go</code></li>
+  </ul>
+  <p>計画レビューで見つかった <code>cycleCountCandidate</code> の信頼性問題も同じ handler 周辺の未コミット差分に含まれるため、あわせて修正する。private MQTT の候補判定は、表示用に切り詰めた <code>fieldSummaries</code> ではなく、全フィールドから抽出した候補一覧を優先して使う。</p>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li><code>Delta3StatusResponse</code>、<code>Delta3StatusReader</code>、<code>Delta3StatusCard</code> などの公開型・関数・API path は今回 rename しない。</li>
+    <li><code>/api/delta3/status</code> の互換性は変更しない。</li>
+    <li>EcoFlow 実機 write、制御判断、private MQTT 通信、認証情報の扱いは変更しない。</li>
+    <li>既存の historical docs 全体を一括更新しない。</li>
+    <li><code>cycleCountCandidate</code> は正式な cycle count としては扱わず、従来どおり候補表示に留める。</li>
+  </ul>
+
+  <h2>Current State</h2>
+  <ul>
+    <li>対象ファイルは DELTA 3 系だけでなく、DELTA 3 Max Plus、DELTA Pro 3 の cloud / Developer MQTT cycle 補完、RIVER 2 diagnostics も扱っている。</li>
+    <li>前回作業の <code>cycleCountCandidate</code> 実装が未コミットのまま同ファイルに入っている。</li>
+    <li>計画レビューで、<code>cycleCountCandidate</code> が切り詰め済みの <code>FieldSummaries</code> だけを走査しており、80 件より後ろに候補 field があると欠落する問題が見つかった。</li>
+    <li>Go は同一 package 内ではファイル名が API に影響しないため、ファイル名 rename は低リスク。</li>
+  </ul>
+
+  <h2>Scope</h2>
+  <ol>
+    <li>Go ファイル名を <code>ecoflow_device_status_handler*</code> へ変更する。</li>
+    <li><code>ecoflowprivate.Status</code> に、全 private MQTT field から抽出した cycle field candidate を保持し、API handler はこれを <code>fieldSummaries</code> より優先して使う。</li>
+    <li>未コミットの直近計画ファイル <code>20260614-072550-cycle-count-candidate-diagnostics-plan.*</code> にある旧ファイル名参照だけ、新ファイル名へ更新する。</li>
+    <li>既存の古い計画 docs は履歴として残し、今回の機械的一括置換対象にしない。</li>
+  </ol>
+
+  <h2>Safety Boundaries</h2>
+  <ul>
+    <li>実機 write path は変更しない。</li>
+    <li>制御ロジック、充放電ロジック、料金最適化ロジックは変更しない。</li>
+    <li>シリアル番号、API token、認証情報は触らない。</li>
+    <li><code>cycleCountCandidate</code> は診断表示用の候補であり、制御判断や実機 write には使わない。</li>
+  </ul>
+
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li><code>git status --short</code> で未コミット差分を確認する。</li>
+    <li>private MQTT adapter の <code>Status</code> に cycle field candidate 一覧を保持する。</li>
+    <li><code>appendTelemetryFieldSummaries</code> で切り詰め前の全 field から candidate を抽出する。</li>
+    <li>API handler の <code>privateCycleCountCandidate</code> は candidate 一覧を優先し、既存 fake / fallback のため <code>FieldSummaries</code> 走査も残す。</li>
+    <li>truncation されても candidate が落ちない unit test を追加する。</li>
+    <li><code>mv</code> で Go ファイル名を変更する。</li>
+    <li>直近の未コミット plan Markdown / HTML 内の旧ファイル名参照を新ファイル名に更新する。</li>
+    <li><code>rg</code> で旧ファイル名の残存参照を確認する。historical docs の残存は許容する。</li>
+  </ol>
+
+  <h2>Verification</h2>
+  <ul>
+    <li><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./internal/api</code></li>
+    <li><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./...</code></li>
+    <li><code>rtk codex review --uncommitted</code></li>
+  </ul>
+  <p>Frontend は今回変更しないが、前回の未コミット frontend 差分が残っているため、必要に応じて <code>cd frontend &amp;&amp; rtk npm run build</code> も確認する。</p>
+
+  <h2>Rollback</h2>
+  <p>問題があればファイル名を元へ戻し、直近 plan docs の参照だけ元に戻す。Go の package 名や public API は変更しないため、rollback はファイル名レベルで完結する。</p>
+</main>
+</body>
+</html>

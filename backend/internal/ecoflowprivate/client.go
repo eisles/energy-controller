@@ -132,6 +132,7 @@ func (c *Client) probeRawWithSession(ctx context.Context, session Session) (Stat
 
 func appendTelemetryFieldSummaries(status *Status, fields []SnapshotField) {
 	status.FieldCount += len(fields)
+	status.CycleFieldCandidates = append(status.CycleFieldCandidates, AllCycleFieldCandidatesFromFields(fields)...)
 	for _, field := range fields {
 		if len(status.FieldSummaries) >= telemetryFieldSummaryLimit {
 			status.FieldSummaryTruncated = true

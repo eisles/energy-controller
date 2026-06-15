@@ -22,7 +22,30 @@ const (
 	delta3StatusBusyBackoffTTL  = 10 * time.Minute
 	delta3CycleSuccessCacheTTL  = 10 * time.Minute
 	delta3CycleErrorCacheTTL    = 10 * time.Second
+	cycleCountCandidateSource   = "ecoflow_private_mqtt_candidate"
 )
+
+type preferredCycleCountCandidateField struct {
+	CmdFunc int
+	CmdID   int
+	Field   int
+	Reason  string
+}
+
+var preferredCycleCountCandidateFields = map[string][]preferredCycleCountCandidateField{
+	"DELTA_3": {
+		{CmdFunc: 254, CmdID: 21, Field: 427, Reason: "DELTA 3 Plus observed private MQTT candidate; not accepted cycleCount"},
+		{CmdFunc: 254, CmdID: 22, Field: 280, Reason: "DELTA 3 Plus secondary observed private MQTT candidate; not accepted cycleCount"},
+	},
+	"DELTA_3_PLUS": {
+		{CmdFunc: 254, CmdID: 21, Field: 427, Reason: "DELTA 3 Plus observed private MQTT candidate; not accepted cycleCount"},
+		{CmdFunc: 254, CmdID: 22, Field: 280, Reason: "DELTA 3 Plus secondary observed private MQTT candidate; not accepted cycleCount"},
+	},
+	"DELTA_3_MAX_PLUS": {
+		{CmdFunc: 32, CmdID: 50, Field: 85, Reason: "DELTA 3 Max Plus observed private MQTT candidate; not accepted cycleCount"},
+		{CmdFunc: 32, CmdID: 50, Field: 86, Reason: "DELTA 3 Max Plus secondary observed private MQTT candidate; not accepted cycleCount"},
+	},
+}
 
 type delta3ProbeClient interface {
 	Probe(ctx context.Context) (ecoflowprivate.Status, error)
@@ -66,10 +89,21 @@ type Delta3StatusResponse struct {
 	IntelligentEnabled        *bool                        `json:"intelligentEnabled,omitempty"`
 	CycleCount                *int                         `json:"cycleCount,omitempty"`
 	CycleCountSource          string                       `json:"cycleCountSource,omitempty"`
+	CycleCountCandidate       *CycleCountCandidateResponse `json:"cycleCountCandidate,omitempty"`
 	UpdatedAt                 string                       `json:"updatedAt,omitempty"`
 	LastError                 string                       `json:"lastError,omitempty"`
 	Cached                    bool                         `json:"cached,omitempty"`
 	TelemetryDiagnostics      *PrivateTelemetryDiagnostics `json:"telemetryDiagnostics,omitempty"`
+}
+
+type CycleCountCandidateResponse struct {
+	Value      int    `json:"value"`
+	Source     string `json:"source"`
+	CmdFunc    int    `json:"cmdFunc"`
+	CmdID      int    `json:"cmdId"`
+	Field      int    `json:"field"`
+	Confidence string `json:"confidence"`
+	Reason     string `json:"reason"`
 }
 
 type PrivateTelemetryDiagnostics struct {
@@ -629,9 +663,58 @@ func mapDelta3Status(status ecoflowprivate.Status, now time.Time) Delta3StatusRe
 		BackupReserveEnabled:      status.BackupReserveEnabled,
 		CycleCount:                status.CycleCount,
 		CycleCountSource:          status.CycleCountSource,
+		CycleCountCandidate:       privateCycleCountCandidate(status),
 		UpdatedAt:                 now.Format(time.RFC3339),
 		TelemetryDiagnostics:      privateTelemetryDiagnostics(status, false),
 	}
+}
+
+func privateCycleCountCandidate(status ecoflowprivate.Status) *CycleCountCandidateResponse {
+	if status.CycleCount != nil {
+		return nil
+	}
+	preferredFields := preferredCycleCountCandidateFields[strings.ToUpper(strings.TrimSpace(status.DeviceType))]
+	if len(preferredFields) == 0 {
+		return nil
+	}
+	if response := privateCycleCountCandidateFromCandidates(preferredFields, status.CycleFieldCandidates); response != nil {
+		return response
+	}
+	if len(status.FieldSummaries) == 0 {
+		return nil
+	}
+	fields := make([]ecoflowprivate.SnapshotField, 0, len(status.FieldSummaries))
+	for _, field := range status.FieldSummaries {
+		fields = append(fields, ecoflowprivate.SnapshotField{
+			MessageIndex: field.MessageIndex,
+			CmdFunc:      field.CmdFunc,
+			CmdID:        field.CmdID,
+			Field:        field.Field,
+			Wire:         field.Wire,
+			Value:        field.Value,
+		})
+	}
+	return privateCycleCountCandidateFromCandidates(preferredFields, ecoflowprivate.CycleFieldCandidatesFromFields(fields))
+}
+
+func privateCycleCountCandidateFromCandidates(preferredFields []preferredCycleCountCandidateField, candidates []ecoflowprivate.CycleFieldCandidate) *CycleCountCandidateResponse {
+	for _, preferred := range preferredFields {
+		for _, candidate := range candidates {
+			if candidate.CmdFunc != preferred.CmdFunc || candidate.CmdID != preferred.CmdID || candidate.Field != preferred.Field {
+				continue
+			}
+			return &CycleCountCandidateResponse{
+				Value:      candidate.Value,
+				Source:     cycleCountCandidateSource,
+				CmdFunc:    candidate.CmdFunc,
+				CmdID:      candidate.CmdID,
+				Field:      candidate.Field,
+				Confidence: "candidate",
+				Reason:     preferred.Reason,
+			}
+		}
+	}
+	return nil
 }
 
 func privateTelemetryDiagnostics(status ecoflowprivate.Status, includeEmpty bool) *PrivateTelemetryDiagnostics {
