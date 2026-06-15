@@ -739,6 +739,88 @@ func TestNightChargeDeviceInputsMarksDelta3MaxPlusWriteTarget(t *testing.T) {
 	}
 }
 
+func TestNightChargeDeviceInputsTreatsStaleCachedStatusAsUnavailable(t *testing.T) {
+	device := domain.ChargingDevice{
+		ID:                    2,
+		Name:                  "DELTA 3 Plus",
+		Kind:                  "ecoflow_delta3_plus",
+		DeviceType:            "DELTA_3_PLUS",
+		SupportsACChargeLimit: true,
+	}
+	statuses := []api.DeviceStatusResponse{
+		{
+			ID:             device.ID,
+			Name:           device.Name,
+			Kind:           device.Kind,
+			DeviceType:     device.DeviceType,
+			Enabled:        true,
+			ControlEnabled: true,
+			Status: api.Delta3StatusResponse{
+				Available: true,
+				Cached:    true,
+				LastError: "refresh failed: context deadline exceeded",
+			},
+		},
+	}
+
+	inputs := nightChargeDeviceInputs(
+		context.Background(),
+		fakeChargingPriorityTargetProvider{delta3: device, delta3OK: true},
+		statuses,
+		[]domain.ChargingDevice{device},
+		slog.Default(),
+	)
+
+	if len(inputs) != 1 {
+		t.Fatalf("inputs len = %d, want 1", len(inputs))
+	}
+	if inputs[0].StatusAvailable {
+		t.Fatal("StatusAvailable = true, want false for cached status in control input")
+	}
+	if !strings.Contains(inputs[0].StatusUnavailableReason, "refresh failed") {
+		t.Fatalf("StatusUnavailableReason = %q, want refresh failure reason", inputs[0].StatusUnavailableReason)
+	}
+}
+
+func TestNightChargeDeviceInputsKeepsSuccessfulCachedStatusAvailable(t *testing.T) {
+	device := domain.ChargingDevice{
+		ID:                    2,
+		Name:                  "DELTA 3 Plus",
+		Kind:                  "ecoflow_delta3_plus",
+		DeviceType:            "DELTA_3_PLUS",
+		SupportsACChargeLimit: true,
+	}
+	statuses := []api.DeviceStatusResponse{
+		{
+			ID:             device.ID,
+			Name:           device.Name,
+			Kind:           device.Kind,
+			DeviceType:     device.DeviceType,
+			Enabled:        true,
+			ControlEnabled: true,
+			Status: api.Delta3StatusResponse{
+				Available: true,
+				Cached:    true,
+			},
+		},
+	}
+
+	inputs := nightChargeDeviceInputs(
+		context.Background(),
+		fakeChargingPriorityTargetProvider{delta3: device, delta3OK: true},
+		statuses,
+		[]domain.ChargingDevice{device},
+		slog.Default(),
+	)
+
+	if len(inputs) != 1 {
+		t.Fatalf("inputs len = %d, want 1", len(inputs))
+	}
+	if !inputs[0].StatusAvailable {
+		t.Fatal("StatusAvailable = false, want true for successful cached status")
+	}
+}
+
 func TestDelta3AuxSettingsForDeviceClampsPrivateProfileRange(t *testing.T) {
 	settings := delta3AuxSettingsForDevice(config.Config{
 		Delta3Aux: config.Delta3AuxConfig{

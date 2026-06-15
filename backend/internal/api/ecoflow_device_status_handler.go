@@ -20,6 +20,7 @@ const (
 	delta3StatusSuccessCacheTTL = 30 * time.Second
 	delta3StatusErrorCacheTTL   = 5 * time.Minute
 	delta3StatusBusyBackoffTTL  = 10 * time.Minute
+	deviceStatusReadTimeout     = 3 * time.Second
 	delta3CycleSuccessCacheTTL  = 10 * time.Minute
 	delta3CycleErrorCacheTTL    = 10 * time.Second
 	cycleCountCandidateSource   = "ecoflow_private_mqtt_candidate"
@@ -203,6 +204,7 @@ type Delta3StatusReader struct {
 	cache                              map[string]delta3StatusCacheEntry
 	ecoFlowCloudCache                  map[string]ecoFlowCloudStatusCacheEntry
 	ecoFlowDeveloperCycleCache         map[string]ecoFlowDeveloperCycleCacheEntry
+	delta3ProbeLocks                   map[string]*sync.Mutex
 }
 
 func NewDelta3StatusReader(cfg config.Config, logger *slog.Logger) *Delta3StatusReader {
@@ -236,6 +238,7 @@ func newDelta3StatusReader(cfg config.Config, logger *slog.Logger, client delta3
 		cache:                      make(map[string]delta3StatusCacheEntry),
 		ecoFlowCloudCache:          make(map[string]ecoFlowCloudStatusCacheEntry),
 		ecoFlowDeveloperCycleCache: make(map[string]ecoFlowDeveloperCycleCacheEntry),
+		delta3ProbeLocks:           make(map[string]*sync.Mutex),
 	}
 }
 
@@ -248,66 +251,114 @@ func (r *Delta3StatusReader) CurrentStatus(ctx context.Context) Delta3StatusResp
 }
 
 func (r *Delta3StatusReader) CurrentDeviceStatuses(ctx context.Context, devices []domain.ChargingDevice) []DeviceStatusResponse {
-	responses := make([]DeviceStatusResponse, 0, len(devices))
-	for _, device := range devices {
-		status := deviceStatusNotAvailable(device)
-		if canReadEcoFlowPrivateMQTTStatus(device) {
-			cfg := Delta3ConfigForDevice(r.cfg, device)
-			status = r.currentStatusForConfig(ctx, cfg, false)
-		} else if canReadEcoFlowCloudStatus(device) {
-			cfg := EcoFlowCloudConfigForDevice(r.cfg, device)
-			status = r.currentEcoFlowCloudStatusForConfig(ctx, cfg, device.DeviceType)
-		}
-		status = r.augmentCycleCountFromDeveloperMQTT(ctx, status, device)
-		responses = append(responses, DeviceStatusResponse{
-			ID:                   device.ID,
-			Name:                 device.Name,
-			Kind:                 device.Kind,
-			Provider:             device.Provider,
-			Role:                 device.Role,
-			CredentialRef:        device.CredentialRef,
-			DeviceSN:             device.DeviceSN,
-			DeviceType:           device.DeviceType,
-			StatusSource:         device.StatusSource,
-			Enabled:              device.Enabled,
-			Priority:             device.Priority,
-			MinChargeW:           device.MinChargeW,
-			MaxChargeW:           device.MaxChargeW,
-			ChargeStepW:          device.ChargeStepW,
-			CapacityWh:           device.CapacityWh,
-			TargetSoc:            device.TargetSoc,
-			ReserveSoc:           device.ReserveSoc,
-			BackupReserveMinSoc:  device.BackupReserveMinSoc,
-			BackupReserveMaxSoc:  device.BackupReserveMaxSoc,
-			ExpectedDaytimeLoadW: device.ExpectedDaytimeLoadW,
-			AutoRecoverACOutput:  device.AutoRecoverACOutput,
-			ControlEnabled:       device.ControlEnabled,
-			Status:               status,
-		})
+	responses := make([]DeviceStatusResponse, len(devices))
+	var wg sync.WaitGroup
+	for i, device := range devices {
+		i, device := i, device
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			responses[i] = deviceStatusResponse(device, r.currentDeviceStatus(ctx, device))
+		}()
 	}
+	wg.Wait()
 	return responses
 }
 
 func (r *Delta3StatusReader) CurrentStatusForConfig(ctx context.Context, cfg config.Config) Delta3StatusResponse {
-	return r.currentStatusForConfig(ctx, cfg, true)
+	return r.currentStatusForConfig(ctx, cfg, true, false)
 }
 
-func (r *Delta3StatusReader) currentStatusForConfig(ctx context.Context, cfg config.Config, allowSharedClient bool) Delta3StatusResponse {
+func (r *Delta3StatusReader) currentDeviceStatus(ctx context.Context, device domain.ChargingDevice) Delta3StatusResponse {
+	status := deviceStatusNotAvailable(device)
+	if canReadEcoFlowPrivateMQTTStatus(device) {
+		cfg := Delta3ConfigForDevice(r.cfg, device)
+		cfg.Delta3Timeout = deviceStatusTimeout(r.cfg)
+		status = r.currentStatusForConfig(ctx, cfg, false, true)
+		cycleCtx, cancel := context.WithTimeout(ctx, deviceStatusTimeout(r.cfg))
+		defer cancel()
+		return r.augmentCycleCountFromDeveloperMQTT(cycleCtx, status, device)
+	} else if canReadEcoFlowCloudStatus(device) {
+		deviceCtx, cancel := context.WithTimeout(ctx, deviceStatusTimeout(r.cfg))
+		defer cancel()
+		cfg := EcoFlowCloudConfigForDevice(r.cfg, device)
+		status = r.currentEcoFlowCloudStatusForConfig(deviceCtx, cfg, device.DeviceType)
+		return r.augmentCycleCountFromDeveloperMQTT(deviceCtx, status, device)
+	}
+	return r.augmentCycleCountFromDeveloperMQTT(ctx, status, device)
+}
+
+func deviceStatusResponse(device domain.ChargingDevice, status Delta3StatusResponse) DeviceStatusResponse {
+	return DeviceStatusResponse{
+		ID:                   device.ID,
+		Name:                 device.Name,
+		Kind:                 device.Kind,
+		Provider:             device.Provider,
+		Role:                 device.Role,
+		CredentialRef:        device.CredentialRef,
+		DeviceSN:             device.DeviceSN,
+		DeviceType:           device.DeviceType,
+		StatusSource:         device.StatusSource,
+		Enabled:              device.Enabled,
+		Priority:             device.Priority,
+		MinChargeW:           device.MinChargeW,
+		MaxChargeW:           device.MaxChargeW,
+		ChargeStepW:          device.ChargeStepW,
+		CapacityWh:           device.CapacityWh,
+		TargetSoc:            device.TargetSoc,
+		ReserveSoc:           device.ReserveSoc,
+		BackupReserveMinSoc:  device.BackupReserveMinSoc,
+		BackupReserveMaxSoc:  device.BackupReserveMaxSoc,
+		ExpectedDaytimeLoadW: device.ExpectedDaytimeLoadW,
+		AutoRecoverACOutput:  device.AutoRecoverACOutput,
+		ControlEnabled:       device.ControlEnabled,
+		Status:               status,
+	}
+}
+
+func deviceStatusTimeout(cfg config.Config) time.Duration {
+	timeout := deviceStatusReadTimeout
+	if cfg.Delta3Timeout > 0 && cfg.Delta3Timeout < timeout {
+		timeout = cfg.Delta3Timeout
+	}
+	return timeout
+}
+
+func (r *Delta3StatusReader) currentStatusForConfig(ctx context.Context, cfg config.Config, allowSharedClient bool, allowStaleFallback bool) Delta3StatusResponse {
 	if !cfg.Delta3ReadEnabled {
 		return readDelta3Status(ctx, cfg, nil, r.logger)
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	now := r.now()
 	key := delta3StatusCacheKey(cfg)
+	r.mu.Lock()
+	now := r.now()
 	entry := r.cache[key]
 	if !entry.cacheUntil.IsZero() && now.Before(entry.cacheUntil) {
 		response := entry.response
 		response.Cached = true
+		if !allowStaleFallback && isStaleDelta3StatusResponse(response) {
+			response.Available = false
+		}
+		r.mu.Unlock()
 		return response
 	}
+	r.mu.Unlock()
 
+	probeLock := r.delta3ProbeLock(delta3ProbeLockKey(cfg))
+	probeLock.Lock()
+	defer probeLock.Unlock()
+
+	r.mu.Lock()
+	now = r.now()
+	entry = r.cache[key]
+	if !entry.cacheUntil.IsZero() && now.Before(entry.cacheUntil) {
+		response := entry.response
+		response.Cached = true
+		if !allowStaleFallback && isStaleDelta3StatusResponse(response) {
+			response.Available = false
+		}
+		r.mu.Unlock()
+		return response
+	}
 	client := entry.client
 	if client == nil {
 		if allowSharedClient && r.targetProvider == nil && r.client != nil && delta3StatusCacheKey(cfg) == delta3StatusCacheKey(r.cfg) {
@@ -318,14 +369,56 @@ func (r *Delta3StatusReader) currentStatusForConfig(ctx context.Context, cfg con
 			client = ecoflowprivate.NewClient(delta3ProbeConfig(cfg))
 		}
 	}
-	response := readDelta3Status(ctx, cfg, client, r.logger)
+	previous := entry.response
+	r.mu.Unlock()
+
+	readCtx := ctx
+	cancel := func() {}
+	if cfg.Delta3Timeout > 0 {
+		readCtx, cancel = context.WithTimeout(ctx, cfg.Delta3Timeout)
+	}
+	response := readDelta3Status(readCtx, cfg, client, r.logger)
+	cancel()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry = r.cache[key]
 	entry.client = client
+	if response, ok := freshAvailableDelta3CacheResponse(entry, now); ok {
+		r.cache[key] = entry
+		return response
+	}
+	if entry.response.Available {
+		previous = entry.response
+	}
+	if allowStaleFallback && shouldUseStaleDelta3StatusResponse(response) && previous.Available {
+		stale := previous
+		stale.Cached = true
+		if strings.TrimSpace(response.LastError) != "" {
+			stale.LastError = "refresh failed: " + response.LastError
+		}
+		entry.response = stale
+		entry.cacheUntil = now.Add(delta3StatusCacheTTL(response))
+		r.cache[key] = entry
+		return stale
+	}
 	if shouldCacheDelta3StatusResponse(response) {
 		entry.response = response
 		entry.cacheUntil = now.Add(delta3StatusCacheTTL(response))
 		r.cache[key] = entry
 	}
 	return response
+}
+
+func (r *Delta3StatusReader) delta3ProbeLock(key string) *sync.Mutex {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	lock := r.delta3ProbeLocks[key]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		r.delta3ProbeLocks[key] = lock
+	}
+	return lock
 }
 
 func (r *Delta3StatusReader) readConfig(ctx context.Context) (config.Config, error) {
@@ -413,6 +506,19 @@ func delta3StatusCacheKey(cfg config.Config) string {
 	return cfg.Delta3DeviceType + "\x00" + cfg.Delta3DeviceSN
 }
 
+func delta3ProbeLockKey(cfg config.Config) string {
+	mqttClientID := strings.TrimSpace(cfg.Delta3MQTTClientID)
+	if mqttClientID != "" {
+		return strings.Join([]string{
+			"mqtt-client",
+			strings.TrimSpace(cfg.Delta3PrivateAPIHost),
+			strings.ToLower(strings.TrimSpace(cfg.Delta3PrivateEmail)),
+			mqttClientID,
+		}, "\x00")
+	}
+	return "device\x00" + delta3StatusCacheKey(cfg)
+}
+
 func ecoFlowCloudStatusCacheKey(cfg config.Config) string {
 	return cfg.EcoFlowBaseURL + "\x00" + cfg.EcoFlowDeviceSN
 }
@@ -430,6 +536,21 @@ func shouldCacheDelta3StatusResponse(response Delta3StatusResponse) bool {
 		return false
 	}
 	return true
+}
+
+func shouldUseStaleDelta3StatusResponse(response Delta3StatusResponse) bool {
+	if response.Available {
+		return false
+	}
+	lastError := strings.ToLower(response.LastError)
+	return strings.Contains(lastError, "context deadline exceeded") ||
+		strings.Contains(lastError, "timed out") ||
+		strings.Contains(lastError, "timeout") ||
+		strings.Contains(lastError, "server is too busy")
+}
+
+func isStaleDelta3StatusResponse(response Delta3StatusResponse) bool {
+	return response.Cached && strings.HasPrefix(response.LastError, "refresh failed:")
 }
 
 func delta3StatusCacheTTL(response Delta3StatusResponse) time.Duration {
@@ -487,24 +608,64 @@ func readDelta3Status(ctx context.Context, cfg config.Config, client delta3Probe
 
 func (r *Delta3StatusReader) currentEcoFlowCloudStatusForConfig(ctx context.Context, cfg config.Config, deviceType string) Delta3StatusResponse {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	now := r.now()
 	key := ecoFlowCloudStatusCacheKey(cfg)
 	entry := r.ecoFlowCloudCache[key]
 	if !entry.cacheUntil.IsZero() && now.Before(entry.cacheUntil) {
 		response := entry.response
 		response.Cached = true
+		r.mu.Unlock()
 		return response
 	}
+	previous := entry.response
+	r.mu.Unlock()
 
 	response := readEcoFlowCloudStatus(ctx, cfg, r.ecoFlowCloudReaderFactory, r.logger, deviceType, now)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry = r.ecoFlowCloudCache[key]
+	if response, ok := freshAvailableEcoFlowCloudCacheResponse(entry, now); ok {
+		return response
+	}
+	if entry.response.Available {
+		previous = entry.response
+	}
+	if shouldUseStaleDelta3StatusResponse(response) && previous.Available {
+		stale := previous
+		stale.Cached = true
+		if strings.TrimSpace(response.LastError) != "" {
+			stale.LastError = "refresh failed: " + response.LastError
+		}
+		entry.response = stale
+		entry.cacheUntil = now.Add(delta3StatusCacheTTL(response))
+		r.ecoFlowCloudCache[key] = entry
+		return stale
+	}
 	if shouldCacheDelta3StatusResponse(response) {
 		entry.response = response
 		entry.cacheUntil = now.Add(delta3StatusCacheTTL(response))
 		r.ecoFlowCloudCache[key] = entry
 	}
 	return response
+}
+
+func freshAvailableDelta3CacheResponse(entry delta3StatusCacheEntry, refreshStartedAt time.Time) (Delta3StatusResponse, bool) {
+	if entry.cacheUntil.IsZero() || !entry.cacheUntil.After(refreshStartedAt) || !entry.response.Available || isStaleDelta3StatusResponse(entry.response) {
+		return Delta3StatusResponse{}, false
+	}
+	response := entry.response
+	response.Cached = true
+	return response, true
+}
+
+func freshAvailableEcoFlowCloudCacheResponse(entry ecoFlowCloudStatusCacheEntry, refreshStartedAt time.Time) (Delta3StatusResponse, bool) {
+	if entry.cacheUntil.IsZero() || !entry.cacheUntil.After(refreshStartedAt) || !entry.response.Available || isStaleDelta3StatusResponse(entry.response) {
+		return Delta3StatusResponse{}, false
+	}
+	response := entry.response
+	response.Cached = true
+	return response, true
 }
 
 func readEcoFlowCloudStatus(ctx context.Context, cfg config.Config, factory func(ecoflow.Config) ecoFlowCloudBatteryReader, logger *slog.Logger, deviceType string, now time.Time) Delta3StatusResponse {

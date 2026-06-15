@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>機器別ステータス取得タイムアウト対策 実装計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; margin: 40px; color: #111827; background: #f8fafc; }
+    main { max-width: 960px; margin: 0 auto; background: #fff; border: 1px solid #dbe3ef; border-radius: 8px; padding: 32px; }
+    h1 { margin-top: 0; font-size: 28px; }
+    h2 { margin-top: 28px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; font-size: 20px; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #eef2f7; padding: 1px 4px; border-radius: 4px; }
+    li { margin: 4px 0; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>機器別ステータス取得タイムアウト対策 実装計画</h1>
+
+  <h2>Goal</h2>
+  <p><code>GET /api/devices/statuses</code> が EcoFlow private MQTT の応答待ちで 20 秒以上詰まり、充電機器ステータス画面が <code>unavailable</code> になる問題を改善する。</p>
+  <ul>
+    <li>機器ごとの status 読み取りを短い timeout で区切る。</li>
+    <li>1 台の private MQTT 応答遅延で API 全体を止めない。</li>
+    <li>直近の成功値がある場合は cached status として返す。</li>
+    <li>失敗した機器だけ <code>lastError</code> に理由を出す。</li>
+  </ul>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li>実機 write、充電/放電判断、料金最適化判断は変更しない。</li>
+    <li>EcoFlow private MQTT の protocol や command payload は変更しない。</li>
+    <li>device master、シリアル番号、認証情報、<code>.env</code> は変更しない。</li>
+    <li><code>/api/status</code> の制御判断 API path は変更しない。</li>
+  </ul>
+
+  <h2>Current State</h2>
+  <ul>
+    <li><code>/api/status</code> は正常に 200 を返している。</li>
+    <li><code>/api/devices/statuses</code> は live 確認で 20 秒 timeout した。</li>
+    <li>backend log には <code>EcoFlow MQTT request timed out waiting for reply</code> と <code>context canceled</code> が出ている。</li>
+    <li><code>CurrentDeviceStatuses</code> は機器を順番に読み取る。</li>
+    <li><code>currentStatusForConfig</code> は cache mutex を保持したまま network read を行う。</li>
+  </ul>
+
+  <h2>Files Likely To Change</h2>
+  <ul>
+    <li><code>backend/internal/api/ecoflow_device_status_handler.go</code></li>
+    <li><code>backend/internal/api/ecoflow_device_status_handler_test.go</code></li>
+    <li><code>frontend/lib/types.ts</code></li>
+    <li><code>frontend/components/StatusCards.tsx</code></li>
+  </ul>
+
+  <h2>Data/API Contract</h2>
+  <ul>
+    <li><code>GET /api/devices/statuses</code> の response shape は変えない。</li>
+    <li><code>Delta3StatusResponse.cached</code> を直近値または cache hit 表示に使う。</li>
+    <li>更新失敗時に直近成功値を返す場合、<code>available=true</code> のまま <code>cached=true</code> にする。</li>
+    <li>stale fallback の場合は <code>lastError</code> に更新失敗理由を保持し、画面で「キャッシュ」扱いを表示する。</li>
+    <li>直近値がない機器は従来どおり <code>available=false</code> と <code>lastError</code> を返す。</li>
+  </ul>
+
+  <h2>Safety Boundaries</h2>
+  <ul>
+    <li>read-only status API の応答性改善だけを行う。</li>
+    <li>EcoFlow write command path は触らない。</li>
+    <li>real control gate、minimum command interval、hysteresis は変更しない。</li>
+    <li>追加ログに secret、token、device SN は出さない。</li>
+  </ul>
+
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li><code>CurrentDeviceStatuses</code> を機器ごとに並列取得し、response order は維持する。</li>
+    <li>機器別 timeout helper を追加する。既定は短めの 3 秒程度で、より短い既存設定は尊重する。</li>
+    <li><code>currentStatusForConfig</code> の mutex 範囲を cache / client 取得と cache 更新だけに縮める。</li>
+    <li>期限切れ cache でも更新失敗時に直近成功 response があれば cached として返す。</li>
+    <li>frontend の <code>Delta3Status</code> 型に <code>cached</code> を追加し、機器ステータス一覧で cached status を「キャッシュ」として表示する。</li>
+    <li>timeout、cached fallback、response order の unit test を追加する。</li>
+  </ol>
+
+  <h2>Review Points</h2>
+  <ul>
+    <li>network read 中に <code>Delta3StatusReader.mu</code> を保持しないこと。</li>
+    <li>stale cache fallback が control write 判断へ流れないこと。</li>
+    <li>stale cache fallback が UI で live status に見えないこと。</li>
+    <li><code>/api/status</code> の既存 cache 挙動を壊さないこと。</li>
+    <li>context timeout により goroutine leak が起きないこと。</li>
+  </ul>
+
+  <h2>Verification Commands</h2>
+  <ul>
+    <li><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./internal/api</code></li>
+    <li><code>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./...</code></li>
+    <li><code>cd frontend &amp;&amp; rtk npm run build</code></li>
+    <li><code>rtk codex review --uncommitted</code></li>
+  </ul>
+
+  <h2>Runtime Verification</h2>
+  <ul>
+    <li><code>docker compose up -d --build</code></li>
+    <li><code>curl -s -i --max-time 10 http://127.0.0.1:18085/api/status</code></li>
+    <li><code>curl -s -i --max-time 10 http://127.0.0.1:18085/api/devices/statuses</code></li>
+    <li>画面の充電機器ステータスで、取得できた機器が表示され、失敗機器だけ <code>取得不可</code> になること。</li>
+  </ul>
+
+  <h2>Rollback</h2>
+  <p>問題があれば、<code>CurrentDeviceStatuses</code> の並列化と stale cache fallback を戻す。API response shape と DB schema は変えないため、rollback は backend code のみで完結する。</p>
+</main>
+</body>
+</html>

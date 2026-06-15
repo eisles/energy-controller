@@ -202,8 +202,21 @@ export function Delta3StatusCard({
   const unavailableReason = fetchError || status?.lastError || "read-only status is not loaded";
   const sortedDeviceStatuses = [...deviceStatuses].sort((a, b) => a.priority - b.priority || a.id - b.id);
   const availableCount = sortedDeviceStatuses.filter((device) => device.status.available).length;
+  const liveAvailableCount = sortedDeviceStatuses.filter((device) => device.status.available && !device.status.cached).length;
+  const cachedAvailableCount = sortedDeviceStatuses.filter((device) => device.status.available && device.status.cached).length;
   const available = !fetchError && (availableCount > 0 || Boolean(status?.available));
   const auxiliaryPlan = sourceStatus.delta3AuxPlan;
+  const statusSummaryLabel =
+    sortedDeviceStatuses.length > 0
+      ? cachedAvailableCount > 0
+        ? `${liveAvailableCount}/${sortedDeviceStatuses.length} 接続中 / ${cachedAvailableCount} キャッシュ`
+        : `${availableCount}/${sortedDeviceStatuses.length} 接続中`
+      : available
+        ? status?.cached
+          ? "cached"
+          : "connected"
+        : "unavailable";
+  const statusSummaryVariant: BadgeVariant = cachedAvailableCount > 0 || status?.cached ? "warning" : available ? "success" : "secondary";
   return (
     <Card className="delta3-status-card section">
       <CardHeader>
@@ -212,7 +225,7 @@ export function Delta3StatusCard({
             <CardDescription>Read-only device status</CardDescription>
             <CardTitle>充電機器ステータス</CardTitle>
           </div>
-          <Badge variant={available ? "success" : "secondary"}>{availableCount > 0 ? `${availableCount}/${sortedDeviceStatuses.length} 接続中` : available ? "connected" : "unavailable"}</Badge>
+          <Badge variant={statusSummaryVariant}>{statusSummaryLabel}</Badge>
         </div>
       </CardHeader>
       <CardContent>
@@ -221,6 +234,7 @@ export function Delta3StatusCard({
             <div className="delta3-device-status-list">
               {sortedDeviceStatuses.map((device) => {
                 const flowState = deviceFlowState(device);
+                const connectionBadge = deviceConnectionBadge(device.status);
                 return (
                   <div className="delta3-device-status-item" key={device.id || device.credentialRef}>
                     <div className="panel-title-row">
@@ -233,13 +247,14 @@ export function Delta3StatusCard({
                       </div>
                       <div className="device-status-badges">
                         <Badge variant={flowState.variant}>{flowState.label}</Badge>
-                        <Badge variant={device.status.available ? "success" : "secondary"}>{device.status.available ? "接続中" : "取得不可"}</Badge>
+                        <Badge variant={connectionBadge.variant}>{connectionBadge.label}</Badge>
                       </div>
                     </div>
                     {device.status.available ? (
                       <>
                         <div className="detail-strip" aria-label={`${device.name} read-only status`}>
                           <Detail label="状態" value={<Badge variant={flowState.variant}>{flowState.label}</Badge>} />
+                          <Detail label="取得状態" value={<Badge variant={connectionBadge.variant}>{connectionBadge.label}</Badge>} />
                           <Detail label="残量" value={deviceSocLabel(device)} />
                           <Detail label="AC入力" value={nullableWatt(device.status.acInW)} />
                           <Detail label="AC出力" value={nullablePositiveWatt(device.status.acOutW)} />
@@ -269,6 +284,7 @@ export function Delta3StatusCard({
                           ) : null}
                           <Detail label="Device type" value={device.status.deviceType || device.deviceType || "-"} />
                           <Detail label="Updated" value={formatDateTime(device.status.updatedAt || "")} />
+                          {device.status.cached ? <Detail label="更新エラー" value={device.status.lastError || "-"} /> : null}
                           <Detail label="制御候補" value={device.controlEnabled ? "有効" : "無効"} />
                           <Detail label="AC出力OFF復旧" value={device.autoRecoverAcOutput ? "許可" : "禁止"} />
                         </div>
@@ -1041,6 +1057,16 @@ function previousPro3CommandLabel(event: EnergyStatus["pro3AcOutputEvent"] | nul
 
 function nullablePositiveWatt(value: number | null | undefined) {
   return value === null || value === undefined ? "-" : `${Math.abs(value)} W`;
+}
+
+function deviceConnectionBadge(status: Delta3Status): { label: string; variant: BadgeVariant } {
+  if (status.cached) {
+    return { label: "キャッシュ", variant: "warning" };
+  }
+  if (status.available) {
+    return { label: "接続中", variant: "success" };
+  }
+  return { label: "取得不可", variant: "secondary" };
 }
 
 function deviceFlowState(device: DeviceStatus): DeviceFlowState {

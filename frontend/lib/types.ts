@@ -145,6 +145,7 @@ export type Delta3Status = {
   cycleCountCandidate?: CycleCountCandidate | null;
   updatedAt?: string;
   lastError?: string | null;
+  cached?: boolean;
   telemetryDiagnostics?: PrivateTelemetryDiagnostics | null;
 };
 

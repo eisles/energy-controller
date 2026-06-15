@@ -964,6 +964,14 @@ func nightChargeDeviceInputs(ctx context.Context, targetProvider delta3WriteTarg
 		if deviceType == "" {
 			deviceType = device.DeviceType
 		}
+		statusAvailable := deviceStatus.Status.Available
+		statusUnavailableReason := deviceStatus.Status.LastError
+		if isStaleDeviceStatusCache(deviceStatus.Status) {
+			statusAvailable = false
+			if statusUnavailableReason == "" {
+				statusUnavailableReason = "device status is cached; refresh did not complete"
+			}
+		}
 		writeTarget := false
 		switch deviceStatus.Kind {
 		case "ecoflow_delta_pro3":
@@ -994,12 +1002,16 @@ func nightChargeDeviceInputs(ctx context.Context, targetProvider delta3WriteTarg
 			MinChargeW:                deviceStatus.MinChargeW,
 			MaxChargeW:                deviceStatus.MaxChargeW,
 			SupportsACChargeLimit:     device.SupportsACChargeLimit,
-			StatusAvailable:           deviceStatus.Status.Available,
-			StatusUnavailableReason:   deviceStatus.Status.LastError,
+			StatusAvailable:           statusAvailable,
+			StatusUnavailableReason:   statusUnavailableReason,
 			DataSource:                deviceStatus.StatusSource,
 		})
 	}
 	return inputs
+}
+
+func isStaleDeviceStatusCache(status api.Delta3StatusResponse) bool {
+	return status.Cached && strings.HasPrefix(status.LastError, "refresh failed:")
 }
 
 func nightChargeDeviceWindowActive(now time.Time) bool {

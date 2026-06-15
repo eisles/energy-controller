@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -351,9 +352,16 @@ func TestDelta3StatusReaderKeepsDiagnosticsForEmptyUnsupportedPrivateMQTTPayload
 
 func TestDelta3StatusReaderReturnsDeviceStatuses(t *testing.T) {
 	var probed []string
-	reader := newDelta3StatusReader(validDelta3Config(), nil, nil)
+	probedTimeouts := make(map[string]time.Duration)
+	var probedMu sync.Mutex
+	cfg := validDelta3Config()
+	cfg.Delta3Timeout = 20 * time.Second
+	reader := newDelta3StatusReader(cfg, nil, nil)
 	reader.clientFactory = func(cfg config.Config) delta3ProbeClient {
+		probedMu.Lock()
 		probed = append(probed, cfg.Delta3DeviceSN+"/"+cfg.Delta3DeviceType)
+		probedTimeouts[cfg.Delta3DeviceSN] = cfg.Delta3Timeout
+		probedMu.Unlock()
 		return fakeDelta3Client{status: delta3StatusFixture(82)}
 	}
 	devices := []domain.ChargingDevice{
@@ -429,8 +437,376 @@ func TestDelta3StatusReaderReturnsDeviceStatuses(t *testing.T) {
 	if !statuses[0].Status.Available || !statuses[1].Status.Available || !statuses[2].Status.Available || !statuses[3].Status.Available {
 		t.Fatalf("statuses should be available: %+v", statuses)
 	}
-	if strings.Join(probed, ",") != "SN123/DELTA_3_PLUS,SN456/DELTA_3_PLUS,SN789/DELTA_3_MAX_PLUS,SN999/RIVER_2" {
-		t.Fatalf("probed configs = %v, want each device SN/type", probed)
+	probedMu.Lock()
+	probedSet := make(map[string]bool, len(probed))
+	for _, got := range probed {
+		probedSet[got] = true
+	}
+	probedMu.Unlock()
+	for _, want := range []string{"SN123/DELTA_3_PLUS", "SN456/DELTA_3_PLUS", "SN789/DELTA_3_MAX_PLUS", "SN999/RIVER_2"} {
+		if !probedSet[want] {
+			t.Fatalf("probed configs = %v, missing %s", probed, want)
+		}
+	}
+	for _, sn := range []string{"SN123", "SN456", "SN789", "SN999"} {
+		if probedTimeouts[sn] != deviceStatusReadTimeout {
+			t.Fatalf("probed timeout for %s = %s, want %s", sn, probedTimeouts[sn], deviceStatusReadTimeout)
+		}
+	}
+}
+
+func TestDelta3StatusReaderDeviceStatusesTimeoutDoesNotBlockOtherDevices(t *testing.T) {
+	cfg := validDelta3Config()
+	cfg.Delta3Timeout = 20 * time.Millisecond
+	reader := newDelta3StatusReader(cfg, nil, nil)
+	reader.clientFactory = func(cfg config.Config) delta3ProbeClient {
+		if cfg.Delta3DeviceSN == "SLOW" {
+			return blockingDelta3Client{}
+		}
+		return fakeDelta3Client{status: delta3StatusFixture(74)}
+	}
+	devices := []domain.ChargingDevice{
+		{
+			ID:              1,
+			Name:            "slow",
+			Kind:            "ecoflow_delta3_plus",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			DeviceSN:        "SLOW",
+			DeviceType:      "DELTA_3_PLUS",
+			StatusSource:    "ecoflow_private_mqtt",
+		},
+		{
+			ID:              2,
+			Name:            "fast",
+			Kind:            "ecoflow_delta3_plus",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			DeviceSN:        "FAST",
+			DeviceType:      "DELTA_3_PLUS",
+			StatusSource:    "ecoflow_private_mqtt",
+		},
+	}
+
+	start := time.Now()
+	statuses := reader.CurrentDeviceStatuses(context.Background(), devices)
+	elapsed := time.Since(start)
+
+	if elapsed > 200*time.Millisecond {
+		t.Fatalf("CurrentDeviceStatuses took %s, want bounded by per-device timeout", elapsed)
+	}
+	if len(statuses) != 2 || statuses[0].DeviceSN != "SLOW" || statuses[1].DeviceSN != "FAST" {
+		t.Fatalf("statuses order = %+v, want input device order", statuses)
+	}
+	if statuses[0].Status.Available {
+		t.Fatalf("slow status = %+v, want unavailable timeout", statuses[0].Status)
+	}
+	if !statuses[1].Status.Available {
+		t.Fatalf("fast status = %+v, want available", statuses[1].Status)
+	}
+}
+
+func TestDelta3StatusReaderDeviceStatusesReturnsStaleCacheOnTimeout(t *testing.T) {
+	cfg := validDelta3Config()
+	cfg.Delta3Timeout = 20 * time.Millisecond
+	now := time.Date(2026, 5, 24, 13, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	client := &scriptedDelta3Client{probes: []func(context.Context) (ecoflowprivate.Status, error){
+		func(context.Context) (ecoflowprivate.Status, error) {
+			return delta3StatusFixture(71), nil
+		},
+		func(ctx context.Context) (ecoflowprivate.Status, error) {
+			<-ctx.Done()
+			return ecoflowprivate.Status{}, ctx.Err()
+		},
+	}}
+	reader := newDelta3StatusReader(cfg, nil, nil)
+	reader.now = func() time.Time { return now }
+	reader.clientFactory = func(config.Config) delta3ProbeClient {
+		return client
+	}
+	devices := []domain.ChargingDevice{
+		{
+			ID:              1,
+			Name:            "DELTA 3 Plus",
+			Kind:            "ecoflow_delta3_plus",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			DeviceSN:        "SN123",
+			DeviceType:      "DELTA_3_PLUS",
+			StatusSource:    "ecoflow_private_mqtt",
+		},
+	}
+
+	first := reader.CurrentDeviceStatuses(context.Background(), devices)
+	now = now.Add(delta3StatusSuccessCacheTTL + time.Second)
+	second := reader.CurrentDeviceStatuses(context.Background(), devices)
+	controlStatus := reader.CurrentStatusForConfig(context.Background(), Delta3ConfigForDevice(cfg, devices[0]))
+
+	if !first[0].Status.Available || first[0].Status.Cached {
+		t.Fatalf("first status = %+v, want fresh available", first[0].Status)
+	}
+	if !second[0].Status.Available || !second[0].Status.Cached {
+		t.Fatalf("second status = %+v, want stale cached available", second[0].Status)
+	}
+	if second[0].Status.SOC == nil || *second[0].Status.SOC != 71 {
+		t.Fatalf("second SOC = %v, want stale 71", second[0].Status.SOC)
+	}
+	if !strings.Contains(second[0].Status.LastError, "refresh failed") {
+		t.Fatalf("second LastError = %q, want refresh failure reason", second[0].Status.LastError)
+	}
+	if controlStatus.Available || !controlStatus.Cached || !strings.Contains(controlStatus.LastError, "refresh failed") {
+		t.Fatalf("control status = %+v, want stale cache hidden from control reads", controlStatus)
+	}
+}
+
+func TestDelta3StatusReaderDoesNotCacheStaleStatusOnCallerCancellation(t *testing.T) {
+	cfg := validDelta3Config()
+	now := time.Date(2026, 5, 24, 13, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	client := &scriptedDelta3Client{probes: []func(context.Context) (ecoflowprivate.Status, error){
+		func(context.Context) (ecoflowprivate.Status, error) {
+			return delta3StatusFixture(71), nil
+		},
+		func(ctx context.Context) (ecoflowprivate.Status, error) {
+			<-ctx.Done()
+			return ecoflowprivate.Status{}, ctx.Err()
+		},
+		func(context.Context) (ecoflowprivate.Status, error) {
+			return delta3StatusFixture(72), nil
+		},
+	}}
+	reader := newDelta3StatusReader(cfg, nil, nil)
+	reader.now = func() time.Time { return now }
+	reader.clientFactory = func(config.Config) delta3ProbeClient {
+		return client
+	}
+	devices := []domain.ChargingDevice{
+		{
+			ID:              1,
+			Name:            "DELTA 3 Plus",
+			Kind:            "ecoflow_delta3_plus",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			DeviceSN:        "SN123",
+			DeviceType:      "DELTA_3_PLUS",
+			StatusSource:    "ecoflow_private_mqtt",
+		},
+	}
+
+	first := reader.CurrentDeviceStatuses(context.Background(), devices)
+	now = now.Add(delta3StatusSuccessCacheTTL + time.Second)
+	cancelled := reader.CurrentDeviceStatuses(cancelledCtx, devices)
+	refreshed := reader.CurrentDeviceStatuses(context.Background(), devices)
+
+	if !first[0].Status.Available || first[0].Status.SOC == nil || *first[0].Status.SOC != 71 {
+		t.Fatalf("first status = %+v, want SOC 71", first[0].Status)
+	}
+	if cancelled[0].Status.Available || !strings.Contains(cancelled[0].Status.LastError, "context canceled") {
+		t.Fatalf("cancelled status = %+v, want direct context canceled error", cancelled[0].Status)
+	}
+	if !refreshed[0].Status.Available || refreshed[0].Status.Cached || refreshed[0].Status.SOC == nil || *refreshed[0].Status.SOC != 72 {
+		t.Fatalf("refreshed status = %+v, want fresh SOC 72 after caller cancellation", refreshed[0].Status)
+	}
+}
+
+func TestDelta3StatusReaderStaleCachePreservesBusyBackoff(t *testing.T) {
+	cfg := validDelta3Config()
+	cfg.Delta3Timeout = 20 * time.Millisecond
+	now := time.Date(2026, 5, 24, 13, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	client := &scriptedDelta3Client{probes: []func(context.Context) (ecoflowprivate.Status, error){
+		func(context.Context) (ecoflowprivate.Status, error) {
+			return delta3StatusFixture(71), nil
+		},
+		func(context.Context) (ecoflowprivate.Status, error) {
+			return ecoflowprivate.Status{}, errors.New("EcoFlow private login failed: server is too busy")
+		},
+		func(context.Context) (ecoflowprivate.Status, error) {
+			return delta3StatusFixture(72), nil
+		},
+	}}
+	reader := newDelta3StatusReader(cfg, nil, nil)
+	reader.now = func() time.Time { return now }
+	reader.clientFactory = func(config.Config) delta3ProbeClient {
+		return client
+	}
+	devices := []domain.ChargingDevice{
+		{
+			ID:              1,
+			Name:            "DELTA 3 Plus",
+			Kind:            "ecoflow_delta3_plus",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			DeviceSN:        "SN123",
+			DeviceType:      "DELTA_3_PLUS",
+			StatusSource:    "ecoflow_private_mqtt",
+		},
+	}
+
+	first := reader.CurrentDeviceStatuses(context.Background(), devices)
+	now = now.Add(delta3StatusSuccessCacheTTL + time.Second)
+	second := reader.CurrentDeviceStatuses(context.Background(), devices)
+	now = now.Add(delta3StatusErrorCacheTTL)
+	third := reader.CurrentDeviceStatuses(context.Background(), devices)
+
+	if !first[0].Status.Available || first[0].Status.Cached {
+		t.Fatalf("first status = %+v, want fresh available", first[0].Status)
+	}
+	if !second[0].Status.Available || !second[0].Status.Cached || !strings.Contains(second[0].Status.LastError, "server is too busy") {
+		t.Fatalf("second status = %+v, want stale busy fallback", second[0].Status)
+	}
+	if !third[0].Status.Available || !third[0].Status.Cached || !strings.Contains(third[0].Status.LastError, "server is too busy") {
+		t.Fatalf("third status = %+v, want cached busy fallback without re-probe", third[0].Status)
+	}
+	client.mu.Lock()
+	calls := client.calls
+	client.mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("probe calls = %d, want 2 before busy backoff expires", calls)
+	}
+}
+
+func TestDelta3StatusReaderSerializesFixedMQTTClientIDDeviceStatuses(t *testing.T) {
+	cfg := validDelta3Config()
+	cfg.Delta3MQTTClientID = "fixed-client-id"
+	client := &concurrentDelta3Client{delay: 10 * time.Millisecond}
+	reader := newDelta3StatusReader(cfg, nil, nil)
+	reader.clientFactory = func(config.Config) delta3ProbeClient {
+		return client
+	}
+	devices := []domain.ChargingDevice{
+		{
+			ID:              1,
+			Name:            "DELTA 3 Plus",
+			Kind:            "ecoflow_delta3_plus",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			DeviceSN:        "SN123",
+			DeviceType:      "DELTA_3_PLUS",
+			StatusSource:    "ecoflow_private_mqtt",
+		},
+		{
+			ID:              2,
+			Name:            "DELTA 3 Max Plus",
+			Kind:            "ecoflow_delta3_plus",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			DeviceSN:        "SN456",
+			DeviceType:      "DELTA_3_MAX_PLUS",
+			StatusSource:    "ecoflow_private_mqtt",
+		},
+	}
+
+	statuses := reader.CurrentDeviceStatuses(context.Background(), devices)
+
+	for _, status := range statuses {
+		if !status.Status.Available {
+			t.Fatalf("status = %+v, want available", status.Status)
+		}
+	}
+	client.mu.Lock()
+	maxActive := client.maxActive
+	calls := client.calls
+	client.mu.Unlock()
+	if maxActive != 1 {
+		t.Fatalf("max concurrent probes = %d, want 1 for fixed MQTT client ID", maxActive)
+	}
+	if calls != 2 {
+		t.Fatalf("probe calls = %d, want one call per device", calls)
+	}
+}
+
+func TestDelta3StatusReaderFixedMQTTClientIDTimeoutStartsAfterQueue(t *testing.T) {
+	cfg := validDelta3Config()
+	cfg.Delta3MQTTClientID = "fixed-client-id"
+	cfg.Delta3Timeout = 20 * time.Millisecond
+	client := &concurrentDelta3Client{delay: 15 * time.Millisecond}
+	reader := newDelta3StatusReader(cfg, nil, nil)
+	reader.clientFactory = func(config.Config) delta3ProbeClient {
+		return client
+	}
+	devices := []domain.ChargingDevice{
+		{
+			ID:              1,
+			Name:            "DELTA 3 Plus",
+			Kind:            "ecoflow_delta3_plus",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			DeviceSN:        "SN123",
+			DeviceType:      "DELTA_3_PLUS",
+			StatusSource:    "ecoflow_private_mqtt",
+		},
+		{
+			ID:              2,
+			Name:            "DELTA 3 Max Plus",
+			Kind:            "ecoflow_delta3_plus",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			DeviceSN:        "SN456",
+			DeviceType:      "DELTA_3_MAX_PLUS",
+			StatusSource:    "ecoflow_private_mqtt",
+		},
+	}
+
+	statuses := reader.CurrentDeviceStatuses(context.Background(), devices)
+
+	for _, status := range statuses {
+		if !status.Status.Available {
+			t.Fatalf("status = %+v, want available after its own read timeout starts", status.Status)
+		}
+	}
+	client.mu.Lock()
+	maxActive := client.maxActive
+	calls := client.calls
+	client.mu.Unlock()
+	if maxActive != 1 {
+		t.Fatalf("max concurrent probes = %d, want 1 for fixed MQTT client ID", maxActive)
+	}
+	if calls != 2 {
+		t.Fatalf("probe calls = %d, want one call per device", calls)
+	}
+}
+
+func TestDelta3StatusReaderSerializesSameDeviceRefresh(t *testing.T) {
+	cfg := validDelta3Config()
+	client := &concurrentDelta3Client{delay: 10 * time.Millisecond}
+	reader := newDelta3StatusReader(cfg, nil, nil)
+	reader.client = nil
+	reader.clientFactory = func(config.Config) delta3ProbeClient {
+		return client
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			defer wg.Done()
+			status := reader.CurrentStatusForConfig(context.Background(), cfg)
+			if !status.Available {
+				t.Errorf("status = %+v, want available", status)
+			}
+		}()
+	}
+	wg.Wait()
+
+	client.mu.Lock()
+	maxActive := client.maxActive
+	calls := client.calls
+	client.mu.Unlock()
+	if maxActive != 1 {
+		t.Fatalf("max concurrent probes = %d, want 1 for same device", maxActive)
+	}
+	if calls != 1 {
+		t.Fatalf("probe calls = %d, want second caller to use refreshed cache", calls)
 	}
 }
 
@@ -519,6 +895,83 @@ func TestDelta3StatusReaderReturnsEcoFlowCloudDeviceStatus(t *testing.T) {
 	assertBoolPtrResponse(t, "IntelligentEnabled", statuses[0].Status.IntelligentEnabled, false)
 	if statuses[0].CapacityWh != 12288 {
 		t.Fatalf("CapacityWh = %d, want 12288", statuses[0].CapacityWh)
+	}
+}
+
+func TestDelta3StatusReaderReturnsStaleEcoFlowCloudStatusOnTimeout(t *testing.T) {
+	now := time.Date(2026, 5, 26, 5, 30, 0, 0, time.UTC)
+	calls := 0
+	reader := newDelta3StatusReader(config.Config{
+		EcoFlowAccessKey: "access",
+		EcoFlowSecretKey: "secret",
+		EcoFlowDeviceSN:  "ENV-SN",
+		EcoFlowBaseURL:   "https://api.test",
+		Delta3Timeout:    20 * time.Millisecond,
+	}, nil, nil)
+	reader.now = func() time.Time { return now }
+	reader.ecoFlowCloudReaderFactory = func(cfg ecoflow.Config) ecoFlowCloudBatteryReader {
+		calls++
+		if calls == 1 {
+			return fakeEcoFlowCloudReader{status: domain.BatteryStatus{
+				Soc:            88,
+				InputW:         410,
+				OutputW:        120,
+				ACChargeLimitW: 900,
+				IsOnline:       true,
+			}}
+		}
+		return fakeEcoFlowCloudReader{err: context.DeadlineExceeded}
+	}
+	devices := []domain.ChargingDevice{
+		{
+			ID:              1,
+			Name:            "DELTA Pro 3",
+			Kind:            "ecoflow_delta_pro3",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			DeviceSN:        "MASTER-SN",
+			DeviceType:      "DELTA_PRO3",
+			StatusSource:    "ecoflow_cloud",
+		},
+	}
+
+	first := reader.CurrentDeviceStatuses(context.Background(), devices)
+	now = now.Add(delta3StatusSuccessCacheTTL + time.Second)
+	second := reader.CurrentDeviceStatuses(context.Background(), devices)
+	third := reader.CurrentDeviceStatuses(context.Background(), devices)
+
+	if !first[0].Status.Available || first[0].Status.Cached {
+		t.Fatalf("first status = %+v, want fresh available cloud status", first[0].Status)
+	}
+	if !second[0].Status.Available || !second[0].Status.Cached || !strings.Contains(second[0].Status.LastError, "refresh failed") {
+		t.Fatalf("second status = %+v, want stale cached cloud status after timeout", second[0].Status)
+	}
+	assertIntPtrResponse(t, "second SOC", second[0].Status.SOC, 88)
+	if !third[0].Status.Available || !third[0].Status.Cached {
+		t.Fatalf("third status = %+v, want cached stale cloud status", third[0].Status)
+	}
+	if calls != 2 {
+		t.Fatalf("cloud status calls = %d, want no retry before stale backoff expires", calls)
+	}
+}
+
+func TestFreshEcoFlowCloudCacheResponseRejectsStaleRefreshFailure(t *testing.T) {
+	refreshStartedAt := time.Date(2026, 6, 15, 6, 30, 0, 0, time.UTC)
+	entry := ecoFlowCloudStatusCacheEntry{
+		response: Delta3StatusResponse{
+			Available: true,
+			Cached:    true,
+			LastError: "refresh failed: context deadline exceeded",
+			SOC:       intPtr(88),
+		},
+		cacheUntil: refreshStartedAt.Add(time.Minute),
+	}
+
+	response, ok := freshAvailableEcoFlowCloudCacheResponse(entry, refreshStartedAt)
+
+	if ok {
+		t.Fatalf("fresh cloud cache response = %+v, want stale refresh failure rejected", response)
 	}
 }
 
@@ -755,6 +1208,65 @@ func TestDelta3StatusReaderKeepsPro3StatusWhenDeveloperMQTTCycleMissing(t *testi
 	}
 }
 
+func TestDelta3StatusReaderReusesPro3DeviceTimeoutForCycleAugment(t *testing.T) {
+	timeout := 100 * time.Millisecond
+	reader := newDelta3StatusReader(config.Config{
+		EcoFlowAccessKey:      "access",
+		EcoFlowSecretKey:      "secret",
+		EcoFlowBaseURL:        "https://api.test",
+		Delta3PrivateAPIHost:  "api.test",
+		Delta3PrivateEmail:    "user@example.com",
+		Delta3PrivatePassword: "secret",
+		Delta3Timeout:         timeout,
+	}, nil, nil)
+	reader.ecoFlowCloudReaderFactory = func(cfg ecoflow.Config) ecoFlowCloudBatteryReader {
+		return delayedEcoFlowCloudReader{
+			delay: 80 * time.Millisecond,
+			status: domain.BatteryStatus{
+				Soc:            67,
+				InputW:         100,
+				OutputW:        320,
+				ACChargeLimitW: 400,
+				IsOnline:       true,
+			},
+		}
+	}
+	developerCycleCalls := 0
+	reader.ecoFlowDeveloperCycleReaderFactory = func(cfg ecoflowdeveloper.Config) ecoFlowDeveloperCycleReader {
+		return blockingEcoFlowDeveloperCycleReader{calls: &developerCycleCalls}
+	}
+	devices := []domain.ChargingDevice{
+		{
+			ID:              1,
+			Name:            "DELTA Pro 3",
+			Kind:            "ecoflow_delta_pro3",
+			Provider:        "ecoflow",
+			Enabled:         true,
+			SupportsSocRead: true,
+			DeviceSN:        "MASTER-SN",
+			DeviceType:      "DELTA_PRO3",
+			StatusSource:    "ecoflow_cloud",
+		},
+	}
+
+	startedAt := time.Now()
+	statuses := reader.CurrentDeviceStatuses(context.Background(), devices)
+	elapsed := time.Since(startedAt)
+
+	if elapsed > 150*time.Millisecond {
+		t.Fatalf("CurrentDeviceStatuses elapsed = %s, want shared device timeout near %s", elapsed, timeout)
+	}
+	if !statuses[0].Status.Available {
+		t.Fatalf("status should remain available when cycle augment times out: %+v", statuses[0].Status)
+	}
+	if statuses[0].Status.CycleCount != nil || statuses[0].Status.CycleCountSource != "" {
+		t.Fatalf("cycle = %v source=%q, want missing cycle after shared timeout", statuses[0].Status.CycleCount, statuses[0].Status.CycleCountSource)
+	}
+	if developerCycleCalls != 1 {
+		t.Fatalf("Developer cycle calls = %d, want one cycle attempt", developerCycleCalls)
+	}
+}
+
 func TestEcoFlowCloudConfigForDeviceDoesNotFallbackToEnvSN(t *testing.T) {
 	cfg := EcoFlowCloudConfigForDevice(config.Config{EcoFlowDeviceSN: "ENV-SN"}, domain.ChargingDevice{DeviceSN: "   "})
 	if cfg.EcoFlowDeviceSN != "" {
@@ -797,9 +1309,30 @@ type fakeDelta3Client struct {
 	calls  *int
 }
 
+type blockingDelta3Client struct{}
+
+type scriptedDelta3Client struct {
+	mu     sync.Mutex
+	probes []func(context.Context) (ecoflowprivate.Status, error)
+	calls  int
+}
+
+type concurrentDelta3Client struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	calls     int
+	delay     time.Duration
+}
+
 type fakeEcoFlowCloudReader struct {
 	status domain.BatteryStatus
 	err    error
+}
+
+type delayedEcoFlowCloudReader struct {
+	status domain.BatteryStatus
+	delay  time.Duration
 }
 
 type fakeEcoFlowDeveloperCycleReader struct {
@@ -808,8 +1341,23 @@ type fakeEcoFlowDeveloperCycleReader struct {
 	calls  *int
 }
 
+type blockingEcoFlowDeveloperCycleReader struct {
+	calls *int
+}
+
 func (r fakeEcoFlowCloudReader) GetBatteryStatus(context.Context) (domain.BatteryStatus, error) {
 	return r.status, r.err
+}
+
+func (r delayedEcoFlowCloudReader) GetBatteryStatus(ctx context.Context) (domain.BatteryStatus, error) {
+	timer := time.NewTimer(r.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return domain.BatteryStatus{}, ctx.Err()
+	case <-timer.C:
+		return r.status, nil
+	}
 }
 
 func (r fakeEcoFlowDeveloperCycleReader) ReadCycleStatus(context.Context) (ecoflowdeveloper.CycleStatus, error) {
@@ -819,11 +1367,59 @@ func (r fakeEcoFlowDeveloperCycleReader) ReadCycleStatus(context.Context) (ecofl
 	return r.status, r.err
 }
 
+func (r blockingEcoFlowDeveloperCycleReader) ReadCycleStatus(ctx context.Context) (ecoflowdeveloper.CycleStatus, error) {
+	if r.calls != nil {
+		*r.calls++
+	}
+	<-ctx.Done()
+	return ecoflowdeveloper.CycleStatus{}, ctx.Err()
+}
+
 func (f fakeDelta3Client) Probe(context.Context) (ecoflowprivate.Status, error) {
 	if f.calls != nil {
 		*f.calls++
 	}
 	return f.status, f.err
+}
+
+func (blockingDelta3Client) Probe(ctx context.Context) (ecoflowprivate.Status, error) {
+	<-ctx.Done()
+	return ecoflowprivate.Status{}, ctx.Err()
+}
+
+func (f *scriptedDelta3Client) Probe(ctx context.Context) (ecoflowprivate.Status, error) {
+	f.mu.Lock()
+	index := f.calls
+	f.calls++
+	if index >= len(f.probes) {
+		index = len(f.probes) - 1
+	}
+	probe := f.probes[index]
+	f.mu.Unlock()
+	return probe(ctx)
+}
+
+func (f *concurrentDelta3Client) Probe(ctx context.Context) (ecoflowprivate.Status, error) {
+	f.mu.Lock()
+	f.active++
+	f.calls++
+	if f.active > f.maxActive {
+		f.maxActive = f.active
+	}
+	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		f.active--
+		f.mu.Unlock()
+	}()
+	timer := time.NewTimer(f.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ecoflowprivate.Status{}, ctx.Err()
+	case <-timer.C:
+		return delta3StatusFixture(73), nil
+	}
 }
 
 type panicDelta3Client struct{}
