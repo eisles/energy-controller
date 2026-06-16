@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -69,32 +70,33 @@ type DeviceStatusStore interface {
 }
 
 type Delta3StatusResponse struct {
-	Available                 bool                         `json:"available"`
-	DeviceType                string                       `json:"deviceType,omitempty"`
-	SOC                       *int                         `json:"soc,omitempty"`
-	ACInW                     *int                         `json:"acInW,omitempty"`
-	ACOutW                    *int                         `json:"acOutW,omitempty"`
-	ACChargeLimitW            *int                         `json:"acChargeLimitW,omitempty"`
-	GridBypassDisabled        *bool                        `json:"gridBypassDisabled,omitempty"`
-	ACOutputEnabled           *bool                        `json:"acOutputEnabled,omitempty"`
-	ACOutput1Enabled          *bool                        `json:"acOutput1Enabled,omitempty"`
-	ACOutput2Enabled          *bool                        `json:"acOutput2Enabled,omitempty"`
-	ACOutputProtectionChannel *int                         `json:"acOutputProtectionChannel,omitempty"`
-	MaxChargeSoc              *int                         `json:"maxChargeSoc,omitempty"`
-	MinDischargeSoc           *int                         `json:"minDischargeSoc,omitempty"`
-	BackupReserveSoc          *int                         `json:"backupReserveSoc,omitempty"`
-	BackupReserveEnabled      *bool                        `json:"backupReserveEnabled,omitempty"`
-	TOUModeEnabled            *bool                        `json:"touModeEnabled,omitempty"`
-	SelfPoweredEnabled        *bool                        `json:"selfPoweredEnabled,omitempty"`
-	ScheduledEnabled          *bool                        `json:"scheduledEnabled,omitempty"`
-	IntelligentEnabled        *bool                        `json:"intelligentEnabled,omitempty"`
-	CycleCount                *int                         `json:"cycleCount,omitempty"`
-	CycleCountSource          string                       `json:"cycleCountSource,omitempty"`
-	CycleCountCandidate       *CycleCountCandidateResponse `json:"cycleCountCandidate,omitempty"`
-	UpdatedAt                 string                       `json:"updatedAt,omitempty"`
-	LastError                 string                       `json:"lastError,omitempty"`
-	Cached                    bool                         `json:"cached,omitempty"`
-	TelemetryDiagnostics      *PrivateTelemetryDiagnostics `json:"telemetryDiagnostics,omitempty"`
+	Available                 bool                          `json:"available"`
+	DeviceType                string                        `json:"deviceType,omitempty"`
+	SOC                       *int                          `json:"soc,omitempty"`
+	ACInW                     *int                          `json:"acInW,omitempty"`
+	ACOutW                    *int                          `json:"acOutW,omitempty"`
+	ACChargeLimitW            *int                          `json:"acChargeLimitW,omitempty"`
+	GridBypassDisabled        *bool                         `json:"gridBypassDisabled,omitempty"`
+	ACOutputEnabled           *bool                         `json:"acOutputEnabled,omitempty"`
+	ACOutput1Enabled          *bool                         `json:"acOutput1Enabled,omitempty"`
+	ACOutput2Enabled          *bool                         `json:"acOutput2Enabled,omitempty"`
+	ACOutputProtectionChannel *int                          `json:"acOutputProtectionChannel,omitempty"`
+	MaxChargeSoc              *int                          `json:"maxChargeSoc,omitempty"`
+	MinDischargeSoc           *int                          `json:"minDischargeSoc,omitempty"`
+	BackupReserveSoc          *int                          `json:"backupReserveSoc,omitempty"`
+	BackupReserveEnabled      *bool                         `json:"backupReserveEnabled,omitempty"`
+	TOUModeEnabled            *bool                         `json:"touModeEnabled,omitempty"`
+	SelfPoweredEnabled        *bool                         `json:"selfPoweredEnabled,omitempty"`
+	ScheduledEnabled          *bool                         `json:"scheduledEnabled,omitempty"`
+	IntelligentEnabled        *bool                         `json:"intelligentEnabled,omitempty"`
+	CycleCount                *int                          `json:"cycleCount,omitempty"`
+	CycleCountSource          string                        `json:"cycleCountSource,omitempty"`
+	CycleCountCandidate       *CycleCountCandidateResponse  `json:"cycleCountCandidate,omitempty"`
+	CycleCountCandidates      []CycleCountCandidateResponse `json:"cycleCountCandidates,omitempty"`
+	UpdatedAt                 string                        `json:"updatedAt,omitempty"`
+	LastError                 string                        `json:"lastError,omitempty"`
+	Cached                    bool                          `json:"cached,omitempty"`
+	TelemetryDiagnostics      *PrivateTelemetryDiagnostics  `json:"telemetryDiagnostics,omitempty"`
 }
 
 type CycleCountCandidateResponse struct {
@@ -806,6 +808,7 @@ func intPtr(value int) *int {
 }
 
 func mapDelta3Status(status ecoflowprivate.Status, now time.Time) Delta3StatusResponse {
+	cycleCountCandidates := privateCycleCountCandidates(status)
 	return Delta3StatusResponse{
 		Available:                 true,
 		DeviceType:                status.DeviceType,
@@ -824,13 +827,29 @@ func mapDelta3Status(status ecoflowprivate.Status, now time.Time) Delta3StatusRe
 		BackupReserveEnabled:      status.BackupReserveEnabled,
 		CycleCount:                status.CycleCount,
 		CycleCountSource:          status.CycleCountSource,
-		CycleCountCandidate:       privateCycleCountCandidate(status),
+		CycleCountCandidate:       primaryCycleCountCandidate(cycleCountCandidates),
+		CycleCountCandidates:      cycleCountCandidates,
 		UpdatedAt:                 now.Format(time.RFC3339),
 		TelemetryDiagnostics:      privateTelemetryDiagnostics(status, false),
 	}
 }
 
 func privateCycleCountCandidate(status ecoflowprivate.Status) *CycleCountCandidateResponse {
+	return primaryCycleCountCandidate(privateCycleCountCandidates(status))
+}
+
+func primaryCycleCountCandidate(candidates []CycleCountCandidateResponse) *CycleCountCandidateResponse {
+	for _, candidate := range candidates {
+		if candidate.Value < 2 {
+			continue
+		}
+		candidate := candidate
+		return &candidate
+	}
+	return nil
+}
+
+func privateCycleCountCandidates(status ecoflowprivate.Status) []CycleCountCandidateResponse {
 	if status.CycleCount != nil {
 		return nil
 	}
@@ -838,44 +857,82 @@ func privateCycleCountCandidate(status ecoflowprivate.Status) *CycleCountCandida
 	if len(preferredFields) == 0 {
 		return nil
 	}
-	if response := privateCycleCountCandidateFromCandidates(preferredFields, status.CycleFieldCandidates); response != nil {
-		return response
-	}
-	if len(status.FieldSummaries) == 0 {
+	candidates := make([]ecoflowprivate.CycleFieldCandidate, 0, len(status.CycleFieldCandidates)+len(status.FieldSummaries))
+	candidates = append(candidates, status.CycleFieldCandidates...)
+	candidates = append(candidates, preferredCycleCountCandidatesFromFieldSummaries(preferredFields, status.FieldSummaries)...)
+	return privateCycleCountCandidatesFromCandidates(preferredFields, candidates)
+}
+
+func privateCycleCountCandidateFromCandidates(preferredFields []preferredCycleCountCandidateField, candidates []ecoflowprivate.CycleFieldCandidate) *CycleCountCandidateResponse {
+	return primaryCycleCountCandidate(privateCycleCountCandidatesFromCandidates(preferredFields, candidates))
+}
+
+func privateCycleCountCandidatesFromCandidates(preferredFields []preferredCycleCountCandidateField, candidates []ecoflowprivate.CycleFieldCandidate) []CycleCountCandidateResponse {
+	if len(preferredFields) == 0 || len(candidates) == 0 {
 		return nil
 	}
-	fields := make([]ecoflowprivate.SnapshotField, 0, len(status.FieldSummaries))
-	for _, field := range status.FieldSummaries {
-		fields = append(fields, ecoflowprivate.SnapshotField{
+	byField := make(map[string]ecoflowprivate.CycleFieldCandidate, len(candidates))
+	for _, candidate := range candidates {
+		key := cycleFieldCandidateKey(candidate.CmdFunc, candidate.CmdID, candidate.Field)
+		if _, exists := byField[key]; !exists {
+			byField[key] = candidate
+		}
+	}
+	responses := make([]CycleCountCandidateResponse, 0, len(preferredFields))
+	for _, preferred := range preferredFields {
+		candidate, ok := byField[cycleFieldCandidateKey(preferred.CmdFunc, preferred.CmdID, preferred.Field)]
+		if !ok {
+			continue
+		}
+		responses = append(responses, CycleCountCandidateResponse{
+			Value:      candidate.Value,
+			Source:     cycleCountCandidateSource,
+			CmdFunc:    candidate.CmdFunc,
+			CmdID:      candidate.CmdID,
+			Field:      candidate.Field,
+			Confidence: "candidate",
+			Reason:     preferred.Reason,
+		})
+	}
+	return responses
+}
+
+func preferredCycleCountCandidatesFromFieldSummaries(preferredFields []preferredCycleCountCandidateField, fields []ecoflowprivate.TelemetryFieldSummary) []ecoflowprivate.CycleFieldCandidate {
+	if len(preferredFields) == 0 || len(fields) == 0 {
+		return nil
+	}
+	preferredKeys := make(map[string]struct{}, len(preferredFields))
+	for _, preferred := range preferredFields {
+		preferredKeys[cycleFieldCandidateKey(preferred.CmdFunc, preferred.CmdID, preferred.Field)] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(preferredFields))
+	candidates := make([]ecoflowprivate.CycleFieldCandidate, 0, len(preferredFields))
+	for _, field := range fields {
+		key := cycleFieldCandidateKey(field.CmdFunc, field.CmdID, field.Field)
+		if _, ok := preferredKeys[key]; !ok {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		value, err := strconv.Atoi(field.Value)
+		if err != nil || value < 0 {
+			continue
+		}
+		seen[key] = struct{}{}
+		candidates = append(candidates, ecoflowprivate.CycleFieldCandidate{
 			MessageIndex: field.MessageIndex,
 			CmdFunc:      field.CmdFunc,
 			CmdID:        field.CmdID,
 			Field:        field.Field,
-			Wire:         field.Wire,
-			Value:        field.Value,
+			Value:        value,
 		})
 	}
-	return privateCycleCountCandidateFromCandidates(preferredFields, ecoflowprivate.CycleFieldCandidatesFromFields(fields))
+	return candidates
 }
 
-func privateCycleCountCandidateFromCandidates(preferredFields []preferredCycleCountCandidateField, candidates []ecoflowprivate.CycleFieldCandidate) *CycleCountCandidateResponse {
-	for _, preferred := range preferredFields {
-		for _, candidate := range candidates {
-			if candidate.CmdFunc != preferred.CmdFunc || candidate.CmdID != preferred.CmdID || candidate.Field != preferred.Field {
-				continue
-			}
-			return &CycleCountCandidateResponse{
-				Value:      candidate.Value,
-				Source:     cycleCountCandidateSource,
-				CmdFunc:    candidate.CmdFunc,
-				CmdID:      candidate.CmdID,
-				Field:      candidate.Field,
-				Confidence: "candidate",
-				Reason:     preferred.Reason,
-			}
-		}
-	}
-	return nil
+func cycleFieldCandidateKey(cmdFunc int, cmdID int, field int) string {
+	return fmt.Sprintf("%d/%d/%d", cmdFunc, cmdID, field)
 }
 
 func privateTelemetryDiagnostics(status ecoflowprivate.Status, includeEmpty bool) *PrivateTelemetryDiagnostics {

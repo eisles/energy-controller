@@ -96,7 +96,7 @@ func TestReadDelta3StatusMapsDelta3PlusCycleCountCandidate(t *testing.T) {
 		CMSBatterySoc: &soc,
 		FieldSummaries: []ecoflowprivate.TelemetryFieldSummary{
 			{MessageIndex: 0, CmdFunc: 254, CmdID: 21, Field: 427, Wire: 0, Value: "79"},
-			{MessageIndex: 0, CmdFunc: 254, CmdID: 22, Field: 280, Wire: 0, Value: "2"},
+			{MessageIndex: 0, CmdFunc: 254, CmdID: 22, Field: 280, Wire: 0, Value: "0"},
 		},
 	}}, nil)
 	if response.CycleCountCandidate == nil {
@@ -108,6 +108,40 @@ func TestReadDelta3StatusMapsDelta3PlusCycleCountCandidate(t *testing.T) {
 	}
 	if candidate.Confidence != "candidate" || !strings.Contains(candidate.Reason, "not accepted cycleCount") {
 		t.Fatalf("CycleCountCandidate metadata = %+v, want candidate confidence and non-formal reason", candidate)
+	}
+	if len(response.CycleCountCandidates) != 2 {
+		t.Fatalf("CycleCountCandidates length = %d, want 2", len(response.CycleCountCandidates))
+	}
+	if got := response.CycleCountCandidates[0]; got.Value != 79 || got.CmdFunc != 254 || got.CmdID != 21 || got.Field != 427 {
+		t.Fatalf("CycleCountCandidates[0] = %+v, want 79 from 254/21/427", got)
+	}
+	if got := response.CycleCountCandidates[1]; got.Value != 0 || got.CmdFunc != 254 || got.CmdID != 22 || got.Field != 280 {
+		t.Fatalf("CycleCountCandidates[1] = %+v, want 0 from 254/22/280", got)
+	}
+}
+
+func TestReadDelta3StatusKeepsPrimaryCycleCandidatePlausible(t *testing.T) {
+	soc := 82
+	response := readDelta3Status(context.Background(), validDelta3Config(), fakeDelta3Client{status: ecoflowprivate.Status{
+		DeviceType:    "DELTA_3_PLUS",
+		CMSBatterySoc: &soc,
+		FieldSummaries: []ecoflowprivate.TelemetryFieldSummary{
+			{MessageIndex: 0, CmdFunc: 254, CmdID: 21, Field: 427, Wire: 0, Value: "0"},
+			{MessageIndex: 0, CmdFunc: 254, CmdID: 22, Field: 280, Wire: 0, Value: "79"},
+		},
+	}}, nil)
+	if response.CycleCountCandidate == nil {
+		t.Fatal("CycleCountCandidate = nil, want plausible secondary candidate")
+	}
+	candidate := response.CycleCountCandidate
+	if candidate.Value != 79 || candidate.CmdFunc != 254 || candidate.CmdID != 22 || candidate.Field != 280 {
+		t.Fatalf("CycleCountCandidate = %+v, want 79 from plausible 254/22/280", candidate)
+	}
+	if len(response.CycleCountCandidates) != 2 {
+		t.Fatalf("CycleCountCandidates length = %d, want 2", len(response.CycleCountCandidates))
+	}
+	if got := response.CycleCountCandidates[0]; got.Value != 0 || got.CmdFunc != 254 || got.CmdID != 21 || got.Field != 427 {
+		t.Fatalf("CycleCountCandidates[0] = %+v, want diagnostic 0 from 254/21/427", got)
 	}
 }
 
@@ -127,6 +161,15 @@ func TestReadDelta3StatusMapsDelta3MaxPlusCycleCountCandidate(t *testing.T) {
 	candidate := response.CycleCountCandidate
 	if candidate.Value != 5 || candidate.CmdFunc != 32 || candidate.CmdID != 50 || candidate.Field != 85 {
 		t.Fatalf("CycleCountCandidate = %+v, want preferred 5 from 32/50/85", candidate)
+	}
+	if len(response.CycleCountCandidates) != 2 {
+		t.Fatalf("CycleCountCandidates length = %d, want 2", len(response.CycleCountCandidates))
+	}
+	if got := response.CycleCountCandidates[0]; got.Value != 5 || got.CmdFunc != 32 || got.CmdID != 50 || got.Field != 85 {
+		t.Fatalf("CycleCountCandidates[0] = %+v, want 5 from 32/50/85", got)
+	}
+	if got := response.CycleCountCandidates[1]; got.Value != 8 || got.CmdFunc != 32 || got.CmdID != 50 || got.Field != 86 {
+		t.Fatalf("CycleCountCandidates[1] = %+v, want 8 from 32/50/86", got)
 	}
 }
 
@@ -151,6 +194,9 @@ func TestReadDelta3StatusMapsCycleCountCandidateFromUntruncatedCandidates(t *tes
 	if candidate.Value != 79 || candidate.CmdFunc != 254 || candidate.CmdID != 21 || candidate.Field != 427 {
 		t.Fatalf("CycleCountCandidate = %+v, want 79 from untruncated 254/21/427 candidate", candidate)
 	}
+	if len(response.CycleCountCandidates) != 1 {
+		t.Fatalf("CycleCountCandidates length = %d, want 1", len(response.CycleCountCandidates))
+	}
 }
 
 func TestReadDelta3StatusDoesNotExposeCandidateWhenCycleCountIsKnown(t *testing.T) {
@@ -165,6 +211,9 @@ func TestReadDelta3StatusDoesNotExposeCandidateWhenCycleCountIsKnown(t *testing.
 	}}, nil)
 	if response.CycleCountCandidate != nil {
 		t.Fatalf("CycleCountCandidate = %+v, want nil when formal CycleCount exists", response.CycleCountCandidate)
+	}
+	if len(response.CycleCountCandidates) != 0 {
+		t.Fatalf("CycleCountCandidates = %+v, want empty when formal CycleCount exists", response.CycleCountCandidates)
 	}
 }
 

@@ -262,6 +262,7 @@ export function Delta3StatusCard({
                           <Detail label="AC充電上限" value={nullableWatt(device.status.acChargeLimitW)} />
                           <Detail label="サイクル数" value={cycleCountLabel(device.status)} />
                           <Detail label="サイクル候補" value={cycleCountCandidateLabel(device.status)} />
+                          <Detail label="候補一覧" value={cycleCountCandidatesLabel(device.status)} />
                           <Detail label="容量" value={formatWhCapacity(device.capacityWh)} />
                           <Detail label="設定範囲" value={`${device.minChargeW}-${device.maxChargeW} W`} />
                         </div>
@@ -330,6 +331,7 @@ export function Delta3StatusCard({
               <Detail label="AC充電上限" value={nullableWatt(status.acChargeLimitW)} />
               <Detail label="サイクル数" value={cycleCountLabel(status)} />
               <Detail label="サイクル候補" value={cycleCountCandidateLabel(status)} />
+              <Detail label="候補一覧" value={cycleCountCandidatesLabel(status)} />
               <Detail label="グリッドバイパス無効化" value={nullableOnOff(status.gridBypassDisabled)} />
               <Detail label="AC output" value={nullableOnOff(status.acOutputEnabled)} />
               {hasSplitACOutput(status) ? (
@@ -457,12 +459,26 @@ function cycleCountLabel(status: Delta3Status) {
 }
 
 function cycleCountCandidateLabel(status: Delta3Status) {
-  const candidate = status.cycleCountCandidate;
-  if (!candidate) {
-    return "-";
-  }
-  const source = cycleCountSourceLabel(candidate.source);
-  return `${candidate.value} 回候補 / ${source} ${candidate.cmdFunc}/${candidate.cmdId}/${candidate.field}`;
+	const candidate = status.cycleCountCandidate;
+	if (!candidate) {
+		return "-";
+	}
+	const source = cycleCountSourceLabel(candidate.source);
+	return `${candidate.value} 回候補 / ${source} ${candidate.cmdFunc}/${candidate.cmdId}/${candidate.field}`;
+}
+
+function cycleCountCandidatesLabel(status: Delta3Status) {
+	const candidates = status.cycleCountCandidates?.length
+		? status.cycleCountCandidates
+		: status.cycleCountCandidate
+			? [status.cycleCountCandidate]
+			: [];
+	if (candidates.length === 0) {
+		return "-";
+	}
+	const source = cycleCountSourceLabel(candidates[0].source);
+	const values = candidates.map((candidate) => `${candidate.value}回 ${candidate.cmdFunc}/${candidate.cmdId}/${candidate.field}`);
+	return source ? `${source}: ${values.join(" / ")}` : values.join(" / ");
 }
 
 function cycleCountSourceLabel(value: string) {

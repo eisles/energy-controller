@@ -143,6 +143,7 @@ export type Delta3Status = {
   cycleCount?: number | null;
   cycleCountSource?: string;
   cycleCountCandidate?: CycleCountCandidate | null;
+  cycleCountCandidates?: CycleCountCandidate[];
   updatedAt?: string;
   lastError?: string | null;
   cached?: boolean;

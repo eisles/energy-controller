@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <title>Battery Cost Daily Breakdown Implementation Plan</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.7;
+        color: #172033;
+        background: #f6f8fb;
+        margin: 0;
+        padding: 32px;
+      }
+      main {
+        max-width: 960px;
+        margin: 0 auto;
+        background: #fff;
+        border: 1px solid #d8e0ea;
+        border-radius: 8px;
+        padding: 32px 40px;
+      }
+      h1 {
+        font-size: 28px;
+        margin-top: 0;
+      }
+      h2 {
+        font-size: 20px;
+        border-top: 1px solid #e5ebf2;
+        padding-top: 20px;
+        margin-top: 28px;
+      }
+      code, pre {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      pre {
+        background: #101828;
+        color: #e6edf6;
+        padding: 16px;
+        border-radius: 8px;
+        overflow-x: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th, td {
+        border: 1px solid #d8e0ea;
+        padding: 8px 10px;
+        text-align: left;
+      }
+      .note {
+        background: #eef7ff;
+        border-left: 4px solid #3178c6;
+        padding: 12px 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Battery Cost Daily Breakdown Implementation Plan</h1>
+      <p>作成時刻: 2026-06-17 04:12:41 JST</p>
+
+      <h2>Goal</h2>
+      <p>料金概算の「バッテリーあり / バッテリーなし推定」比較に、日別の判断材料を追加する。</p>
+      <ul>
+        <li>低単価充電量</li>
+        <li>高単価・中間単価での放電量</li>
+        <li>売電吸収量</li>
+        <li>推定損失量</li>
+        <li>日別のバッテリーあり / なし推定差額</li>
+      </ul>
+
+      <h2>Non-goals</h2>
+      <ul>
+        <li>EcoFlow への実機 write、制御条件、充放電ロジックは変更しない。</li>
+        <li>Nature Remo / EcoFlow の外部 API 呼び出しは追加しない。</li>
+        <li>DB migration は追加しない。既存の <code>power_logs</code> と料金マスタから集計する。</li>
+        <li>補助バッテリーの未保存入出力を新たに永続化する変更はしない。</li>
+      </ul>
+
+      <h2>Current State</h2>
+      <p><code>/api/tariff/summary</code> は <code>TariffSummary.BatteryComparison</code> を返している。比較は <code>power_logs.grid_w</code>, <code>battery_input_w</code>, <code>battery_output_w</code> から、<code>grid_w - battery_input_w + battery_output_w</code> を「バッテリーなし推定」として近似している。</p>
+      <p>現在は全期間合計だけなので、効果が小さい理由が「低単価で充電できていない」「高単価で放電できていない」「売電吸収が少ない」「損失が大きい」のどれか判別しづらい。</p>
+      <p class="note">既存の未コミット差分として、サイクル候補診断表示の変更が残っている。今回の実装ではその差分を壊さず、料金比較ファイルだけを追加変更する。</p>
+
+      <h2>Data/API Contract</h2>
+      <pre>{
+  "dailyBreakdown": [
+    {
+      "date": "2026-06-16",
+      "sampleCount": 123,
+      "actualNetCostYen": 120.5,
+      "estimatedNoBatteryNetCostYen": 132.0,
+      "estimatedSavingsYen": 11.5,
+      "lowPriceChargeKwh": 1.2,
+      "midPriceDischargeKwh": 0.3,
+      "highPriceDischargeKwh": 0.8,
+      "exportAbsorptionKwh": 0.6,
+      "batteryInputKwh": 1.4,
+      "batteryOutputKwh": 1.1,
+      "estimatedLossKwh": 0.3
+    }
+  ]
+}</pre>
+      <ul>
+        <li>日付は料金ルール解決時のローカル日付でまとめる。</li>
+        <li>低単価充電量は、該当区間が最低単価で正味充電分を加算する。</li>
+        <li>中間・高単価放電量は、該当区間で正味放電分を加算する。</li>
+        <li>売電吸収量は、実績売電中の正味充電分を、実際の売電量を上限に加算する。</li>
+        <li>推定損失量は <code>max(0, batteryInputKwh - batteryOutputKwh)</code> とする。</li>
+      </ul>
+
+      <h2>Files Likely To Change</h2>
+      <ul>
+        <li><code>backend/internal/domain/status.go</code></li>
+        <li><code>backend/internal/store/tariff_repository.go</code></li>
+        <li><code>backend/internal/store/repository_test.go</code></li>
+        <li><code>frontend/lib/types.ts</code></li>
+        <li><code>frontend/components/TariffSummaryPanel.tsx</code></li>
+      </ul>
+
+      <h2>Safety Boundaries</h2>
+      <ul>
+        <li>読み取り済みログの集計だけを変更する。</li>
+        <li>EcoFlow/Nature への write や追加 read は行わない。</li>
+        <li>制御判断、料金最適化制御、夜間充電制御は変更しない。</li>
+        <li>シリアル番号、API key、token は計画・ログ・表示に追加しない。</li>
+      </ul>
+
+      <h2>Implementation Steps</h2>
+      <ol>
+        <li>Domain 型に日別内訳を追加する。</li>
+        <li>既存の <code>batteryCostComparison</code> 集計中に、日別 map を持たせる。</li>
+        <li>各サンプル区間について、既存の合計値に加えて日別値を更新する。</li>
+        <li>日別 map を日付昇順の slice に変換し、丸め処理を行う。</li>
+        <li>Go テストで既存合計と内訳を確認する。</li>
+        <li>TypeScript 型を追加する。</li>
+        <li>料金概算 UI に「日別バッテリー効果」テーブルを追加する。</li>
+        <li>backend test、frontend build、実装レビューを実行する。</li>
+      </ol>
+
+      <h2>Review Points</h2>
+      <ul>
+        <li>既存 <code>batteryComparison</code> JSON 互換性を壊していないか。</li>
+        <li>料金区分判定が固定時刻ではなく料金マスタ解決結果に基づいているか。</li>
+        <li>パススルーに近い値を過大な充電・放電として見せていないか。</li>
+        <li>売電吸収量が実際の売電量を超えないか。</li>
+        <li>推定値であることが UI 上分かるか。</li>
+      </ul>
+
+      <h2>Verification Commands</h2>
+      <pre>cd backend &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./...
+cd frontend &amp;&amp; rtk npm run build
+rtk codex review --uncommitted</pre>
+
+      <h2>Rollback / Operational Notes</h2>
+      <p>DB migration なしのため、問題があれば追加フィールドと UI 表示を戻すだけでよい。既存の合計比較値を変更しないため、画面上の従来比較は継続して使える。</p>
+      <p>日別内訳は推定であり、補助バッテリーの機器別ログが未完全な間は効果の全量を表さない。</p>
+    </main>
+  </body>
+</html>
