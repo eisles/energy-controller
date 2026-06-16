@@ -25,6 +25,7 @@ const (
 	delta3CycleSuccessCacheTTL  = 10 * time.Minute
 	delta3CycleErrorCacheTTL    = 10 * time.Second
 	cycleCountCandidateSource   = "ecoflow_private_mqtt_candidate"
+	cycleCountCandidateMaxValue = 5000
 )
 
 type preferredCycleCountCandidateField struct {
@@ -840,7 +841,7 @@ func privateCycleCountCandidate(status ecoflowprivate.Status) *CycleCountCandida
 
 func primaryCycleCountCandidate(candidates []CycleCountCandidateResponse) *CycleCountCandidateResponse {
 	for _, candidate := range candidates {
-		if candidate.Value < 2 {
+		if candidate.Value < 2 || candidate.Value > cycleCountCandidateMaxValue {
 			continue
 		}
 		candidate := candidate
@@ -916,7 +917,7 @@ func preferredCycleCountCandidatesFromFieldSummaries(preferredFields []preferred
 			continue
 		}
 		value, err := strconv.Atoi(field.Value)
-		if err != nil || value < 0 {
+		if err != nil || value < 0 || value > cycleCountCandidateMaxValue {
 			continue
 		}
 		seen[key] = struct{}{}

@@ -145,6 +145,28 @@ func TestReadDelta3StatusKeepsPrimaryCycleCandidatePlausible(t *testing.T) {
 	}
 }
 
+func TestReadDelta3StatusRejectsImplausibleSummaryCycleCandidate(t *testing.T) {
+	soc := 82
+	response := readDelta3Status(context.Background(), validDelta3Config(), fakeDelta3Client{status: ecoflowprivate.Status{
+		DeviceType:    "DELTA_3_PLUS",
+		CMSBatterySoc: &soc,
+		FieldSummaries: []ecoflowprivate.TelemetryFieldSummary{
+			{MessageIndex: 0, CmdFunc: 254, CmdID: 21, Field: 427, Wire: 0, Value: "60000"},
+			{MessageIndex: 0, CmdFunc: 254, CmdID: 22, Field: 280, Wire: 0, Value: "79"},
+		},
+	}}, nil)
+	if response.CycleCountCandidate == nil {
+		t.Fatal("CycleCountCandidate = nil, want plausible secondary candidate")
+	}
+	candidate := response.CycleCountCandidate
+	if candidate.Value != 79 || candidate.CmdFunc != 254 || candidate.CmdID != 22 || candidate.Field != 280 {
+		t.Fatalf("CycleCountCandidate = %+v, want 79 from plausible 254/22/280", candidate)
+	}
+	if len(response.CycleCountCandidates) != 1 {
+		t.Fatalf("CycleCountCandidates length = %d, want only plausible preferred candidate", len(response.CycleCountCandidates))
+	}
+}
+
 func TestReadDelta3StatusMapsDelta3MaxPlusCycleCountCandidate(t *testing.T) {
 	soc := 82
 	response := readDelta3Status(context.Background(), validDelta3Config(), fakeDelta3Client{status: ecoflowprivate.Status{
