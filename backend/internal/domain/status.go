@@ -730,24 +730,40 @@ type TariffSummary struct {
 }
 
 type BatteryCostComparison struct {
-	Available                         bool    `json:"available"`
-	Method                            string  `json:"method"`
-	Quality                           string  `json:"quality"`
-	SampleCount                       int     `json:"sampleCount"`
-	SkippedSampleCount                int     `json:"skippedSampleCount"`
-	MaxSampleIntervalSeconds          int     `json:"maxSampleIntervalSeconds"`
-	ActualImportKWh                   float64 `json:"actualImportKwh"`
-	ActualExportKWh                   float64 `json:"actualExportKwh"`
-	ActualImportCostYen               float64 `json:"actualImportCostYen"`
-	ActualExportIncomeYen             float64 `json:"actualExportIncomeYen"`
-	ActualNetCostYen                  float64 `json:"actualNetCostYen"`
-	EstimatedNoBatteryImportKWh       float64 `json:"estimatedNoBatteryImportKwh"`
-	EstimatedNoBatteryExportKWh       float64 `json:"estimatedNoBatteryExportKwh"`
-	EstimatedNoBatteryImportCostYen   float64 `json:"estimatedNoBatteryImportCostYen"`
-	EstimatedNoBatteryExportIncomeYen float64 `json:"estimatedNoBatteryExportIncomeYen"`
-	EstimatedNoBatteryNetCostYen      float64 `json:"estimatedNoBatteryNetCostYen"`
-	EstimatedSavingsYen               float64 `json:"estimatedSavingsYen"`
-	BatteryInputKWh                   float64 `json:"batteryInputKwh"`
-	BatteryOutputKWh                  float64 `json:"batteryOutputKwh"`
-	Note                              string  `json:"note"`
+	Available                         bool                                  `json:"available"`
+	Method                            string                                `json:"method"`
+	Quality                           string                                `json:"quality"`
+	SampleCount                       int                                   `json:"sampleCount"`
+	SkippedSampleCount                int                                   `json:"skippedSampleCount"`
+	MaxSampleIntervalSeconds          int                                   `json:"maxSampleIntervalSeconds"`
+	ActualImportKWh                   float64                               `json:"actualImportKwh"`
+	ActualExportKWh                   float64                               `json:"actualExportKwh"`
+	ActualImportCostYen               float64                               `json:"actualImportCostYen"`
+	ActualExportIncomeYen             float64                               `json:"actualExportIncomeYen"`
+	ActualNetCostYen                  float64                               `json:"actualNetCostYen"`
+	EstimatedNoBatteryImportKWh       float64                               `json:"estimatedNoBatteryImportKwh"`
+	EstimatedNoBatteryExportKWh       float64                               `json:"estimatedNoBatteryExportKwh"`
+	EstimatedNoBatteryImportCostYen   float64                               `json:"estimatedNoBatteryImportCostYen"`
+	EstimatedNoBatteryExportIncomeYen float64                               `json:"estimatedNoBatteryExportIncomeYen"`
+	EstimatedNoBatteryNetCostYen      float64                               `json:"estimatedNoBatteryNetCostYen"`
+	EstimatedSavingsYen               float64                               `json:"estimatedSavingsYen"`
+	BatteryInputKWh                   float64                               `json:"batteryInputKwh"`
+	BatteryOutputKWh                  float64                               `json:"batteryOutputKwh"`
+	DailyBreakdown                    []BatteryCostComparisonDailyBreakdown `json:"dailyBreakdown,omitempty"`
+	Note                              string                                `json:"note"`
+}
+
+type BatteryCostComparisonDailyBreakdown struct {
+	Date                         string  `json:"date"`
+	SampleCount                  int     `json:"sampleCount"`
+	ActualNetCostYen             float64 `json:"actualNetCostYen"`
+	EstimatedNoBatteryNetCostYen float64 `json:"estimatedNoBatteryNetCostYen"`
+	EstimatedSavingsYen          float64 `json:"estimatedSavingsYen"`
+	LowPriceChargeKWh            float64 `json:"lowPriceChargeKwh"`
+	MidPriceDischargeKWh         float64 `json:"midPriceDischargeKwh"`
+	HighPriceDischargeKWh        float64 `json:"highPriceDischargeKwh"`
+	ExportAbsorptionKWh          float64 `json:"exportAbsorptionKwh"`
+	BatteryInputKWh              float64 `json:"batteryInputKwh"`
+	BatteryOutputKWh             float64 `json:"batteryOutputKwh"`
+	EstimatedLossKWh             float64 `json:"estimatedLossKwh"`
 }

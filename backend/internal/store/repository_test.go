@@ -1325,6 +1325,148 @@ func TestTariffRepositoryEstimatesBatteryCostComparison(t *testing.T) {
 	}
 }
 
+func TestTariffRepositorySummarizesBatteryCostDailyBreakdown(t *testing.T) {
+	db := openTestDB(t)
+	tariffRepo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	day := time.Date(2026, 5, 18, 0, 0, 0, 0, jst)
+	samples := []struct {
+		at             time.Time
+		gridW          int
+		batteryInputW  int
+		batteryOutputW int
+	}{
+		{at: day, gridW: -300, batteryInputW: 500, batteryOutputW: 0},
+		{at: day.Add(time.Minute), gridW: 0, batteryInputW: 0, batteryOutputW: 0},
+		{at: day.Add(10 * time.Hour), gridW: 300, batteryInputW: 0, batteryOutputW: 600},
+		{at: day.Add(10*time.Hour + time.Minute), gridW: 0, batteryInputW: 0, batteryOutputW: 0},
+		{at: day.Add(18 * time.Hour), gridW: 300, batteryInputW: 0, batteryOutputW: 600},
+		{at: day.Add(18*time.Hour + time.Minute), gridW: 0, batteryInputW: 0, batteryOutputW: 0},
+	}
+	for _, sample := range samples {
+		if _, err := db.Exec(`INSERT INTO power_logs (
+			measured_at, grid_w, import_w, export_w, battery_soc, battery_input_w,
+			battery_output_w, ac_charge_limit_w, target_charge_w, decision_reason,
+			mode, command_sent, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			sample.at.Format(time.RFC3339Nano),
+			sample.gridW,
+			max(sample.gridW, 0),
+			max(-sample.gridW, 0),
+			50,
+			sample.batteryInputW,
+			sample.batteryOutputW,
+			400,
+			0,
+			"test",
+			"test",
+			0,
+			sample.at.Format(time.RFC3339Nano),
+		); err != nil {
+			t.Fatalf("insert power log failed: %v", err)
+		}
+	}
+
+	summary, err := tariffRepo.EnergyCostSummary(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("EnergyCostSummary failed: %v", err)
+	}
+	comparison := summary.BatteryComparison
+	if comparison == nil || !comparison.Available {
+		t.Fatalf("BatteryComparison = %#v, want available comparison", comparison)
+	}
+	if len(comparison.DailyBreakdown) != 1 {
+		t.Fatalf("DailyBreakdown length = %d, want 1", len(comparison.DailyBreakdown))
+	}
+	got := comparison.DailyBreakdown[0]
+	if got.Date != "2026-05-18" || got.SampleCount != 3 {
+		t.Fatalf("daily key/count = %s/%d, want 2026-05-18/3", got.Date, got.SampleCount)
+	}
+	if !floatAlmostEqual(got.LowPriceChargeKWh, 0.0083) {
+		t.Fatalf("LowPriceChargeKWh = %v, want 0.0083", got.LowPriceChargeKWh)
+	}
+	if !floatAlmostEqual(got.HighPriceDischargeKWh, 0.01) {
+		t.Fatalf("HighPriceDischargeKWh = %v, want 0.01", got.HighPriceDischargeKWh)
+	}
+	if !floatAlmostEqual(got.MidPriceDischargeKWh, 0.01) {
+		t.Fatalf("MidPriceDischargeKWh = %v, want 0.01", got.MidPriceDischargeKWh)
+	}
+	if !floatAlmostEqual(got.ExportAbsorptionKWh, 0.0083) {
+		t.Fatalf("ExportAbsorptionKWh = %v, want 0.0083", got.ExportAbsorptionKWh)
+	}
+	if !floatAlmostEqual(got.BatteryInputKWh, 0.0083) || !floatAlmostEqual(got.BatteryOutputKWh, 0.02) {
+		t.Fatalf("battery kWh = input %v output %v, want 0.0083 and 0.02", got.BatteryInputKWh, got.BatteryOutputKWh)
+	}
+	if !floatAlmostEqual(got.EstimatedLossKWh, 0) {
+		t.Fatalf("EstimatedLossKWh = %v, want 0 because daily output exceeds input", got.EstimatedLossKWh)
+	}
+}
+
+func TestTariffRepositoryDoesNotClassifyFlatRateBatteryDischarge(t *testing.T) {
+	db := openTestDB(t)
+	tariffRepo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	day := time.Date(2026, 5, 18, 10, 0, 0, 0, jst)
+	if _, err := tariffRepo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "flat",
+		DayRateYen:    25,
+		HomeRateYen:   25,
+		NightRateYen:  25,
+		ExportRateYen: 8,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: day.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertTariffPlan failed: %v", err)
+	}
+	samples := []struct {
+		at             time.Time
+		gridW          int
+		batteryOutputW int
+	}{
+		{at: day, gridW: 300, batteryOutputW: 600},
+		{at: day.Add(time.Minute), gridW: 0, batteryOutputW: 0},
+	}
+	for _, sample := range samples {
+		if _, err := db.Exec(`INSERT INTO power_logs (
+			measured_at, grid_w, import_w, export_w, battery_soc, battery_input_w,
+			battery_output_w, ac_charge_limit_w, target_charge_w, decision_reason,
+			mode, command_sent, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			sample.at.Format(time.RFC3339Nano),
+			sample.gridW,
+			max(sample.gridW, 0),
+			max(-sample.gridW, 0),
+			50,
+			0,
+			sample.batteryOutputW,
+			400,
+			0,
+			"test",
+			"test",
+			0,
+			sample.at.Format(time.RFC3339Nano),
+		); err != nil {
+			t.Fatalf("insert power log failed: %v", err)
+		}
+	}
+
+	summary, err := tariffRepo.EnergyCostSummary(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("EnergyCostSummary failed: %v", err)
+	}
+	comparison := summary.BatteryComparison
+	if comparison == nil || len(comparison.DailyBreakdown) != 1 {
+		t.Fatalf("DailyBreakdown = %#v, want one day", comparison)
+	}
+	got := comparison.DailyBreakdown[0]
+	if !floatAlmostEqual(got.BatteryOutputKWh, 0.01) {
+		t.Fatalf("BatteryOutputKWh = %v, want 0.01", got.BatteryOutputKWh)
+	}
+	if got.LowPriceChargeKWh != 0 || got.MidPriceDischargeKWh != 0 || got.HighPriceDischargeKWh != 0 {
+		t.Fatalf("price classified kWh = low %v mid %v high %v, want all zero for flat rate", got.LowPriceChargeKWh, got.MidPriceDischargeKWh, got.HighPriceDischargeKWh)
+	}
+}
+
 func TestTariffRepositoryUsesHistoricalPlanAtMeasuredAt(t *testing.T) {
 	db := openTestDB(t)
 	meterRepo := NewEnergyMeterRepository(db)

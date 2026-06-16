@@ -305,6 +305,8 @@ func (r *TariffRepository) batteryCostComparison(ctx context.Context, plans []do
 	}
 	defer rows.Close()
 
+	dailyBreakdown := map[string]*domain.BatteryCostComparisonDailyBreakdown{}
+	rateBounds := map[string]tariffRateBound{}
 	var previous *batteryCostSample
 	for rows.Next() {
 		current, err := scanBatteryCostSample(rows)
@@ -312,7 +314,7 @@ func (r *TariffRepository) batteryCostComparison(ctx context.Context, plans []do
 			return comparison, err
 		}
 		if previous != nil {
-			if err := addBatteryCostInterval(&comparison, plans, rulesByPlanID, *previous, current.measuredAt); err != nil {
+			if err := addBatteryCostInterval(&comparison, dailyBreakdown, rateBounds, plans, rulesByPlanID, *previous, current.measuredAt); err != nil {
 				return comparison, err
 			}
 		}
@@ -338,6 +340,7 @@ func (r *TariffRepository) batteryCostComparison(ctx context.Context, plans []do
 	comparison.EstimatedSavingsYen = round2(comparison.EstimatedNoBatteryNetCostYen - comparison.ActualNetCostYen)
 	comparison.BatteryInputKWh = round4(comparison.BatteryInputKWh)
 	comparison.BatteryOutputKWh = round4(comparison.BatteryOutputKWh)
+	comparison.DailyBreakdown = finalizeBatteryCostDailyBreakdown(dailyBreakdown)
 	return comparison, nil
 }
 
@@ -346,6 +349,11 @@ type batteryCostSample struct {
 	gridW          int
 	batteryInputW  int
 	batteryOutputW int
+}
+
+type tariffRateBound struct {
+	lowest  float64
+	highest float64
 }
 
 func (r *TariffRepository) queryPowerLogBatterySamples(ctx context.Context, from *time.Time, to *time.Time) (*sql.Rows, error) {
@@ -372,7 +380,7 @@ func scanBatteryCostSample(rows *sql.Rows) (batteryCostSample, error) {
 	return sample, nil
 }
 
-func addBatteryCostInterval(comparison *domain.BatteryCostComparison, plans []domain.TariffPlan, rulesByPlanID map[int64][]domain.TariffPeriodRule, sample batteryCostSample, nextMeasuredAt time.Time) error {
+func addBatteryCostInterval(comparison *domain.BatteryCostComparison, dailyBreakdown map[string]*domain.BatteryCostComparisonDailyBreakdown, rateBounds map[string]tariffRateBound, plans []domain.TariffPlan, rulesByPlanID map[int64][]domain.TariffPeriodRule, sample batteryCostSample, nextMeasuredAt time.Time) error {
 	duration := nextMeasuredAt.Sub(sample.measuredAt)
 	if duration <= 0 {
 		comparison.SkippedSampleCount++
@@ -390,6 +398,14 @@ func addBatteryCostInterval(comparison *domain.BatteryCostComparison, plans []do
 		comparison.SkippedSampleCount++
 		return nil
 	}
+	location, err := time.LoadLocation(plan.Timezone)
+	if err != nil {
+		return err
+	}
+	localMeasuredAt := sample.measuredAt.In(location)
+	rules := rulesByPlanID[plan.ID]
+	dayType := tariffDayType(localMeasuredAt)
+	lowestRate, highestRate := cachedTariffRateBoundsForDayType(rateBounds, plan.ID, rules, dayType)
 
 	hours := duration.Hours()
 	actualKWh := float64(sample.gridW) * hours / 1000
@@ -397,6 +413,8 @@ func addBatteryCostInterval(comparison *domain.BatteryCostComparison, plans []do
 	noBatteryKWh := float64(noBatteryW) * hours / 1000
 	batteryInputKWh := float64(sample.batteryInputW) * hours / 1000
 	batteryOutputKWh := float64(sample.batteryOutputW) * hours / 1000
+	netChargeKWh := positiveFloat(batteryInputKWh - batteryOutputKWh)
+	netDischargeKWh := positiveFloat(batteryOutputKWh - batteryInputKWh)
 
 	addTariffEnergy(
 		&comparison.ActualImportKWh,
@@ -423,7 +441,120 @@ func addBatteryCostInterval(comparison *domain.BatteryCostComparison, plans []do
 		comparison.BatteryOutputKWh += batteryOutputKWh
 	}
 	comparison.SampleCount++
+	addBatteryCostDailyInterval(
+		dailyBreakdown,
+		localMeasuredAt.Format("2006-01-02"),
+		actualKWh,
+		noBatteryKWh,
+		batteryInputKWh,
+		batteryOutputKWh,
+		netChargeKWh,
+		netDischargeKWh,
+		rule.RateYen,
+		plan.ExportRateYen,
+		lowestRate,
+		highestRate,
+	)
 	return nil
+}
+
+func cachedTariffRateBoundsForDayType(cache map[string]tariffRateBound, planID int64, rules []domain.TariffPeriodRule, dayType string) (float64, float64) {
+	if cache == nil {
+		return tariffRateBoundsForDayType(rules, dayType)
+	}
+	key := fmt.Sprintf("%d:%s", planID, dayType)
+	if bounds, ok := cache[key]; ok {
+		return bounds.lowest, bounds.highest
+	}
+	lowest, highest := tariffRateBoundsForDayType(rules, dayType)
+	cache[key] = tariffRateBound{lowest: lowest, highest: highest}
+	return lowest, highest
+}
+
+func addBatteryCostDailyInterval(dailyBreakdown map[string]*domain.BatteryCostComparisonDailyBreakdown, date string, actualKWh float64, noBatteryKWh float64, batteryInputKWh float64, batteryOutputKWh float64, netChargeKWh float64, netDischargeKWh float64, rateYen float64, exportRateYen float64, lowestRateYen float64, highestRateYen float64) {
+	if dailyBreakdown == nil || date == "" {
+		return
+	}
+	day := dailyBreakdown[date]
+	if day == nil {
+		day = &domain.BatteryCostComparisonDailyBreakdown{Date: date}
+		dailyBreakdown[date] = day
+	}
+	day.SampleCount++
+	day.ActualNetCostYen += signedEnergyNetCost(actualKWh, rateYen, exportRateYen)
+	day.EstimatedNoBatteryNetCostYen += signedEnergyNetCost(noBatteryKWh, rateYen, exportRateYen)
+	if batteryInputKWh > 0 {
+		day.BatteryInputKWh += batteryInputKWh
+	}
+	if batteryOutputKWh > 0 {
+		day.BatteryOutputKWh += batteryOutputKWh
+	}
+	if netChargeKWh > 0 && isLowestTariffRate(rateYen, lowestRateYen, highestRateYen) {
+		day.LowPriceChargeKWh += netChargeKWh
+	}
+	if netDischargeKWh > 0 && hasTariffRateSpread(lowestRateYen, highestRateYen) {
+		if isHighestTariffRate(rateYen, lowestRateYen, highestRateYen) {
+			day.HighPriceDischargeKWh += netDischargeKWh
+		} else if !isLowestTariffRate(rateYen, lowestRateYen, highestRateYen) {
+			day.MidPriceDischargeKWh += netDischargeKWh
+		}
+	}
+	if netChargeKWh > 0 && noBatteryKWh < 0 {
+		day.ExportAbsorptionKWh += math.Min(netChargeKWh, -noBatteryKWh)
+	}
+}
+
+func finalizeBatteryCostDailyBreakdown(dailyBreakdown map[string]*domain.BatteryCostComparisonDailyBreakdown) []domain.BatteryCostComparisonDailyBreakdown {
+	if len(dailyBreakdown) == 0 {
+		return nil
+	}
+	dates := make([]string, 0, len(dailyBreakdown))
+	for date := range dailyBreakdown {
+		dates = append(dates, date)
+	}
+	sort.Strings(dates)
+	results := make([]domain.BatteryCostComparisonDailyBreakdown, 0, len(dates))
+	for _, date := range dates {
+		day := *dailyBreakdown[date]
+		day.ActualNetCostYen = round2(day.ActualNetCostYen)
+		day.EstimatedNoBatteryNetCostYen = round2(day.EstimatedNoBatteryNetCostYen)
+		day.EstimatedSavingsYen = round2(day.EstimatedNoBatteryNetCostYen - day.ActualNetCostYen)
+		day.LowPriceChargeKWh = round4(day.LowPriceChargeKWh)
+		day.MidPriceDischargeKWh = round4(day.MidPriceDischargeKWh)
+		day.HighPriceDischargeKWh = round4(day.HighPriceDischargeKWh)
+		day.ExportAbsorptionKWh = round4(day.ExportAbsorptionKWh)
+		day.BatteryInputKWh = round4(day.BatteryInputKWh)
+		day.BatteryOutputKWh = round4(day.BatteryOutputKWh)
+		day.EstimatedLossKWh = round4(positiveFloat(day.BatteryInputKWh - day.BatteryOutputKWh))
+		results = append(results, day)
+	}
+	return results
+}
+
+func signedEnergyNetCost(signedKWh float64, importRateYen float64, exportRateYen float64) float64 {
+	if signedKWh >= 0 {
+		return signedKWh * importRateYen
+	}
+	return signedKWh * exportRateYen
+}
+
+func hasTariffRateSpread(lowestRateYen float64, highestRateYen float64) bool {
+	return lowestRateYen > 0 && highestRateYen > 0 && !rateEquals(highestRateYen, lowestRateYen)
+}
+
+func isLowestTariffRate(rateYen float64, lowestRateYen float64, highestRateYen float64) bool {
+	return hasTariffRateSpread(lowestRateYen, highestRateYen) && rateEquals(rateYen, lowestRateYen)
+}
+
+func isHighestTariffRate(rateYen float64, lowestRateYen float64, highestRateYen float64) bool {
+	return hasTariffRateSpread(lowestRateYen, highestRateYen) && rateEquals(rateYen, highestRateYen)
+}
+
+func positiveFloat(value float64) float64 {
+	if value > 0 {
+		return value
+	}
+	return 0
 }
 
 func addTariffEnergy(importKWh *float64, exportKWh *float64, importCostYen *float64, exportIncomeYen *float64, signedKWh float64, importRateYen float64, exportRateYen float64) {

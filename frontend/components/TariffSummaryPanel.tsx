@@ -224,6 +224,44 @@ function BatteryComparisonSummary({ summary }: { summary: TariffSummary }) {
           </TableBody>
         </Table>
       </div>
+      <div className="table-wrap tariff-table-wrap">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>日付</TableHead>
+              <TableHead>比較件数</TableHead>
+              <TableHead>低単価充電</TableHead>
+              <TableHead>中間放電</TableHead>
+              <TableHead>高単価放電</TableHead>
+              <TableHead>売電吸収</TableHead>
+              <TableHead>推定損失</TableHead>
+              <TableHead>削減額</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {comparison.dailyBreakdown && comparison.dailyBreakdown.length > 0 ? (
+              comparison.dailyBreakdown.map((day) => (
+                <TableRow key={day.date}>
+                  <TableCell>{day.date}</TableCell>
+                  <TableCell>{day.sampleCount} 件</TableCell>
+                  <TableCell>{kwh(day.lowPriceChargeKwh)}</TableCell>
+                  <TableCell>{kwh(day.midPriceDischargeKwh)}</TableCell>
+                  <TableCell>{kwh(day.highPriceDischargeKwh)}</TableCell>
+                  <TableCell>{kwh(day.exportAbsorptionKwh)}</TableCell>
+                  <TableCell>{kwh(day.estimatedLossKwh)}</TableCell>
+                  <TableCell>{yen(day.estimatedSavingsYen)}</TableCell>
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell colSpan={8} className="empty-cell">
+                  日別のバッテリー効果内訳はまだありません。
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
       <p className="readonly-note">
         {comparison.note}
         {comparison.skippedSampleCount > 0

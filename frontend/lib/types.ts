@@ -774,7 +774,23 @@ export type BatteryCostComparison = {
   estimatedSavingsYen: number;
   batteryInputKwh: number;
   batteryOutputKwh: number;
+  dailyBreakdown?: BatteryCostComparisonDailyBreakdown[];
   note: string;
+};
+
+export type BatteryCostComparisonDailyBreakdown = {
+  date: string;
+  sampleCount: number;
+  actualNetCostYen: number;
+  estimatedNoBatteryNetCostYen: number;
+  estimatedSavingsYen: number;
+  lowPriceChargeKwh: number;
+  midPriceDischargeKwh: number;
+  highPriceDischargeKwh: number;
+  exportAbsorptionKwh: number;
+  batteryInputKwh: number;
+  batteryOutputKwh: number;
+  estimatedLossKwh: number;
 };
 
 export type TariffPlan = {
