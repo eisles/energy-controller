@@ -772,6 +772,12 @@ export type BatteryCostComparison = {
   estimatedNoBatteryExportIncomeYen: number;
   estimatedNoBatteryNetCostYen: number;
   estimatedSavingsYen: number;
+  inventoryStartSoc?: number;
+  inventoryEndSoc?: number;
+  inventoryDeltaKwh?: number;
+  inventoryValueYen?: number;
+  inventoryValueRateYen?: number;
+  adjustedEstimatedSavingsYen?: number;
   batteryInputKwh: number;
   batteryOutputKwh: number;
   dailyBreakdown?: BatteryCostComparisonDailyBreakdown[];
@@ -784,6 +790,12 @@ export type BatteryCostComparisonDailyBreakdown = {
   actualNetCostYen: number;
   estimatedNoBatteryNetCostYen: number;
   estimatedSavingsYen: number;
+  inventoryStartSoc?: number;
+  inventoryEndSoc?: number;
+  inventoryDeltaKwh?: number;
+  inventoryValueYen?: number;
+  inventoryValueRateYen?: number;
+  adjustedEstimatedSavingsYen?: number;
   lowPriceChargeKwh: number;
   midPriceDischargeKwh: number;
   highPriceDischargeKwh: number;

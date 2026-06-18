@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Battery Cost SOC Inventory Adjustment Plan</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f6f7f9; color: #111827; }
+    main { max-width: 980px; margin: 0 auto; padding: 32px 20px 56px; }
+    h1 { font-size: 30px; margin: 0 0 8px; }
+    h2 { margin-top: 28px; font-size: 20px; border-bottom: 1px solid #d7dde6; padding-bottom: 8px; }
+    p, li { line-height: 1.7; }
+    .meta { color: #5b6678; margin-bottom: 24px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 18px 0; }
+    .card { background: #fff; border: 1px solid #d7dde6; border-radius: 8px; padding: 16px; }
+    code, pre { background: #eef2f7; border-radius: 6px; }
+    code { padding: 2px 5px; }
+    pre { padding: 14px; overflow-x: auto; }
+    .safe { border-left: 4px solid #0f766e; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Battery Cost SOC Inventory Adjustment Plan</h1>
+  <div class="meta">作成日時: 2026-06-17 10:42:16 JST</div>
+
+  <section class="card safe">
+    <h2>目的</h2>
+    <p>料金比較にSOC増減による在庫価値を追加し、生の削減額と在庫調整後削減額を分けて表示する。制御や実機writeは変更しない。</p>
+  </section>
+
+  <h2>背景</h2>
+  <p>現行の推定損失は <code>batteryInputKWh - batteryOutputKWh</code> を中心に見ているため、日をまたいで残ったSOCが損失のように見える場合がある。前日以前から貯めたSOCを使った日は、逆に当日の効果を過大評価する場合がある。</p>
+
+  <h2>実装範囲</h2>
+  <div class="grid">
+    <div class="card"><strong>API</strong><br>在庫SOC、在庫kWh、在庫価値、調整後削減額を追加する。</div>
+    <div class="card"><strong>集計</strong><br><code>power_logs.battery_soc</code> と機器容量から日別SOC増減を評価する。</div>
+    <div class="card"><strong>UI</strong><br>サマリーと日別テーブルに在庫補正を表示する。</div>
+    <div class="card"><strong>安全境界</strong><br>EcoFlow/Natureへのwrite、制御判断、実機制御フラグは変更しない。</div>
+  </div>
+
+  <h2>計算式</h2>
+  <pre><code>inventoryDeltaKWh = capacityKWh * (endSoc - startSoc) / 100
+inventoryValueRateYen = 対象日の料金マスタの最高買電単価
+inventoryValueYen = inventoryDeltaKWh * inventoryValueRateYen
+adjustedEstimatedSavingsYen = estimatedSavingsYen + inventoryValueYen</code></pre>
+
+  <h2>テスト</h2>
+  <ul>
+    <li>SOCが上がった日は在庫価値がプラスになり、調整後削減額が生の削減額より大きくなる。</li>
+    <li>SOCが下がった日は在庫価値がマイナスになり、過去在庫消費として補正される。</li>
+    <li>SOCまたは容量が不足している場合も既存比較は返る。</li>
+  </ul>
+
+  <h2>確認コマンド</h2>
+  <pre><code>cd backend && rtk go test ./...
+cd frontend && rtk npm run build</code></pre>
+</main>
+</body>
+</html>

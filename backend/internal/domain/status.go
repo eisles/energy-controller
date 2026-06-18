@@ -747,6 +747,12 @@ type BatteryCostComparison struct {
 	EstimatedNoBatteryExportIncomeYen float64                               `json:"estimatedNoBatteryExportIncomeYen"`
 	EstimatedNoBatteryNetCostYen      float64                               `json:"estimatedNoBatteryNetCostYen"`
 	EstimatedSavingsYen               float64                               `json:"estimatedSavingsYen"`
+	InventoryStartSoc                 *int                                  `json:"inventoryStartSoc,omitempty"`
+	InventoryEndSoc                   *int                                  `json:"inventoryEndSoc,omitempty"`
+	InventoryDeltaKWh                 *float64                              `json:"inventoryDeltaKwh,omitempty"`
+	InventoryValueYen                 *float64                              `json:"inventoryValueYen,omitempty"`
+	InventoryValueRateYen             *float64                              `json:"inventoryValueRateYen,omitempty"`
+	AdjustedEstimatedSavingsYen       *float64                              `json:"adjustedEstimatedSavingsYen,omitempty"`
 	BatteryInputKWh                   float64                               `json:"batteryInputKwh"`
 	BatteryOutputKWh                  float64                               `json:"batteryOutputKwh"`
 	DailyBreakdown                    []BatteryCostComparisonDailyBreakdown `json:"dailyBreakdown,omitempty"`
@@ -754,16 +760,22 @@ type BatteryCostComparison struct {
 }
 
 type BatteryCostComparisonDailyBreakdown struct {
-	Date                         string  `json:"date"`
-	SampleCount                  int     `json:"sampleCount"`
-	ActualNetCostYen             float64 `json:"actualNetCostYen"`
-	EstimatedNoBatteryNetCostYen float64 `json:"estimatedNoBatteryNetCostYen"`
-	EstimatedSavingsYen          float64 `json:"estimatedSavingsYen"`
-	LowPriceChargeKWh            float64 `json:"lowPriceChargeKwh"`
-	MidPriceDischargeKWh         float64 `json:"midPriceDischargeKwh"`
-	HighPriceDischargeKWh        float64 `json:"highPriceDischargeKwh"`
-	ExportAbsorptionKWh          float64 `json:"exportAbsorptionKwh"`
-	BatteryInputKWh              float64 `json:"batteryInputKwh"`
-	BatteryOutputKWh             float64 `json:"batteryOutputKwh"`
-	EstimatedLossKWh             float64 `json:"estimatedLossKwh"`
+	Date                         string   `json:"date"`
+	SampleCount                  int      `json:"sampleCount"`
+	ActualNetCostYen             float64  `json:"actualNetCostYen"`
+	EstimatedNoBatteryNetCostYen float64  `json:"estimatedNoBatteryNetCostYen"`
+	EstimatedSavingsYen          float64  `json:"estimatedSavingsYen"`
+	InventoryStartSoc            *int     `json:"inventoryStartSoc,omitempty"`
+	InventoryEndSoc              *int     `json:"inventoryEndSoc,omitempty"`
+	InventoryDeltaKWh            *float64 `json:"inventoryDeltaKwh,omitempty"`
+	InventoryValueYen            *float64 `json:"inventoryValueYen,omitempty"`
+	InventoryValueRateYen        *float64 `json:"inventoryValueRateYen,omitempty"`
+	AdjustedEstimatedSavingsYen  *float64 `json:"adjustedEstimatedSavingsYen,omitempty"`
+	LowPriceChargeKWh            float64  `json:"lowPriceChargeKwh"`
+	MidPriceDischargeKWh         float64  `json:"midPriceDischargeKwh"`
+	HighPriceDischargeKWh        float64  `json:"highPriceDischargeKwh"`
+	ExportAbsorptionKWh          float64  `json:"exportAbsorptionKwh"`
+	BatteryInputKWh              float64  `json:"batteryInputKwh"`
+	BatteryOutputKWh             float64  `json:"batteryOutputKwh"`
+	EstimatedLossKWh             float64  `json:"estimatedLossKwh"`
 }

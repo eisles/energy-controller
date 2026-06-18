@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/eisles/energy-controller/backend/internal/domain"
@@ -299,6 +300,10 @@ func (r *TariffRepository) batteryCostComparison(ctx context.Context, plans []do
 		MaxSampleIntervalSeconds: int(batteryComparisonMaxSampleInterval.Seconds()),
 		Note:                     "power_logs の DELTA Pro 3 入出力から、grid_w - battery_input_w + battery_output_w でポータブルバッテリー無しを近似します。機器別入出力ログが揃うまでは補助バッテリー分は限定的な推定です。",
 	}
+	inventoryCapacityWh, err := r.batteryInventoryCapacityWh(ctx)
+	if err != nil {
+		return comparison, err
+	}
 	rows, err := r.queryPowerLogBatterySamples(ctx, from, to)
 	if err != nil {
 		return comparison, err
@@ -314,7 +319,7 @@ func (r *TariffRepository) batteryCostComparison(ctx context.Context, plans []do
 			return comparison, err
 		}
 		if previous != nil {
-			if err := addBatteryCostInterval(&comparison, dailyBreakdown, rateBounds, plans, rulesByPlanID, *previous, current.measuredAt); err != nil {
+			if err := addBatteryCostInterval(&comparison, dailyBreakdown, rateBounds, plans, rulesByPlanID, *previous, current, inventoryCapacityWh); err != nil {
 				return comparison, err
 			}
 		}
@@ -340,13 +345,15 @@ func (r *TariffRepository) batteryCostComparison(ctx context.Context, plans []do
 	comparison.EstimatedSavingsYen = round2(comparison.EstimatedNoBatteryNetCostYen - comparison.ActualNetCostYen)
 	comparison.BatteryInputKWh = round4(comparison.BatteryInputKWh)
 	comparison.BatteryOutputKWh = round4(comparison.BatteryOutputKWh)
-	comparison.DailyBreakdown = finalizeBatteryCostDailyBreakdown(dailyBreakdown)
+	comparison.DailyBreakdown = finalizeBatteryCostDailyBreakdown(dailyBreakdown, inventoryCapacityWh)
+	finalizeBatteryCostComparisonInventory(&comparison, inventoryCapacityWh)
 	return comparison, nil
 }
 
 type batteryCostSample struct {
 	measuredAt     time.Time
 	gridW          int
+	batterySOC     sql.NullInt64
 	batteryInputW  int
 	batteryOutputW int
 }
@@ -360,7 +367,7 @@ func (r *TariffRepository) queryPowerLogBatterySamples(ctx context.Context, from
 	filter := EnergyMeterLogPageFilter{From: from, To: to}
 	whereClause, args := energyMeterLogWhere(filter)
 	return r.db.QueryContext(ctx, `SELECT measured_at, grid_w,
-		COALESCE(battery_input_w, 0), COALESCE(battery_output_w, 0)
+		battery_soc, COALESCE(battery_input_w, 0), COALESCE(battery_output_w, 0)
 		FROM power_logs
 		`+whereClause+`
 		ORDER BY measured_at ASC, id ASC`, args...)
@@ -369,7 +376,7 @@ func (r *TariffRepository) queryPowerLogBatterySamples(ctx context.Context, from
 func scanBatteryCostSample(rows *sql.Rows) (batteryCostSample, error) {
 	var sample batteryCostSample
 	var measuredAt string
-	if err := rows.Scan(&measuredAt, &sample.gridW, &sample.batteryInputW, &sample.batteryOutputW); err != nil {
+	if err := rows.Scan(&measuredAt, &sample.gridW, &sample.batterySOC, &sample.batteryInputW, &sample.batteryOutputW); err != nil {
 		return batteryCostSample{}, err
 	}
 	parsedMeasuredAt, err := parseTime(measuredAt)
@@ -380,8 +387,29 @@ func scanBatteryCostSample(rows *sql.Rows) (batteryCostSample, error) {
 	return sample, nil
 }
 
-func addBatteryCostInterval(comparison *domain.BatteryCostComparison, dailyBreakdown map[string]*domain.BatteryCostComparisonDailyBreakdown, rateBounds map[string]tariffRateBound, plans []domain.TariffPlan, rulesByPlanID map[int64][]domain.TariffPeriodRule, sample batteryCostSample, nextMeasuredAt time.Time) error {
-	duration := nextMeasuredAt.Sub(sample.measuredAt)
+func (r *TariffRepository) batteryInventoryCapacityWh(ctx context.Context) (int, error) {
+	var capacityWh int
+	err := r.db.QueryRowContext(ctx, `SELECT capacity_wh
+		FROM charging_devices
+		WHERE enabled = 1 AND capacity_wh > 0
+		ORDER BY
+			CASE
+				WHEN kind = 'ecoflow_delta_pro3' OR device_type = 'DELTA_PRO3' THEN 0
+				ELSE 1
+			END,
+			capacity_wh DESC
+		LIMIT 1`).Scan(&capacityWh)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || strings.Contains(err.Error(), "no such table: charging_devices") {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return capacityWh, nil
+}
+
+func addBatteryCostInterval(comparison *domain.BatteryCostComparison, dailyBreakdown map[string]*domain.BatteryCostComparisonDailyBreakdown, rateBounds map[string]tariffRateBound, plans []domain.TariffPlan, rulesByPlanID map[int64][]domain.TariffPeriodRule, sample batteryCostSample, next batteryCostSample, inventoryCapacityWh int) error {
+	duration := next.measuredAt.Sub(sample.measuredAt)
 	if duration <= 0 {
 		comparison.SkippedSampleCount++
 		return nil
@@ -441,9 +469,12 @@ func addBatteryCostInterval(comparison *domain.BatteryCostComparison, dailyBreak
 		comparison.BatteryOutputKWh += batteryOutputKWh
 	}
 	comparison.SampleCount++
+	updateBatteryCostComparisonInventory(comparison, sample, next, inventoryCapacityWh)
 	addBatteryCostDailyInterval(
 		dailyBreakdown,
 		localMeasuredAt.Format("2006-01-02"),
+		localMeasuredAt,
+		next.measuredAt.In(location),
 		actualKWh,
 		noBatteryKWh,
 		batteryInputKWh,
@@ -454,6 +485,9 @@ func addBatteryCostInterval(comparison *domain.BatteryCostComparison, dailyBreak
 		plan.ExportRateYen,
 		lowestRate,
 		highestRate,
+		sample.batterySOC,
+		next.batterySOC,
+		inventoryCapacityWh,
 	)
 	return nil
 }
@@ -471,7 +505,7 @@ func cachedTariffRateBoundsForDayType(cache map[string]tariffRateBound, planID i
 	return lowest, highest
 }
 
-func addBatteryCostDailyInterval(dailyBreakdown map[string]*domain.BatteryCostComparisonDailyBreakdown, date string, actualKWh float64, noBatteryKWh float64, batteryInputKWh float64, batteryOutputKWh float64, netChargeKWh float64, netDischargeKWh float64, rateYen float64, exportRateYen float64, lowestRateYen float64, highestRateYen float64) {
+func addBatteryCostDailyInterval(dailyBreakdown map[string]*domain.BatteryCostComparisonDailyBreakdown, date string, localMeasuredAt time.Time, nextLocalMeasuredAt time.Time, actualKWh float64, noBatteryKWh float64, batteryInputKWh float64, batteryOutputKWh float64, netChargeKWh float64, netDischargeKWh float64, rateYen float64, exportRateYen float64, lowestRateYen float64, highestRateYen float64, sampleSOC sql.NullInt64, nextSOC sql.NullInt64, inventoryCapacityWh int) {
 	if dailyBreakdown == nil || date == "" {
 		return
 	}
@@ -481,6 +515,7 @@ func addBatteryCostDailyInterval(dailyBreakdown map[string]*domain.BatteryCostCo
 		dailyBreakdown[date] = day
 	}
 	day.SampleCount++
+	updateBatteryCostDailyInventory(day, localMeasuredAt, nextLocalMeasuredAt, sampleSOC, nextSOC, highestRateYen, inventoryCapacityWh)
 	day.ActualNetCostYen += signedEnergyNetCost(actualKWh, rateYen, exportRateYen)
 	day.EstimatedNoBatteryNetCostYen += signedEnergyNetCost(noBatteryKWh, rateYen, exportRateYen)
 	if batteryInputKWh > 0 {
@@ -504,7 +539,42 @@ func addBatteryCostDailyInterval(dailyBreakdown map[string]*domain.BatteryCostCo
 	}
 }
 
-func finalizeBatteryCostDailyBreakdown(dailyBreakdown map[string]*domain.BatteryCostComparisonDailyBreakdown) []domain.BatteryCostComparisonDailyBreakdown {
+func updateBatteryCostComparisonInventory(comparison *domain.BatteryCostComparison, sample batteryCostSample, next batteryCostSample, inventoryCapacityWh int) {
+	if comparison == nil || inventoryCapacityWh <= 0 {
+		return
+	}
+	if validBatterySOC(sample.batterySOC) {
+		soc := int(sample.batterySOC.Int64)
+		if comparison.InventoryStartSoc == nil {
+			comparison.InventoryStartSoc = intPtr(soc)
+		}
+		comparison.InventoryEndSoc = intPtr(soc)
+	}
+	if validBatterySOC(next.batterySOC) {
+		comparison.InventoryEndSoc = intPtr(int(next.batterySOC.Int64))
+	}
+}
+
+func updateBatteryCostDailyInventory(day *domain.BatteryCostComparisonDailyBreakdown, localMeasuredAt time.Time, nextLocalMeasuredAt time.Time, sampleSOC sql.NullInt64, nextSOC sql.NullInt64, highestRateYen float64, inventoryCapacityWh int) {
+	if day == nil || inventoryCapacityWh <= 0 {
+		return
+	}
+	if highestRateYen > 0 && (day.InventoryValueRateYen == nil || highestRateYen > *day.InventoryValueRateYen) {
+		day.InventoryValueRateYen = floatPtr(highestRateYen)
+	}
+	if validBatterySOC(sampleSOC) {
+		soc := int(sampleSOC.Int64)
+		if day.InventoryStartSoc == nil {
+			day.InventoryStartSoc = intPtr(soc)
+		}
+		day.InventoryEndSoc = intPtr(soc)
+	}
+	if validBatterySOC(nextSOC) && localMeasuredAt.Format("2006-01-02") == nextLocalMeasuredAt.Format("2006-01-02") {
+		day.InventoryEndSoc = intPtr(int(nextSOC.Int64))
+	}
+}
+
+func finalizeBatteryCostDailyBreakdown(dailyBreakdown map[string]*domain.BatteryCostComparisonDailyBreakdown, inventoryCapacityWh int) []domain.BatteryCostComparisonDailyBreakdown {
 	if len(dailyBreakdown) == 0 {
 		return nil
 	}
@@ -519,6 +589,7 @@ func finalizeBatteryCostDailyBreakdown(dailyBreakdown map[string]*domain.Battery
 		day.ActualNetCostYen = round2(day.ActualNetCostYen)
 		day.EstimatedNoBatteryNetCostYen = round2(day.EstimatedNoBatteryNetCostYen)
 		day.EstimatedSavingsYen = round2(day.EstimatedNoBatteryNetCostYen - day.ActualNetCostYen)
+		finalizeDailyInventory(&day, inventoryCapacityWh)
 		day.LowPriceChargeKWh = round4(day.LowPriceChargeKWh)
 		day.MidPriceDischargeKWh = round4(day.MidPriceDischargeKWh)
 		day.HighPriceDischargeKWh = round4(day.HighPriceDischargeKWh)
@@ -529,6 +600,54 @@ func finalizeBatteryCostDailyBreakdown(dailyBreakdown map[string]*domain.Battery
 		results = append(results, day)
 	}
 	return results
+}
+
+func finalizeDailyInventory(day *domain.BatteryCostComparisonDailyBreakdown, inventoryCapacityWh int) {
+	if day == nil || inventoryCapacityWh <= 0 || day.InventoryStartSoc == nil || day.InventoryEndSoc == nil || day.InventoryValueRateYen == nil {
+		return
+	}
+	deltaKWh := batteryInventoryDeltaKWh(inventoryCapacityWh, *day.InventoryStartSoc, *day.InventoryEndSoc)
+	valueYen := deltaKWh * *day.InventoryValueRateYen
+	adjustedSavingsYen := day.EstimatedSavingsYen + valueYen
+	day.InventoryDeltaKWh = floatPtr(round4(deltaKWh))
+	day.InventoryValueYen = floatPtr(round2(valueYen))
+	day.InventoryValueRateYen = floatPtr(round2(*day.InventoryValueRateYen))
+	day.AdjustedEstimatedSavingsYen = floatPtr(round2(adjustedSavingsYen))
+}
+
+func finalizeBatteryCostComparisonInventory(comparison *domain.BatteryCostComparison, inventoryCapacityWh int) {
+	if comparison == nil || inventoryCapacityWh <= 0 || comparison.InventoryStartSoc == nil || comparison.InventoryEndSoc == nil {
+		return
+	}
+	deltaKWh := batteryInventoryDeltaKWh(inventoryCapacityWh, *comparison.InventoryStartSoc, *comparison.InventoryEndSoc)
+	var inventoryValueYen float64
+	for _, day := range comparison.DailyBreakdown {
+		if day.InventoryValueYen != nil {
+			inventoryValueYen += *day.InventoryValueYen
+		}
+	}
+	comparison.InventoryDeltaKWh = floatPtr(round4(deltaKWh))
+	comparison.InventoryValueYen = floatPtr(round2(inventoryValueYen))
+	if math.Abs(deltaKWh) > 0.00001 {
+		comparison.InventoryValueRateYen = floatPtr(round2(inventoryValueYen / deltaKWh))
+	}
+	comparison.AdjustedEstimatedSavingsYen = floatPtr(round2(comparison.EstimatedSavingsYen + inventoryValueYen))
+}
+
+func batteryInventoryDeltaKWh(capacityWh int, startSoc int, endSoc int) float64 {
+	return float64(capacityWh) * float64(endSoc-startSoc) / 100000
+}
+
+func validBatterySOC(value sql.NullInt64) bool {
+	return value.Valid && value.Int64 >= 0 && value.Int64 <= 100
+}
+
+func intPtr(value int) *int {
+	return &value
+}
+
+func floatPtr(value float64) *float64 {
+	return &value
 }
 
 func signedEnergyNetCost(signedKWh float64, importRateYen float64, exportRateYen float64) float64 {

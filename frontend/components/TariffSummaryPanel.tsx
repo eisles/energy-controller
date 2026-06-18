@@ -153,6 +153,10 @@ function BatteryComparisonSummary({ summary }: { summary: TariffSummary }) {
 
   const savingsLabel = comparison.estimatedSavingsYen >= 0 ? "推定削減額" : "推定増加額";
   const signedSavings = Math.abs(comparison.estimatedSavingsYen);
+  const adjustedSavings =
+    typeof comparison.adjustedEstimatedSavingsYen === "number" ? comparison.adjustedEstimatedSavingsYen : null;
+  const adjustedSavingsLabel =
+    adjustedSavings === null ? "在庫調整後" : adjustedSavings >= 0 ? "在庫調整後削減" : "在庫調整後増加";
 
   return (
     <>
@@ -172,6 +176,18 @@ function BatteryComparisonSummary({ summary }: { summary: TariffSummary }) {
         <div className="tariff-summary-item">
           <span>{savingsLabel}</span>
           <strong>{comparison.available ? yen(signedSavings) : "-"}</strong>
+        </div>
+        <div className="tariff-summary-item">
+          <span>{adjustedSavingsLabel}</span>
+          <strong>{comparison.available && adjustedSavings !== null ? yen(Math.abs(adjustedSavings)) : "-"}</strong>
+        </div>
+        <div className="tariff-summary-item">
+          <span>SOC在庫補正</span>
+          <strong>
+            {comparison.available && typeof comparison.inventoryValueYen === "number"
+              ? `${signedYen(comparison.inventoryValueYen)} / ${signedKwh(comparison.inventoryDeltaKwh)}`
+              : "-"}
+          </strong>
         </div>
         <div className="tariff-summary-item">
           <span>充電/放電</span>
@@ -236,6 +252,9 @@ function BatteryComparisonSummary({ summary }: { summary: TariffSummary }) {
               <TableHead>売電吸収</TableHead>
               <TableHead>推定損失</TableHead>
               <TableHead>削減額</TableHead>
+              <TableHead>SOC</TableHead>
+              <TableHead>在庫補正</TableHead>
+              <TableHead>調整後</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -250,11 +269,22 @@ function BatteryComparisonSummary({ summary }: { summary: TariffSummary }) {
                   <TableCell>{kwh(day.exportAbsorptionKwh)}</TableCell>
                   <TableCell>{kwh(day.estimatedLossKwh)}</TableCell>
                   <TableCell>{yen(day.estimatedSavingsYen)}</TableCell>
+                  <TableCell>{formatSocRange(day.inventoryStartSoc, day.inventoryEndSoc)}</TableCell>
+                  <TableCell>
+                    {typeof day.inventoryValueYen === "number"
+                      ? `${signedYen(day.inventoryValueYen)} / ${signedKwh(day.inventoryDeltaKwh)}`
+                      : "-"}
+                  </TableCell>
+                  <TableCell>
+                    {typeof day.adjustedEstimatedSavingsYen === "number"
+                      ? yen(day.adjustedEstimatedSavingsYen)
+                      : "-"}
+                  </TableCell>
                 </TableRow>
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={8} className="empty-cell">
+                <TableCell colSpan={11} className="empty-cell">
                   日別のバッテリー効果内訳はまだありません。
                 </TableCell>
               </TableRow>
@@ -264,6 +294,7 @@ function BatteryComparisonSummary({ summary }: { summary: TariffSummary }) {
       </div>
       <p className="readonly-note">
         {comparison.note}
+        {" SOC在庫補正は power_logs.battery_soc と機器容量からの近似です。生の削減額は従来どおり残し、日またぎ残量の価値は在庫調整後で確認します。"}
         {comparison.skippedSampleCount > 0
           ? ` 欠損または${comparison.maxSampleIntervalSeconds}秒超の区間 ${comparison.skippedSampleCount} 件は除外しています。`
           : ""}
@@ -276,12 +307,32 @@ function kwh(value: number) {
   return `${new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 4 }).format(value)} kWh`;
 }
 
+function signedKwh(value: number | undefined) {
+  if (typeof value !== "number") {
+    return "-";
+  }
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${kwh(value)}`;
+}
+
 function yen(value: number) {
   return `${new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 2 }).format(value)} 円`;
 }
 
+function signedYen(value: number) {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${yen(value)}`;
+}
+
 function yenPerKwh(value: number) {
   return `${new Intl.NumberFormat("ja-JP", { maximumFractionDigits: 2 }).format(value)} 円/kWh`;
+}
+
+function formatSocRange(start?: number, end?: number) {
+  if (typeof start !== "number" || typeof end !== "number") {
+    return "-";
+  }
+  return `${start}% -> ${end}%`;
 }
 
 function formatDateTime(value: string) {

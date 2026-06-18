@@ -1402,6 +1402,87 @@ func TestTariffRepositorySummarizesBatteryCostDailyBreakdown(t *testing.T) {
 	}
 }
 
+func TestTariffRepositoryAdjustsBatteryCostBySOCInventory(t *testing.T) {
+	db := openTestDB(t)
+	db.SetMaxOpenConns(1)
+	tariffRepo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	base := time.Date(2026, 5, 18, 10, 0, 0, 0, jst)
+	samples := []struct {
+		at             time.Time
+		gridW          int
+		batterySOC     int
+		batteryInputW  int
+		batteryOutputW int
+	}{
+		{at: base, gridW: -500, batterySOC: 50, batteryInputW: 500, batteryOutputW: 0},
+		{at: base.Add(time.Minute), gridW: 0, batterySOC: 60, batteryInputW: 0, batteryOutputW: 0},
+		{at: base.Add(24 * time.Hour), gridW: 500, batterySOC: 60, batteryInputW: 0, batteryOutputW: 500},
+		{at: base.Add(24*time.Hour + time.Minute), gridW: 0, batterySOC: 50, batteryInputW: 0, batteryOutputW: 0},
+	}
+	for _, sample := range samples {
+		if _, err := db.Exec(`INSERT INTO power_logs (
+			measured_at, grid_w, import_w, export_w, battery_soc, battery_input_w,
+			battery_output_w, ac_charge_limit_w, target_charge_w, decision_reason,
+			mode, command_sent, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			sample.at.Format(time.RFC3339Nano),
+			sample.gridW,
+			max(sample.gridW, 0),
+			max(-sample.gridW, 0),
+			sample.batterySOC,
+			sample.batteryInputW,
+			sample.batteryOutputW,
+			400,
+			0,
+			"test",
+			"test",
+			0,
+			sample.at.Format(time.RFC3339Nano),
+		); err != nil {
+			t.Fatalf("insert power log failed: %v", err)
+		}
+	}
+
+	summary, err := tariffRepo.EnergyCostSummary(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatalf("EnergyCostSummary failed: %v", err)
+	}
+	comparison := summary.BatteryComparison
+	if comparison == nil || len(comparison.DailyBreakdown) != 2 {
+		t.Fatalf("DailyBreakdown = %#v, want two days", comparison)
+	}
+	firstDay := comparison.DailyBreakdown[0]
+	secondDay := comparison.DailyBreakdown[1]
+	if firstDay.InventoryStartSoc == nil || firstDay.InventoryEndSoc == nil || *firstDay.InventoryStartSoc != 50 || *firstDay.InventoryEndSoc != 60 {
+		t.Fatalf("first day inventory SOC = %v -> %v, want 50 -> 60", firstDay.InventoryStartSoc, firstDay.InventoryEndSoc)
+	}
+	if firstDay.InventoryDeltaKWh == nil || !floatAlmostEqual(*firstDay.InventoryDeltaKWh, 1.2288) {
+		t.Fatalf("first day InventoryDeltaKWh = %v, want 1.2288", firstDay.InventoryDeltaKWh)
+	}
+	if firstDay.InventoryValueYen == nil || *firstDay.InventoryValueYen <= 0 {
+		t.Fatalf("first day InventoryValueYen = %v, want positive", firstDay.InventoryValueYen)
+	}
+	if firstDay.AdjustedEstimatedSavingsYen == nil || *firstDay.AdjustedEstimatedSavingsYen <= firstDay.EstimatedSavingsYen {
+		t.Fatalf("first day adjusted savings = %v, raw = %v, want adjusted greater", firstDay.AdjustedEstimatedSavingsYen, firstDay.EstimatedSavingsYen)
+	}
+	if secondDay.InventoryStartSoc == nil || secondDay.InventoryEndSoc == nil || *secondDay.InventoryStartSoc != 60 || *secondDay.InventoryEndSoc != 50 {
+		t.Fatalf("second day inventory SOC = %v -> %v, want 60 -> 50", secondDay.InventoryStartSoc, secondDay.InventoryEndSoc)
+	}
+	if secondDay.InventoryDeltaKWh == nil || !floatAlmostEqual(*secondDay.InventoryDeltaKWh, -1.2288) {
+		t.Fatalf("second day InventoryDeltaKWh = %v, want -1.2288", secondDay.InventoryDeltaKWh)
+	}
+	if secondDay.InventoryValueYen == nil || *secondDay.InventoryValueYen >= 0 {
+		t.Fatalf("second day InventoryValueYen = %v, want negative", secondDay.InventoryValueYen)
+	}
+	if secondDay.AdjustedEstimatedSavingsYen == nil || *secondDay.AdjustedEstimatedSavingsYen >= secondDay.EstimatedSavingsYen {
+		t.Fatalf("second day adjusted savings = %v, raw = %v, want adjusted lower", secondDay.AdjustedEstimatedSavingsYen, secondDay.EstimatedSavingsYen)
+	}
+	if comparison.AdjustedEstimatedSavingsYen == nil {
+		t.Fatalf("AdjustedEstimatedSavingsYen = nil, want range-level adjusted savings")
+	}
+}
+
 func TestTariffRepositoryDoesNotClassifyFlatRateBatteryDischarge(t *testing.T) {
 	db := openTestDB(t)
 	tariffRepo := NewTariffRepository(db)
