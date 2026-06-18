@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>買電中 net 充電の放電優先制御 改善計画</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.7; color: #172033; max-width: 960px; margin: 40px auto; padding: 0 24px; background: #f7f8fb; }
+    main { background: #fff; border: 1px solid #d9e0ea; border-radius: 8px; padding: 32px; }
+    h1 { margin-top: 0; font-size: 28px; }
+    h2 { margin-top: 32px; border-bottom: 1px solid #d9e0ea; padding-bottom: 6px; }
+    code { background: #eef2f7; padding: 2px 5px; border-radius: 4px; }
+    li { margin: 6px 0; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>買電中 net 充電の放電優先制御 改善計画</h1>
+  <h2>Goal</h2>
+  <p>買電中かつ中/高単価時間帯に DELTA Pro 3 が <code>AC入力 &gt; AC出力</code> の net 充電状態になっている場合、料金最適化として放電優先へ寄せる制御判断を改善する。</p>
+  <p>現在は制御判断として「買電中は充電しない」と出ていても、DELTA Pro 3 の AC充電上限がアプリ下限相当の 400W に残り、実機が <code>AC入力 823W / AC出力 422W</code> のように約400W充電寄りになることがある。この状態を明示的に扱い、放電可能な実機リザーブがある場合は self-powered 放電候補へ進める。</p>
+
+  <h2>Non-goals</h2>
+  <ul>
+    <li>EcoFlow の未検証 0W AC充電 write は追加しない。</li>
+    <li><code>ENABLE_REAL_CONTROL=true</code> / <code>SIMULATION_MODE=false</code> / <code>CONFIRM_ECOFLOW_WRITE=I_UNDERSTAND</code> など既存の実機 write gate は変更しない。</li>
+    <li>コマンド最小間隔、重複抑制、実機 trial window は緩めない。</li>
+    <li>DELTA 3 Max Plus / DELTA 3 Plus 2 の private MQTT timeout 改善はこの計画に含めない。</li>
+    <li>料金比較 UI や SOC在庫補正の計算は変更しない。</li>
+  </ul>
+
+  <h2>Current State</h2>
+  <ul>
+    <li><code>backend/internal/control/surplus_planner.go</code>: 買電中は <code>RECOVERING</code> になり、AC充電上限を <code>minImportRecoveryChargeW = 400</code> まで下げる。すでに 400W の場合は追加 write 候補が出ない。</li>
+    <li><code>backend/internal/control/night_charge_planner.go</code>: 中/高単価買電中に <code>self-powered-discharge</code> を推奨する経路があるが、計算上の最低リザーブ 30% により SOC 23% では候補にならない。</li>
+    <li><code>backend/internal/control/night_charge_executor.go</code>: self-powered mode write は既存の guarded write 経路がある。</li>
+  </ul>
+
+  <h2>Proposed Behavior</h2>
+  <ol>
+    <li>中/高単価の買電中は、まず「実機の backup reserve SOC」を放電下限として評価する。</li>
+    <li><code>BatterySoc &gt; BackupReserveSoc</code> で、かつ backup reserve が設定最小リザーブより低い場合でも、現在の実機設定が示す放電可能範囲として扱う。</li>
+    <li>この条件で <code>self-powered-discharge</code> を推奨し、必要なら backup reserve 維持または設定と self-powered mode ON を候補にする。</li>
+    <li>低単価時間帯はこれまで通り充電優先候補を許可する。</li>
+    <li>計算上の夜間目標や最低在庫 SOC は引き続き <code>MinimumReserveSoc</code> を使い、今回の例外は「中/高単価買電中の放電回復」だけに限定する。</li>
+  </ol>
+
+  <h2>Data/API Contract</h2>
+  <p>既存 <code>NightChargePlan</code> の <code>RecommendedMode</code>, <code>ShouldEnableSelfPoweredMode</code>, <code>ShouldSetBackupReserve</code>, <code>RecommendedBackupReserveSoc</code>, <code>ActionSummary</code>, <code>Reason</code>, <code>CommandFingerprint</code> を使い、新しい API field は追加しない。</p>
+
+  <h2>Safety Boundaries</h2>
+  <ul>
+    <li>実機 write は既存の <code>GuardNightChargeCommand</code> を通す。</li>
+    <li>mock/simulation/default では write しない。</li>
+    <li>低単価時間帯には self-powered 放電へ切り替えない。</li>
+    <li>SOC が backup reserve 以下なら放電候補にしない。</li>
+    <li>backup reserve が不明な場合は従来の計算下限を使う。</li>
+    <li>AC出力や AC充電の未検証パラメータは増やさない。</li>
+  </ul>
+
+  <h2>Implementation Steps</h2>
+  <ol>
+    <li><code>night_charge_planner.go</code> に中/高単価買電中の放電下限計算を分離する。</li>
+    <li><code>tariffNightSelfPoweredDischargeRecovery</code> が、実機 backup reserve を安全な放電下限として使える場合に self-powered 候補を返すよう修正する。</li>
+    <li><code>tariffNightSelfPoweredDischargeReserveSoc</code> は、通常計画では <code>MinimumReserveSoc</code> を維持しつつ、買電中放電回復だけ現在 backup reserve を使えるようにする。</li>
+    <li><code>night_charge_planner_test.go</code> に中単価買電、低単価、既存 ratchet 防止の確認を追加する。</li>
+    <li>必要に応じて <code>ActionSummary</code> / <code>TariffControlReason</code> の文言を調整する。</li>
+  </ol>
+
+  <h2>Review Points</h2>
+  <ul>
+    <li>実機 write gate を緩めていないこと。</li>
+    <li>低単価 charging と中/高単価 discharging の優先順位が逆転していないこと。</li>
+    <li>current backup reserve を通常の夜間充電目標計算に混ぜていないこと。</li>
+    <li>既存の <code>DoesNotUseCurrentBackupReserveAsMinimumReserve</code> 系テストを壊していないこと。</li>
+  </ul>
+
+  <h2>Verification Commands</h2>
+  <ul>
+    <li><code>cd backend &amp;&amp; mkdir -p .gocache &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./internal/control</code></li>
+    <li><code>cd backend &amp;&amp; mkdir -p .gocache &amp;&amp; GOCACHE=$PWD/.gocache rtk go test ./...</code></li>
+    <li><code>rtk codex review --uncommitted</code></li>
+  </ul>
+
+  <h2>Operational Notes</h2>
+  <p>実装後に live 確認する場合は、まず <code>/api/status</code> の <code>nightChargePlan.recommendedMode</code> と <code>controlDiagnostics</code> を確認する。Docker rebuild / 実機稼働反映は、ユーザーから明示依頼がある場合のみ行う。</p>
+</main>
+</body>
+</html>

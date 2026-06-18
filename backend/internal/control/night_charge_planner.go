@@ -451,6 +451,18 @@ func tariffImportDischargeActive(input NightChargePlanInput) bool {
 }
 
 func tariffNightSelfPoweredDischargeReserveSoc(input NightChargePlanInput, plan domain.NightChargePlan) int {
+	reserveSoc := tariffNightSelfPoweredConfiguredReserveSoc(input, plan)
+	if input.BackupReserveSoc == nil {
+		return reserveSoc
+	}
+	currentReserveSoc := clamp(*input.BackupReserveSoc, 0, 100)
+	if currentReserveSoc > 0 && currentReserveSoc < reserveSoc {
+		return currentReserveSoc
+	}
+	return reserveSoc
+}
+
+func tariffNightSelfPoweredConfiguredReserveSoc(input NightChargePlanInput, plan domain.NightChargePlan) int {
 	if input.SolarSettings != nil && input.SolarSettings.MinimumReserveSoc > 0 {
 		return normalizeReserveSoc(input.SolarSettings.MinimumReserveSoc)
 	}

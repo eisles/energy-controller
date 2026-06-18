@@ -762,6 +762,48 @@ func TestPlanNightChargingMidPriceImportEnablesSelfPoweredDischarge(t *testing.T
 	}
 }
 
+func TestPlanNightChargingMidPriceImportUsesLowerCurrentReserveForSelfPoweredDischarge(t *testing.T) {
+	reserve := 10
+	selfPowered := false
+	plan := PlanNightCharging(NightChargePlanInput{
+		Now:                time.Date(2026, 6, 19, 8, 10, 0, 0, time.UTC),
+		GridW:              616,
+		BatterySoc:         23,
+		BatteryInputW:      823,
+		BatteryOutputW:     422,
+		ACChargeLimitW:     400,
+		BackupReserveSoc:   &reserve,
+		SelfPoweredEnabled: &selfPowered,
+		Forecast:           &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 22.5, SunshineDurationHours: 11, CloudCoverMeanPercent: 66},
+		SolarSettings:      &domain.WeatherLocation{MinimumReserveSoc: 30, BatteryCapacityKWh: 12.288},
+		TariffControl:      &domain.TariffControlContext{CurrentPeriod: "home", CurrentRateYen: 26, LowestRateYen: 16.11, HighestRateYen: 34.06},
+		SimulationMode:     false,
+		EnableRealControl:  true,
+		AutoControl:        true,
+	}, DefaultSettings())
+
+	if plan.RecommendedMode != "self-powered-discharge" {
+		t.Fatalf("RecommendedMode = %q, want self-powered-discharge", plan.RecommendedMode)
+	}
+	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 10 {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want current reserve 10", plan.RecommendedBackupReserveSoc)
+	}
+	if plan.ShouldSetBackupReserve {
+		t.Fatal("ShouldSetBackupReserve = true, want false because current backup reserve already matches discharge floor")
+	}
+	if !plan.ShouldEnableSelfPoweredMode || !plan.WouldWrite {
+		t.Fatalf("self-powered/write = %t/%t, want true/true", plan.ShouldEnableSelfPoweredMode, plan.WouldWrite)
+	}
+	if plan.CommandFingerprint != "self-powered=on" {
+		t.Fatalf("CommandFingerprint = %q, want self-powered=on", plan.CommandFingerprint)
+	}
+	for _, want := range []string{"中/高単価買電中はself-powered放電を優先", "self-powered modeへ切り替え"} {
+		if !strings.Contains(plan.ActionSummary, want) {
+			t.Fatalf("ActionSummary = %q, want contains %q", plan.ActionSummary, want)
+		}
+	}
+}
+
 func TestPlanNightChargingLowPriceImportDoesNotUseSelfPoweredDischarge(t *testing.T) {
 	reserve := 55
 	selfPowered := false
