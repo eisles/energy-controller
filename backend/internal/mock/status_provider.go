@@ -27,11 +27,13 @@ type StatusProvider struct {
 	loadEstimator  EcoFlowLoadEstimator
 	tariffProvider TariffControlProvider
 	writeClient    ecoflow.WriteClient
-	staleAfter     time.Duration
-	mu             sync.Mutex
-	previous       control.PreviousDecision
-	actualCommandW *int
-	commandSent    bool
+
+	pvCorrectionRecommender PVChargeCorrectionRecommender
+	staleAfter              time.Duration
+	mu                      sync.Mutex
+	previous                control.PreviousDecision
+	actualCommandW          *int
+	commandSent             bool
 }
 
 type GridReader interface {
@@ -57,6 +59,10 @@ type EcoFlowLoadEstimator interface {
 
 type TariffControlProvider interface {
 	CurrentTariffControlContext(ctx context.Context, at time.Time) (domain.TariffControlContext, error)
+}
+
+type PVChargeCorrectionRecommender interface {
+	PVChargeCorrectionRecommendation(ctx context.Context, now time.Time) (*domain.PVChargeCorrectionRecommendation, error)
 }
 
 func NewStatusProvider(clock config.Clock, settings control.Settings, mockMode bool, simulationMode bool, realControl bool, autoControl bool) *StatusProvider {
@@ -90,6 +96,23 @@ func (p *StatusProvider) SetEcoFlowLoadEstimator(estimator EcoFlowLoadEstimator)
 
 func (p *StatusProvider) SetTariffControlProvider(provider TariffControlProvider) {
 	p.tariffProvider = provider
+}
+
+func (p *StatusProvider) SetPVChargeCorrectionRecommender(recommender PVChargeCorrectionRecommender) {
+	p.pvCorrectionRecommender = recommender
+}
+
+// currentPVChargeCorrectionRecommendation は表示用の推奨補正係数を返す。
+// 取得失敗は制御に影響させないため nil を返すだけにする。
+func (p *StatusProvider) currentPVChargeCorrectionRecommendation(ctx context.Context, now time.Time) *domain.PVChargeCorrectionRecommendation {
+	if p.pvCorrectionRecommender == nil {
+		return nil
+	}
+	recommendation, err := p.pvCorrectionRecommender.PVChargeCorrectionRecommendation(ctx, now)
+	if err != nil {
+		return nil
+	}
+	return recommendation
 }
 
 func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, error) {
@@ -174,6 +197,7 @@ func (p *StatusProvider) CurrentStatus(ctx context.Context) (domain.Status, erro
 		Forecast:            weatherForecast,
 		SolarSettings:       solarSettings,
 		EcoFlowLoadEstimate: ecoflowLoadEstimate,
+		PVChargeCorrection:  p.currentPVChargeCorrectionRecommendation(ctx, now),
 		Previous:            p.previousDecisionSnapshot(),
 		MockMode:            p.mockMode,
 		SimulationMode:      p.simulationMode,

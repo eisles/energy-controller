@@ -65,6 +65,7 @@ func main() {
 	defer stop()
 	recordStatus(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, delta3AuxControlCommandRepository, pro3ACOutputEventRepository, notificationRepository, manualChargeAlertService, pro3ACOutputAlertService, surplusWriteClient, delta3StatusReader, delta3AuxWriteClient, chargingDeviceRepository, energyMeterReader, energyMeterRepository, logger)
 	go runControlLoop(ctx, cfg, statusProvider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, delta3AuxControlCommandRepository, pro3ACOutputEventRepository, notificationRepository, manualChargeAlertService, pro3ACOutputAlertService, surplusWriteClient, delta3StatusReader, delta3AuxWriteClient, chargingDeviceRepository, energyMeterReader, energyMeterRepository, logger)
+	go runPVChargeCorrectionLoop(ctx, store.NewPVChargeCorrectionRepositoryWithTimezone(db, cfg.WeatherTimezone), logger)
 
 	router := api.NewRouter(api.Dependencies{
 		Config:         cfg,
@@ -233,11 +234,13 @@ func newStatusProvider(cfg config.Config, db *sql.DB, targetProvider ecoFlowClou
 		provider := mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled, natureClient, ecoflowClient, ecoflowWriteClient, "nature-cloud+ecoflow-read", weatherReader)
 		provider.SetEcoFlowLoadEstimator(loadEstimator)
 		provider.SetTariffControlProvider(tariffRepository)
+		provider.SetPVChargeCorrectionRecommender(store.NewPVChargeCorrectionRepositoryWithTimezone(db, cfg.WeatherTimezone))
 		return provider, natureClient
 	}
 	provider := mock.NewStatusProviderWithReaders(cfg.Clock, cfg.ControlSettings, cfg.MockMode, cfg.SimulationMode, cfg.EnableRealControl, cfg.AutoControlEnabled, nil, ecoflowClient, ecoflowWriteClient, "ecoflow-read", weatherReader)
 	provider.SetEcoFlowLoadEstimator(loadEstimator)
 	provider.SetTariffControlProvider(tariffRepository)
+	provider.SetPVChargeCorrectionRecommender(store.NewPVChargeCorrectionRepositoryWithTimezone(db, cfg.WeatherTimezone))
 	return provider, nil
 }
 
@@ -518,6 +521,26 @@ func runControlLoop(ctx context.Context, cfg config.Config, provider api.StatusP
 			return
 		case <-ticker.C:
 			recordStatus(ctx, cfg, provider, statusRepository, logRepository, nightChargePlanRepository, surplusControlCommandRepository, delta3AuxControlCommandRepository, pro3ACOutputEventRepository, notificationRepository, manualChargeAlertService, pro3ACOutputAlertService, writeClient, delta3Reader, delta3Writer, delta3TargetProvider, meterReader, meterRepository, logger)
+		}
+	}
+}
+
+// runPVChargeCorrectionLoop は日次のPV補正実績集計と補正係数の自動更新を行う。
+// 集計は読み取り中心の軽い処理のため1時間間隔で実行し、失敗しても制御ループには影響させない。
+func runPVChargeCorrectionLoop(ctx context.Context, repository *store.PVChargeCorrectionRepository, logger *slog.Logger) {
+	if err := repository.EnsureUpToDate(ctx, time.Now()); err != nil {
+		logger.Warn("failed to update pv charge correction logs", "error", err)
+	}
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := repository.EnsureUpToDate(ctx, time.Now()); err != nil {
+				logger.Warn("failed to update pv charge correction logs", "error", err)
+			}
 		}
 	}
 }
