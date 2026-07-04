@@ -346,6 +346,80 @@ func TestPlanNightChargingUsesEcoFlowLoadAndMorningLoadForKWhTarget(t *testing.T
 	}
 }
 
+func TestPlanNightChargingAddsEveningShortfallToTarget(t *testing.T) {
+	fullEnergyWh := 12288
+	input := NightChargePlanInput{
+		Now:                 time.Date(2026, 5, 19, 23, 0, 0, 0, jst),
+		BatterySoc:          35,
+		BatteryFullEnergyWh: &fullEnergyWh,
+		Forecast: &domain.WeatherForecast{
+			ShortwaveRadiationMJPerM2: 12,
+			SunshineDurationHours:     4,
+			CloudCoverMeanPercent:     60,
+		},
+		SolarSettings: &domain.WeatherLocation{
+			PVCapacityKW:       4,
+			PVPerformanceRatio: 0.75,
+			DailyBaseLoadKWh:   8,
+			MinimumReserveSoc:  30,
+		},
+		EcoFlowLoadEstimate: &domain.EcoFlowLoadEstimate{
+			SampleCount:             10,
+			AverageDaytimeOutputKWh: 5,
+			AverageNightOutputKWh:   2,
+			AverageEveningOutputKWh: 3,
+		},
+		SimulationMode: true,
+	}
+	plan := PlanNightCharging(input, DefaultSettings())
+
+	if !floatEqual(plan.EstimatedEveningLoadKWh, 3) {
+		t.Fatalf("EstimatedEveningLoadKWh = %f, want 3", plan.EstimatedEveningLoadKWh)
+	}
+	// PV余剰2kWhで夕方消費3kWhの一部を賄い、不足1kWhだけ深夜目標へ加算する
+	if !floatEqual(plan.EveningShortfallKWh, 1) {
+		t.Fatalf("EveningShortfallKWh = %f, want 1", plan.EveningShortfallKWh)
+	}
+	if plan.RecommendedNightTargetSoc != 59 {
+		t.Fatalf("RecommendedNightTargetSoc = %d, want 59", plan.RecommendedNightTargetSoc)
+	}
+}
+
+func TestPlanNightChargingEveningCoveredByPVSurplusKeepsTarget(t *testing.T) {
+	fullEnergyWh := 12288
+	input := NightChargePlanInput{
+		Now:                 time.Date(2026, 5, 19, 23, 0, 0, 0, jst),
+		BatterySoc:          35,
+		BatteryFullEnergyWh: &fullEnergyWh,
+		Forecast: &domain.WeatherForecast{
+			ShortwaveRadiationMJPerM2: 12,
+			SunshineDurationHours:     4,
+			CloudCoverMeanPercent:     60,
+		},
+		SolarSettings: &domain.WeatherLocation{
+			PVCapacityKW:       4,
+			PVPerformanceRatio: 0.75,
+			DailyBaseLoadKWh:   8,
+			MinimumReserveSoc:  30,
+		},
+		EcoFlowLoadEstimate: &domain.EcoFlowLoadEstimate{
+			SampleCount:             10,
+			AverageDaytimeOutputKWh: 5,
+			AverageNightOutputKWh:   2,
+			AverageEveningOutputKWh: 1.5,
+		},
+		SimulationMode: true,
+	}
+	plan := PlanNightCharging(input, DefaultSettings())
+
+	if !floatEqual(plan.EveningShortfallKWh, 0) {
+		t.Fatalf("EveningShortfallKWh = %f, want 0", plan.EveningShortfallKWh)
+	}
+	if plan.RecommendedNightTargetSoc != 51 {
+		t.Fatalf("RecommendedNightTargetSoc = %d, want 51", plan.RecommendedNightTargetSoc)
+	}
+}
+
 func TestPlanNightChargingKeepsTargetEnergyConsistentWithClampedTargetSoc(t *testing.T) {
 	fullEnergyWh := 12288
 	settings := DefaultSettings()

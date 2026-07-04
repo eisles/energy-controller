@@ -100,6 +100,9 @@ func estimateEcoFlowLoadFromSamples(samples []ecoflowLoadSample, now time.Time, 
 			day.NightOutputKWh += outputKWh
 		} else {
 			day.ShoulderOutputKWh += outputKWh
+			if isEcoFlowEvening(localMeasuredAt.Hour()) {
+				day.EveningOutputKWh += outputKWh
+			}
 		}
 	}
 
@@ -128,6 +131,7 @@ func estimateEcoFlowLoadFromSamples(samples []ecoflowLoadSample, now time.Time, 
 			estimate.AverageDaytimeChargeKWh += day.DaytimeChargeKWh
 		}
 		estimate.AverageShoulderOutputKWh += day.ShoulderOutputKWh
+		estimate.AverageEveningOutputKWh += day.EveningOutputKWh
 		estimate.AverageNightOutputKWh += day.NightOutputKWh
 		estimate.AverageDailyOutputKWh += day.DailyOutputKWh
 		estimate.Daily = append(estimate.Daily, *day)
@@ -140,6 +144,7 @@ func estimateEcoFlowLoadFromSamples(samples []ecoflowLoadSample, now time.Time, 
 		}
 		count := float64(len(estimate.Daily))
 		estimate.AverageShoulderOutputKWh /= count
+		estimate.AverageEveningOutputKWh /= count
 		estimate.AverageNightOutputKWh /= count
 		estimate.AverageDailyOutputKWh /= count
 	}
@@ -163,6 +168,10 @@ func isEcoFlowDaytimeComplete(date string, now time.Time, location *time.Locatio
 
 func isEcoFlowNight(hour int) bool {
 	return hour >= defaultEcoFlowNightStartHour || hour < defaultEcoFlowNightEndHour
+}
+
+func isEcoFlowEvening(hour int) bool {
+	return hour >= defaultEcoFlowDayEndHour && hour < defaultEcoFlowNightStartHour
 }
 
 func loadEcoFlowLoadLocation(timezone string) *time.Location {

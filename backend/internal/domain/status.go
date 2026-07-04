@@ -266,6 +266,7 @@ type EcoFlowLoadEstimate struct {
 	CompleteDaytimeSampleDays    int                        `json:"completeDaytimeSampleDays"`
 	AverageDaytimeOutputKWh      float64                    `json:"averageDaytimeOutputKwh"`
 	AverageShoulderOutputKWh     float64                    `json:"averageShoulderOutputKwh"`
+	AverageEveningOutputKWh      float64                    `json:"averageEveningOutputKwh"`
 	AverageNightOutputKWh        float64                    `json:"averageNightOutputKwh"`
 	AverageDailyOutputKWh        float64                    `json:"averageDailyOutputKwh"`
 	AverageDaytimeChargeKWh      float64                    `json:"averageDaytimeChargeKwh"`
@@ -282,6 +283,7 @@ type DailyEcoFlowLoadEstimate struct {
 	DaytimeComplete    bool    `json:"daytimeComplete"`
 	DaytimeOutputKWh   float64 `json:"daytimeOutputKwh"`
 	ShoulderOutputKWh  float64 `json:"shoulderOutputKwh"`
+	EveningOutputKWh   float64 `json:"eveningOutputKwh"`
 	NightOutputKWh     float64 `json:"nightOutputKwh"`
 	DailyOutputKWh     float64 `json:"dailyOutputKwh"`
 	DaytimeChargeKWh   float64 `json:"daytimeChargeKwh"`
@@ -321,6 +323,8 @@ type NightChargePlan struct {
 	EstimatedMorningLoadKWh          float64                           `json:"estimatedMorningLoadKwh"`
 	EstimatedSurplusKWh              float64                           `json:"estimatedSurplusKwh"`
 	EstimatedDeficitKWh              float64                           `json:"estimatedDeficitKwh"`
+	EstimatedEveningLoadKWh          float64                           `json:"estimatedEveningLoadKwh"`
+	EveningShortfallKWh              float64                           `json:"eveningShortfallKwh"`
 	EstimatedPVToBatteryKWh          float64                           `json:"estimatedPvToBatteryKwh"`
 	SafetyMarginKWh                  float64                           `json:"safetyMarginKwh"`
 	BatteryCapacityKWh               float64                           `json:"batteryCapacityKwh"`
@@ -370,6 +374,18 @@ type PVChargeCorrectionRecommendation struct {
 	MinSampleDays     int     `json:"minSampleDays"`
 	Applicable        bool    `json:"applicable"`
 	Status            string  `json:"status"`
+}
+
+type PVChargeCorrectionDailyLog struct {
+	Date                   string  `json:"date"`
+	ForecastPVKWh          float64 `json:"forecastPvKwh"`
+	ForecastPVToBatteryKWh float64 `json:"forecastPvToBatteryKwh"`
+	ActualBatteryInputKWh  float64 `json:"actualBatteryInputKwh"`
+	ActualExportKWh        float64 `json:"actualExportKwh"`
+	ActualCaptureFactor    float64 `json:"actualCaptureFactor"`
+	WeatherCode            int     `json:"weatherCode"`
+	CloudCoverMeanPercent  int     `json:"cloudCoverMeanPercent"`
+	SampleQuality          string  `json:"sampleQuality"`
 }
 
 type NightChargeDevicePlan struct {

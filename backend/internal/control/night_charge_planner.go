@@ -24,6 +24,7 @@ type NightChargePlanInput struct {
 	Forecast            *domain.WeatherForecast
 	SolarSettings       *domain.WeatherLocation
 	EcoFlowLoadEstimate *domain.EcoFlowLoadEstimate
+	PVChargeCorrection  *domain.PVChargeCorrectionRecommendation
 	Previous            PreviousDecision
 	MockMode            bool
 	SimulationMode      bool
@@ -181,7 +182,7 @@ func applySolarEstimate(plan *domain.NightChargePlan, input NightChargePlanInput
 	plan.SolarRadiationKWhPerM2 = pvEstimate.SolarRadiationKWhPerM2
 	plan.EstimatedPVKWh = pvEstimate.DailyEstimatedPVKWh
 	plan.DailyEstimatedPVKWh = pvEstimate.DailyEstimatedPVKWh
-	applyPVChargeCorrection(plan, *input.SolarSettings)
+	applyPVChargeCorrection(plan, *input.SolarSettings, input.PVChargeCorrection)
 	plan.PVEffectiveStartAt = pvEstimate.PVEffectiveStartAt
 	plan.PVEffectiveEndAt = pvEstimate.PVEffectiveEndAt
 	plan.PVEffectiveWindowSource = pvEstimate.PVEffectiveWindowSource
@@ -201,7 +202,7 @@ func applySolarEstimate(plan *domain.NightChargePlan, input NightChargePlanInput
 	plan.CorrectedEstimatedPVToBatteryKWh = plan.CorrectedEstimatedPVKWh
 }
 
-func applyPVChargeCorrection(plan *domain.NightChargePlan, settings domain.WeatherLocation) {
+func applyPVChargeCorrection(plan *domain.NightChargePlan, settings domain.WeatherLocation, recommendation *domain.PVChargeCorrectionRecommendation) {
 	factor := settings.PVChargeCorrectionFactor
 	if factor <= 0 {
 		factor = 0.7
@@ -215,6 +216,9 @@ func applyPVChargeCorrection(plan *domain.NightChargePlan, settings domain.Weath
 	source := "default"
 	if settings.PVChargeCorrectionManual {
 		source = "manual"
+	} else if settings.PVChargeCorrectionUpdatedAt != "" {
+		// 自動学習(PVChargeCorrectionRepository)だけが manual=false のまま updated_at を設定する
+		source = "auto"
 	}
 	plan.PVChargeCorrectionFactor = factor
 	plan.PVChargeCorrectionSource = source
@@ -222,6 +226,14 @@ func applyPVChargeCorrection(plan *domain.NightChargePlan, settings domain.Weath
 	minSampleDays := settings.PVChargeCorrectionMinSampleDays
 	if minSampleDays <= 0 {
 		minSampleDays = 7
+	}
+	if recommendation != nil {
+		copied := *recommendation
+		if copied.MinSampleDays <= 0 {
+			copied.MinSampleDays = minSampleDays
+		}
+		plan.PVChargeCorrectionRecommendation = &copied
+		return
 	}
 	plan.PVChargeCorrectionRecommendation = &domain.PVChargeCorrectionRecommendation{
 		RecommendedFactor: factor,
@@ -245,7 +257,20 @@ func applyConsumptionEstimate(plan *domain.NightChargePlan, input NightChargePla
 	if input.EcoFlowLoadEstimate != nil && input.EcoFlowLoadEstimate.SampleCount > 0 && input.EcoFlowLoadEstimate.AverageNightOutputKWh > 0 {
 		plan.EstimatedMorningLoadKWh = input.EcoFlowLoadEstimate.AverageNightOutputKWh * remainingNightLoadRatio(input.Now)
 	}
+	if input.EcoFlowLoadEstimate != nil && input.EcoFlowLoadEstimate.SampleCount > 0 && input.EcoFlowLoadEstimate.AverageEveningOutputKWh > 0 {
+		plan.EstimatedEveningLoadKWh = input.EcoFlowLoadEstimate.AverageEveningOutputKWh
+	}
 	plan.MorningToPVStartLoadKWh = expectedMorningToPVStartLoadKWh(input, plan.PVEffectiveStartAt)
+}
+
+// eveningShortfallKWh は、PV終了後の夕方消費のうち翌日のPV余剰では賄えず
+// 深夜に充電しておく必要がある不足分を返す。
+func eveningShortfallKWh(plan domain.NightChargePlan) float64 {
+	shortfall := plan.EstimatedEveningLoadKWh - plan.EstimatedSurplusKWh
+	if shortfall < 0 {
+		return 0
+	}
+	return shortfall
 }
 
 func applyBatteryEnergyEstimate(plan *domain.NightChargePlan, input NightChargePlanInput) {
@@ -274,7 +299,8 @@ func applyNightEnergyTarget(plan *domain.NightChargePlan, input NightChargePlanI
 	if plan.SafetyMarginKWh < 0 {
 		plan.SafetyMarginKWh = 0
 	}
-	targetKWh := plan.MinimumReserveKWh + plan.EstimatedMorningLoadKWh + plan.MorningToPVStartLoadKWh + plan.EstimatedDeficitKWh + plan.SafetyMarginKWh
+	plan.EveningShortfallKWh = eveningShortfallKWh(*plan)
+	targetKWh := plan.MinimumReserveKWh + plan.EstimatedMorningLoadKWh + plan.MorningToPVStartLoadKWh + plan.EstimatedDeficitKWh + plan.EveningShortfallKWh + plan.SafetyMarginKWh
 	if targetKWh > plan.BatteryCapacityKWh {
 		targetKWh = plan.BatteryCapacityKWh
 	}
@@ -289,7 +315,7 @@ func nightTargetSocForEnergy(plan domain.NightChargePlan, input NightChargePlanI
 	if batteryCapacityKWh <= 0 {
 		return nightTargetSocForSolarScore(score, settings.TargetSoc)
 	}
-	targetKWh := plan.MinimumReserveKWh + plan.EstimatedMorningLoadKWh + plan.MorningToPVStartLoadKWh + plan.EstimatedDeficitKWh + settings.NightSafetyMarginKWh
+	targetKWh := plan.MinimumReserveKWh + plan.EstimatedMorningLoadKWh + plan.MorningToPVStartLoadKWh + plan.EstimatedDeficitKWh + eveningShortfallKWh(plan) + settings.NightSafetyMarginKWh
 	if targetKWh <= 0 {
 		return nightTargetSocForSolarScore(score, settings.TargetSoc)
 	}
@@ -354,6 +380,9 @@ func nightChargeActionSummary(plan domain.NightChargePlan) string {
 		actions = append(actions, fmt.Sprintf("深夜目標SOCを%d%%へ設定", plan.RecommendedNightTargetSoc))
 		if plan.RequiredNightChargeKWh > 0 {
 			actions = append(actions, fmt.Sprintf("不足分%.1fkWhを深夜に確保", plan.RequiredNightChargeKWh))
+		}
+		if plan.EveningShortfallKWh > 0 {
+			actions = append(actions, fmt.Sprintf("夕方消費の不足%.1fkWhを目標に加算", plan.EveningShortfallKWh))
 		}
 	} else {
 		actions = append(actions, fmt.Sprintf("深夜充電は抑制し%d%%を維持", plan.RecommendedNightTargetSoc))
