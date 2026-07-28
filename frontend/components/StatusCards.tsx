@@ -145,6 +145,7 @@ function TariffControlCard({ status }: { status: EnergyStatus }) {
           <Detail label="現在単価" value={formatYenRate(tariff.currentRateYen)} />
           <Detail label="最低単価" value={formatYenRate(tariff.lowestRateYen)} />
           <Detail label="最高単価" value={formatYenRate(tariff.highestRateYen)} />
+          <Detail label="次の高単価" value={formatDateTime(tariff.nextHighPriceAt || "")} />
           <Detail label="次の低単価" value={formatDateTime(tariff.nextLowPriceAt || "")} />
           <Detail label="解決元" value={tariff.source === "custom" ? "料金時間帯マスタ" : "既定ルール"} />
           <Detail label="現在電力" value={tariffPowerLabel(status)} />
@@ -909,9 +910,35 @@ function tariffControlGuide(status: EnergyStatus, tariff?: TariffControlContext 
       reason: "低単価時間帯です。深夜充電計画と各機器の制御範囲に従って必要分だけ充電する候補です。"
     };
   }
+  const tariffDecisionReason =
+    status.nightChargePlan?.tariffControlReason || status.surplusPlan?.tariffControlReason || "";
+  if (status.importW > 0 && tariffDecisionReason.includes("preserve battery")) {
+    return {
+      label: "高単価まで温存",
+      reason: tariffDecisionReason
+    };
+  }
+  if (status.importW > 0 && tariffDecisionReason.includes("prioritize battery discharge")) {
+    return {
+      label: "放電優先",
+      reason: tariffDecisionReason
+    };
+  }
+  if (status.importW > 0 && tariffDecisionReason.includes("prefer battery discharge")) {
+    return {
+      label: "放電優先",
+      reason: tariffDecisionReason
+    };
+  }
+  if (status.importW > 0) {
+    return {
+      label: "料金境界待ち",
+      reason: tariffDecisionReason || "次の高単価・低単価境界を確認できないため、能動放電を開始しません。"
+    };
+  }
   return {
     label: "現行ルール維持",
-    reason: "中間単価時間帯です。売電/買電、SOC、既存の最小送信間隔と安全ゲートを優先します。"
+    reason: tariffDecisionReason || "中間単価時間帯です。売電/買電、SOC、既存の最小送信間隔と安全ゲートを優先します。"
   };
 }
 

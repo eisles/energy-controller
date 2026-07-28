@@ -62,13 +62,31 @@ export function VerificationPanel({
             <>
               <div className="detail-strip" aria-label="night charge verification">
                 <Detail label="夜間日" value={latestNightSummary.summaryDate} />
-                <Detail label="目標SOC" value={nullablePercent(latestNightSummary.plannedTargetSoc)} />
+                <Detail label="計画目標SOC" value={nullablePercent(latestNightSummary.plannedTargetSoc)} />
+                <Detail label="送信成功目標SOC" value={nullablePercent(latestNightSummary.successfulCommandTargetSoc)} />
                 <Detail label="7:00 SOC" value={nullablePercent(latestNightSummary.nightEndSoc)} />
-                <Detail label="目標差" value={formatSocGap(latestNightSummary.morningTargetSocGap)} />
+                <Detail label="計画との差" value={formatSocGap(latestNightSummary.morningTargetSocGap)} />
+                <Detail label="送信目標との差" value={formatSocGap(latestNightSummary.executionTargetSocGap)} />
                 <Detail label="夜間実質充電" value={nullableKwh(latestNightSummary.nightNetBatteryKwh)} />
                 <Detail label="必要充電との差" value={formatKwhGap(latestNightSummary.nightRequiredChargeGapKwh)} />
               </div>
               <div className="detail-strip planner-secondary" aria-label="night charge follow-up verification">
+                <Detail label="目標学習" value={latestNightSummary.targetLearningEligible ? "対象" : "除外"} />
+                <Detail label="送信/エラー" value={`${latestNightSummary.nightCommandSentCount} / ${latestNightSummary.nightCommandErrorCount}`} />
+                <Detail
+                  label="夜間データ品質"
+                  value={`${Math.round(latestNightSummary.nightPowerSampleCoverageRatio * 100)}% / 最大欠測 ${Math.round(
+                    latestNightSummary.nightPowerSampleMaxGapSeconds
+                  )}秒`}
+                />
+                <Detail
+                  label="構成確認"
+                  value={
+                    latestNightSummary.settingsFingerprintVerified && latestNightSummary.deviceFingerprintVerified
+                      ? "確認済み"
+                      : "未検証"
+                  }
+                />
                 <Detail label="日中充電+売電" value={nullableKwh(latestNightSummary.daytimeChargeAndExportKwh)} />
                 <Detail label="日中Battery in" value={nullableKwh(latestNightSummary.daytimeBatteryInputKwh)} />
                 <Detail label="日中売電" value={nullableKwh(latestNightSummary.daytimeExportKwh)} />
@@ -78,6 +96,9 @@ export function VerificationPanel({
               </div>
               <p className="planner-reason">{latestNightSummary.morningReason || "-"}</p>
               <p className="planner-reason">{latestNightSummary.finalResultReason || "-"}</p>
+              {!latestNightSummary.targetLearningEligible && latestNightSummary.targetLearningExclusionReason ? (
+                <p className="readonly-note">目標学習から除外: {latestNightSummary.targetLearningExclusionReason}</p>
+              ) : null}
               <p className="readonly-note">Battery inputは買電由来の充電も混ざり得るため、PV由来とは断定しません。</p>
             </>
           ) : (

@@ -3,6 +3,7 @@ package control
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/eisles/energy-controller/backend/internal/domain"
 )
@@ -58,8 +59,23 @@ func PlanSurplusCharging(input SurplusPlanInput, settings Settings) domain.Surpl
 		}
 		plan.ActionSummary = surplusActionSummary(plan)
 		plan.Reason = "importing from grid; recover by stopping surplus charge and allowing discharge to reserve floor"
-		if tariffPrefersImportDischarge(input.TariffControl) {
-			plan.TariffControlReason = "non-low-price period; prioritize battery discharge and suppress grid charging"
+		if tariffPreservesForUpcomingHighPrice(input.TariffControl) {
+			plan.TariffControlReason = fmt.Sprintf(
+				"mid-price period; preserve battery for higher-price period at %s before next low-price period at %s",
+				input.TariffControl.NextHighPriceAt.Format(time.RFC3339),
+				input.TariffControl.NextLowPriceAt.Format(time.RFC3339),
+			)
+			plan.Reason += "; restore TOU behavior to preserve battery for the upcoming high-price period"
+		} else if tariffPrefersImportDischarge(input.TariffControl) {
+			if input.TariffControl.IsHighPrice {
+				plan.TariffControlReason = "high-price period; prioritize battery discharge and suppress grid charging"
+			} else {
+				plan.TariffControlReason = fmt.Sprintf(
+					"mid-price period; next low-price period at %s occurs before or with higher-price period at %s, so prioritize battery discharge and suppress grid charging",
+					input.TariffControl.NextLowPriceAt.Format(time.RFC3339),
+					input.TariffControl.NextHighPriceAt.Format(time.RFC3339),
+				)
+			}
 			plan.Reason += "; non-low-price period prioritizes battery discharge"
 		}
 		plan.WouldWrite = writeAllowed(input) && (plan.ShouldAdjustACChargeLimit || plan.ShouldLowerBackupReserve || plan.ShouldDisableEnergyModes || plan.ShouldEnableTOUMode)

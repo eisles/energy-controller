@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -1460,11 +1461,8 @@ func TestTariffRepositoryAdjustsBatteryCostBySOCInventory(t *testing.T) {
 	if firstDay.InventoryDeltaKWh == nil || !floatAlmostEqual(*firstDay.InventoryDeltaKWh, 1.2288) {
 		t.Fatalf("first day InventoryDeltaKWh = %v, want 1.2288", firstDay.InventoryDeltaKWh)
 	}
-	if firstDay.InventoryValueYen == nil || *firstDay.InventoryValueYen <= 0 {
-		t.Fatalf("first day InventoryValueYen = %v, want positive", firstDay.InventoryValueYen)
-	}
-	if firstDay.AdjustedEstimatedSavingsYen == nil || *firstDay.AdjustedEstimatedSavingsYen <= firstDay.EstimatedSavingsYen {
-		t.Fatalf("first day adjusted savings = %v, raw = %v, want adjusted greater", firstDay.AdjustedEstimatedSavingsYen, firstDay.EstimatedSavingsYen)
+	if firstDay.InventoryValueYen != nil || firstDay.InventoryValueRateYen != nil || firstDay.AdjustedEstimatedSavingsYen != nil {
+		t.Fatalf("first day inventory valuation = value %v rate %v adjusted %v, want unavailable", firstDay.InventoryValueYen, firstDay.InventoryValueRateYen, firstDay.AdjustedEstimatedSavingsYen)
 	}
 	if secondDay.InventoryStartSoc == nil || secondDay.InventoryEndSoc == nil || *secondDay.InventoryStartSoc != 60 || *secondDay.InventoryEndSoc != 50 {
 		t.Fatalf("second day inventory SOC = %v -> %v, want 60 -> 50", secondDay.InventoryStartSoc, secondDay.InventoryEndSoc)
@@ -1472,14 +1470,17 @@ func TestTariffRepositoryAdjustsBatteryCostBySOCInventory(t *testing.T) {
 	if secondDay.InventoryDeltaKWh == nil || !floatAlmostEqual(*secondDay.InventoryDeltaKWh, -1.2288) {
 		t.Fatalf("second day InventoryDeltaKWh = %v, want -1.2288", secondDay.InventoryDeltaKWh)
 	}
-	if secondDay.InventoryValueYen == nil || *secondDay.InventoryValueYen >= 0 {
-		t.Fatalf("second day InventoryValueYen = %v, want negative", secondDay.InventoryValueYen)
+	if secondDay.InventoryValueYen != nil || secondDay.InventoryValueRateYen != nil || secondDay.AdjustedEstimatedSavingsYen != nil {
+		t.Fatalf("second day inventory valuation = value %v rate %v adjusted %v, want unavailable", secondDay.InventoryValueYen, secondDay.InventoryValueRateYen, secondDay.AdjustedEstimatedSavingsYen)
 	}
-	if secondDay.AdjustedEstimatedSavingsYen == nil || *secondDay.AdjustedEstimatedSavingsYen >= secondDay.EstimatedSavingsYen {
-		t.Fatalf("second day adjusted savings = %v, raw = %v, want adjusted lower", secondDay.AdjustedEstimatedSavingsYen, secondDay.EstimatedSavingsYen)
+	if comparison.InventoryDeltaKWh == nil || !floatAlmostEqual(*comparison.InventoryDeltaKWh, 0) {
+		t.Fatalf("range InventoryDeltaKWh = %v, want 0", comparison.InventoryDeltaKWh)
 	}
-	if comparison.AdjustedEstimatedSavingsYen == nil {
-		t.Fatalf("AdjustedEstimatedSavingsYen = nil, want range-level adjusted savings")
+	if comparison.InventoryValueYen != nil || comparison.InventoryValueRateYen != nil || comparison.AdjustedEstimatedSavingsYen != nil {
+		t.Fatalf("range inventory valuation = value %v rate %v adjusted %v, want unavailable", comparison.InventoryValueYen, comparison.InventoryValueRateYen, comparison.AdjustedEstimatedSavingsYen)
+	}
+	if !strings.Contains(comparison.Note, "optimizer") {
+		t.Fatalf("Note = %q, want optimizer availability warning", comparison.Note)
 	}
 }
 
@@ -1621,21 +1622,62 @@ func TestTariffRepositoryUsesHistoricalPlanAtMeasuredAt(t *testing.T) {
 	}
 }
 
-func TestTariffRepositoryBuildsDefaultTariffControlContext(t *testing.T) {
-	db := openTestDB(t)
-	repo := NewTariffRepository(db)
+func TestTariffRepositoryBuildsDefaultTariffControlContextForWeekdayPeriods(t *testing.T) {
 	jst := time.FixedZone("JST", 9*60*60)
-	at := time.Date(2026, 5, 18, 10, 0, 0, 0, jst)
+	tests := []struct {
+		name         string
+		at           time.Time
+		wantPeriod   string
+		wantLow      bool
+		wantHigh     bool
+		wantNextLow  time.Time
+		wantNextHigh time.Time
+	}{
+		{
+			name:         "morning home at 08:00",
+			at:           time.Date(2026, 5, 18, 8, 0, 0, 0, jst),
+			wantPeriod:   "home",
+			wantNextLow:  time.Date(2026, 5, 18, 23, 0, 0, 0, jst),
+			wantNextHigh: time.Date(2026, 5, 18, 9, 0, 0, 0, jst),
+		},
+		{
+			name:         "day at 10:00",
+			at:           time.Date(2026, 5, 18, 10, 0, 0, 0, jst),
+			wantPeriod:   "day",
+			wantHigh:     true,
+			wantNextLow:  time.Date(2026, 5, 18, 23, 0, 0, 0, jst),
+			wantNextHigh: time.Date(2026, 5, 19, 9, 0, 0, 0, jst),
+		},
+		{
+			name:         "evening home at 18:00",
+			at:           time.Date(2026, 5, 18, 18, 0, 0, 0, jst),
+			wantPeriod:   "home",
+			wantNextLow:  time.Date(2026, 5, 18, 23, 0, 0, 0, jst),
+			wantNextHigh: time.Date(2026, 5, 19, 9, 0, 0, 0, jst),
+		},
+	}
 
-	ctx, err := repo.CurrentTariffControlContext(context.Background(), at)
-	if err != nil {
-		t.Fatalf("CurrentTariffControlContext failed: %v", err)
-	}
-	if ctx.CurrentPeriod != "day" || !ctx.IsHighPrice || ctx.IsLowPrice {
-		t.Fatalf("context = %#v, want high-price day period", ctx)
-	}
-	if ctx.NextLowPriceAt == nil || ctx.NextLowPriceAt.In(jst).Hour() != 23 {
-		t.Fatalf("NextLowPriceAt = %v, want 23:00 JST", ctx.NextLowPriceAt)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := openTestDB(t)
+			repo := NewTariffRepository(db)
+			ctx, err := repo.CurrentTariffControlContext(context.Background(), tt.at)
+			if err != nil {
+				t.Fatalf("CurrentTariffControlContext failed: %v", err)
+			}
+			if ctx.CurrentPeriod != tt.wantPeriod || ctx.IsLowPrice != tt.wantLow || ctx.IsHighPrice != tt.wantHigh {
+				t.Fatalf("context = %#v, want period=%q low=%t high=%t", ctx, tt.wantPeriod, tt.wantLow, tt.wantHigh)
+			}
+			if ctx.NextLowPriceAt == nil || !ctx.NextLowPriceAt.Equal(tt.wantNextLow) {
+				t.Fatalf("NextLowPriceAt = %v, want %v", ctx.NextLowPriceAt, tt.wantNextLow)
+			}
+			if ctx.NextHighPriceAt == nil || !ctx.NextHighPriceAt.Equal(tt.wantNextHigh) {
+				t.Fatalf("NextHighPriceAt = %v, want %v", ctx.NextHighPriceAt, tt.wantNextHigh)
+			}
+			if ctx.NextHighPriceAt.Location() != time.UTC {
+				t.Fatalf("NextHighPriceAt location = %v, want UTC", ctx.NextHighPriceAt.Location())
+			}
+		})
 	}
 }
 
@@ -1666,6 +1708,96 @@ func TestTariffRepositoryTreatsFlatRateAsNeutral(t *testing.T) {
 	}
 	if ctx.NextLowPriceAt != nil {
 		t.Fatalf("NextLowPriceAt = %v, want nil for flat rate", ctx.NextLowPriceAt)
+	}
+	if ctx.NextHighPriceAt != nil {
+		t.Fatalf("NextHighPriceAt = %v, want nil for flat rate", ctx.NextHighPriceAt)
+	}
+}
+
+func TestTariffRepositoryFindsNextHighAcrossFridayToHoliday(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	at := time.Date(2026, 5, 22, 22, 0, 0, 0, jst)
+	wantNextLow := time.Date(2026, 5, 22, 23, 0, 0, 0, jst)
+	wantNextHigh := time.Date(2026, 5, 23, 7, 0, 0, 0, jst)
+
+	ctx, err := repo.CurrentTariffControlContext(context.Background(), at)
+	if err != nil {
+		t.Fatalf("CurrentTariffControlContext failed: %v", err)
+	}
+	if ctx.DayType != "weekday" || ctx.CurrentPeriod != "home" {
+		t.Fatalf("context = %#v, want Friday weekday home period", ctx)
+	}
+	if ctx.NextLowPriceAt == nil || !ctx.NextLowPriceAt.Equal(wantNextLow) {
+		t.Fatalf("NextLowPriceAt = %v, want %v", ctx.NextLowPriceAt, wantNextLow)
+	}
+	if ctx.NextHighPriceAt == nil || !ctx.NextHighPriceAt.Equal(wantNextHigh) {
+		t.Fatalf("NextHighPriceAt = %v, want holiday high start %v", ctx.NextHighPriceAt, wantNextHigh)
+	}
+}
+
+func TestTariffRepositoryFindsNextHighAcrossHolidayToWeekday(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	at := time.Date(2026, 5, 24, 18, 0, 0, 0, jst)
+	wantNextLow := time.Date(2026, 5, 24, 23, 0, 0, 0, jst)
+	wantNextHigh := time.Date(2026, 5, 25, 9, 0, 0, 0, jst)
+
+	ctx, err := repo.CurrentTariffControlContext(context.Background(), at)
+	if err != nil {
+		t.Fatalf("CurrentTariffControlContext failed: %v", err)
+	}
+	if ctx.DayType != "holiday" || ctx.CurrentPeriod != "home" || !ctx.IsHighPrice {
+		t.Fatalf("context = %#v, want Sunday holiday high-price home period", ctx)
+	}
+	if ctx.NextLowPriceAt == nil || !ctx.NextLowPriceAt.Equal(wantNextLow) {
+		t.Fatalf("NextLowPriceAt = %v, want %v", ctx.NextLowPriceAt, wantNextLow)
+	}
+	if ctx.NextHighPriceAt == nil || !ctx.NextHighPriceAt.Equal(wantNextHigh) {
+		t.Fatalf("NextHighPriceAt = %v, want weekday high start %v", ctx.NextHighPriceAt, wantNextHigh)
+	}
+}
+
+func TestTariffRepositoryFindsNextHighAfterCrossMidnightCustomOverlay(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewTariffRepository(db)
+	jst := time.FixedZone("JST", 9*60*60)
+	at := time.Date(2026, 5, 18, 23, 30, 0, 0, jst)
+	_, err := repo.UpsertTariffPlan(context.Background(), domain.TariffPlan{
+		PlanName:      "cross-midnight overlay",
+		DayRateYen:    40,
+		HomeRateYen:   30,
+		NightRateYen:  20,
+		ExportRateYen: 8,
+		Timezone:      "Asia/Tokyo",
+		EffectiveFrom: at.Add(-time.Hour),
+		PeriodRules: []domain.TariffPeriodRule{
+			{DayType: "weekday", Period: "low-base", StartMinute: 0, EndMinute: 1440, RateYen: 10, Priority: 10},
+			{DayType: "weekday", Period: "high-overlay", StartMinute: 22 * 60, EndMinute: 2 * 60, RateYen: 40, Priority: 100},
+			{DayType: "holiday", Period: "low-base", StartMinute: 0, EndMinute: 1440, RateYen: 10, Priority: 10},
+			{DayType: "holiday", Period: "high-overlay", StartMinute: 22 * 60, EndMinute: 2 * 60, RateYen: 40, Priority: 100},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpsertTariffPlan failed: %v", err)
+	}
+	wantNextLow := time.Date(2026, 5, 19, 2, 0, 0, 0, jst)
+	wantNextHigh := time.Date(2026, 5, 19, 22, 0, 0, 0, jst)
+
+	ctx, err := repo.CurrentTariffControlContext(context.Background(), at)
+	if err != nil {
+		t.Fatalf("CurrentTariffControlContext failed: %v", err)
+	}
+	if ctx.CurrentPeriod != "high-overlay" || !ctx.IsHighPrice || ctx.Source != "custom" {
+		t.Fatalf("context = %#v, want active custom high overlay", ctx)
+	}
+	if ctx.NextLowPriceAt == nil || !ctx.NextLowPriceAt.Equal(wantNextLow) {
+		t.Fatalf("NextLowPriceAt = %v, want overlay end %v", ctx.NextLowPriceAt, wantNextLow)
+	}
+	if ctx.NextHighPriceAt == nil || !ctx.NextHighPriceAt.Equal(wantNextHigh) {
+		t.Fatalf("NextHighPriceAt = %v, want next overlay start %v", ctx.NextHighPriceAt, wantNextHigh)
 	}
 }
 

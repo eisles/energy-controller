@@ -121,6 +121,10 @@ export function NightChargeSummaryTable({
                         目標 {nullablePercent(summary.plannedTargetSoc)} / {nullableKwh(summary.plannedTargetKwh)}
                       </span>
                       <br />
+                      <span className="readonly-note">
+                        送信成功 {nullablePercent(summary.successfulCommandTargetSoc)} / {formatDateTime(summary.successfulCommandAt)}
+                      </span>
+                      <br />
                       <span className="readonly-note">必要 {nullableKwh(summary.plannedRequiredChargeKwh)}</span>
                     </TableCell>
                     <TableCell>
@@ -153,6 +157,9 @@ export function NightChargeSummaryTable({
                     <TableCell className="reason-cell">
                       <p>{summary.morningReason || "-"}</p>
                       <p className="readonly-note">{summary.finalResultReason || "-"}</p>
+                      <p className="readonly-note">
+                        目標学習 {summary.targetLearningEligible ? "対象" : `除外: ${summary.targetLearningExclusionReason || "理由なし"}`}
+                      </p>
                     </TableCell>
                   </TableRow>
                 ))

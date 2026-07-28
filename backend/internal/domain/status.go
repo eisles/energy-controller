@@ -483,33 +483,46 @@ type PVForecastHistoryResponse struct {
 }
 
 type NightChargeDailySummary struct {
-	SummaryDate               string     `json:"summaryDate"`
-	PlanCreatedAt             *time.Time `json:"planCreatedAt,omitempty"`
-	TargetForecastDate        *string    `json:"targetForecastDate,omitempty"`
-	PlannedTargetSoc          *int       `json:"plannedTargetSoc,omitempty"`
-	PlannedTargetKWh          *float64   `json:"plannedTargetKwh,omitempty"`
-	PlannedRequiredChargeKWh  *float64   `json:"plannedRequiredChargeKwh,omitempty"`
-	PlannedMode               string     `json:"plannedMode"`
-	NightStartSoc             *int       `json:"nightStartSoc,omitempty"`
-	NightEndSoc               *int       `json:"nightEndSoc,omitempty"`
-	NightSocDelta             *int       `json:"nightSocDelta,omitempty"`
-	MinNightSoc               *int       `json:"minNightSoc,omitempty"`
-	MaxNightSoc               *int       `json:"maxNightSoc,omitempty"`
-	NightImportKWh            *float64   `json:"nightImportKwh,omitempty"`
-	NightExportKWh            *float64   `json:"nightExportKwh,omitempty"`
-	NightBatteryInputKWh      *float64   `json:"nightBatteryInputKwh,omitempty"`
-	NightBatteryOutputKWh     *float64   `json:"nightBatteryOutputKwh,omitempty"`
-	DaytimeBatteryInputKWh    *float64   `json:"daytimeBatteryInputKwh,omitempty"`
-	DaytimeExportKWh          *float64   `json:"daytimeExportKwh,omitempty"`
-	MorningTargetSocGap       *int       `json:"morningTargetSocGap,omitempty"`
-	NightNetBatteryKWh        *float64   `json:"nightNetBatteryKwh,omitempty"`
-	NightRequiredChargeGapKWh *float64   `json:"nightRequiredChargeGapKwh,omitempty"`
-	DaytimeChargeAndExportKWh *float64   `json:"daytimeChargeAndExportKwh,omitempty"`
-	MorningStatus             string     `json:"morningStatus"`
-	MorningReason             string     `json:"morningReason"`
-	FinalResultStatus         string     `json:"finalResultStatus"`
-	FinalResultReason         string     `json:"finalResultReason"`
-	DataSource                string     `json:"dataSource"`
+	SummaryDate                    string     `json:"summaryDate"`
+	PlanCreatedAt                  *time.Time `json:"planCreatedAt,omitempty"`
+	TargetForecastDate             *string    `json:"targetForecastDate,omitempty"`
+	PlannedTargetSoc               *int       `json:"plannedTargetSoc,omitempty"`
+	PlannedTargetKWh               *float64   `json:"plannedTargetKwh,omitempty"`
+	PlannedRequiredChargeKWh       *float64   `json:"plannedRequiredChargeKwh,omitempty"`
+	PlannedMode                    string     `json:"plannedMode"`
+	NightStartSoc                  *int       `json:"nightStartSoc,omitempty"`
+	NightEndSoc                    *int       `json:"nightEndSoc,omitempty"`
+	NightSocDelta                  *int       `json:"nightSocDelta,omitempty"`
+	MinNightSoc                    *int       `json:"minNightSoc,omitempty"`
+	MaxNightSoc                    *int       `json:"maxNightSoc,omitempty"`
+	NightImportKWh                 *float64   `json:"nightImportKwh,omitempty"`
+	NightExportKWh                 *float64   `json:"nightExportKwh,omitempty"`
+	NightBatteryInputKWh           *float64   `json:"nightBatteryInputKwh,omitempty"`
+	NightBatteryOutputKWh          *float64   `json:"nightBatteryOutputKwh,omitempty"`
+	DaytimeBatteryInputKWh         *float64   `json:"daytimeBatteryInputKwh,omitempty"`
+	DaytimeExportKWh               *float64   `json:"daytimeExportKwh,omitempty"`
+	MorningTargetSocGap            *int       `json:"morningTargetSocGap,omitempty"`
+	SuccessfulCommandTargetSoc     *int       `json:"successfulCommandTargetSoc,omitempty"`
+	SuccessfulCommandAt            *time.Time `json:"successfulCommandAt,omitempty"`
+	SuccessfulCommandFingerprint   string     `json:"successfulCommandFingerprint,omitempty"`
+	NightCommandSentCount          int        `json:"nightCommandSentCount"`
+	NightCommandErrorCount         int        `json:"nightCommandErrorCount"`
+	NightCommandFingerprintChanged bool       `json:"nightCommandFingerprintChanged"`
+	ExecutionTargetSocGap          *int       `json:"executionTargetSocGap,omitempty"`
+	NightPowerSampleCoverageRatio  float64    `json:"nightPowerSampleCoverageRatio"`
+	NightPowerSampleMaxGapSeconds  float64    `json:"nightPowerSampleMaxGapSeconds"`
+	SettingsFingerprintVerified    bool       `json:"settingsFingerprintVerified"`
+	DeviceFingerprintVerified      bool       `json:"deviceFingerprintVerified"`
+	TargetLearningEligible         bool       `json:"targetLearningEligible"`
+	TargetLearningExclusionReason  string     `json:"targetLearningExclusionReason"`
+	NightNetBatteryKWh             *float64   `json:"nightNetBatteryKwh,omitempty"`
+	NightRequiredChargeGapKWh      *float64   `json:"nightRequiredChargeGapKwh,omitempty"`
+	DaytimeChargeAndExportKWh      *float64   `json:"daytimeChargeAndExportKwh,omitempty"`
+	MorningStatus                  string     `json:"morningStatus"`
+	MorningReason                  string     `json:"morningReason"`
+	FinalResultStatus              string     `json:"finalResultStatus"`
+	FinalResultReason              string     `json:"finalResultReason"`
+	DataSource                     string     `json:"dataSource"`
 }
 
 type PowerLog struct {
@@ -686,18 +699,19 @@ type TariffPeriodRule struct {
 }
 
 type TariffControlContext struct {
-	PlanName       string     `json:"planName"`
-	Timezone       string     `json:"timezone"`
-	DayType        string     `json:"dayType"`
-	CurrentPeriod  string     `json:"currentPeriod"`
-	CurrentRateYen float64    `json:"currentRateYen"`
-	LowestRateYen  float64    `json:"lowestRateYen"`
-	HighestRateYen float64    `json:"highestRateYen"`
-	IsLowPrice     bool       `json:"isLowPrice"`
-	IsHighPrice    bool       `json:"isHighPrice"`
-	NextLowPriceAt *time.Time `json:"nextLowPriceAt,omitempty"`
-	Source         string     `json:"source"`
-	Reason         string     `json:"reason"`
+	PlanName        string     `json:"planName"`
+	Timezone        string     `json:"timezone"`
+	DayType         string     `json:"dayType"`
+	CurrentPeriod   string     `json:"currentPeriod"`
+	CurrentRateYen  float64    `json:"currentRateYen"`
+	LowestRateYen   float64    `json:"lowestRateYen"`
+	HighestRateYen  float64    `json:"highestRateYen"`
+	IsLowPrice      bool       `json:"isLowPrice"`
+	IsHighPrice     bool       `json:"isHighPrice"`
+	NextLowPriceAt  *time.Time `json:"nextLowPriceAt,omitempty"`
+	NextHighPriceAt *time.Time `json:"nextHighPriceAt,omitempty"`
+	Source          string     `json:"source"`
+	Reason          string     `json:"reason"`
 }
 
 type TariffPlan struct {

@@ -685,6 +685,19 @@ export type NightChargeDailySummary = {
   daytimeBatteryInputKwh?: number | null;
   daytimeExportKwh?: number | null;
   morningTargetSocGap?: number | null;
+  successfulCommandTargetSoc?: number | null;
+  successfulCommandAt?: string | null;
+  successfulCommandFingerprint?: string;
+  nightCommandSentCount: number;
+  nightCommandErrorCount: number;
+  nightCommandFingerprintChanged: boolean;
+  executionTargetSocGap?: number | null;
+  nightPowerSampleCoverageRatio: number;
+  nightPowerSampleMaxGapSeconds: number;
+  settingsFingerprintVerified: boolean;
+  deviceFingerprintVerified: boolean;
+  targetLearningEligible: boolean;
+  targetLearningExclusionReason: string;
   nightNetBatteryKwh?: number | null;
   nightRequiredChargeGapKwh?: number | null;
   daytimeChargeAndExportKwh?: number | null;
@@ -844,6 +857,7 @@ export type TariffControlContext = {
   highestRateYen: number;
   isLowPrice: boolean;
   isHighPrice: boolean;
+  nextHighPriceAt?: string | null;
   nextLowPriceAt?: string | null;
   source: string;
   reason: string;

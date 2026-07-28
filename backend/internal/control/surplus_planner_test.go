@@ -3,6 +3,7 @@ package control
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/eisles/energy-controller/backend/internal/domain"
 )
@@ -449,12 +450,14 @@ func TestPlanSurplusChargingHighPriceImportDoesNotRestoreTOUWhenModesAreOff(t *t
 	}
 }
 
-func TestPlanSurplusChargingMidPriceImportDoesNotRestoreTOUWhenModesAreOff(t *testing.T) {
+func TestPlanSurplusChargingMorningMidPriceImportRestoresTOUToPreserveForHighPrice(t *testing.T) {
 	reserve := 54
 	tou := false
 	selfPowered := false
 	scheduled := false
 	intelligent := false
+	nextHigh := time.Date(2026, 5, 19, 9, 0, 0, 0, time.UTC)
+	nextLow := time.Date(2026, 5, 19, 23, 0, 0, 0, time.UTC)
 	plan := PlanSurplusCharging(SurplusPlanInput{
 		GridW:                  1300,
 		BatterySoc:             54,
@@ -469,7 +472,62 @@ func TestPlanSurplusChargingMidPriceImportDoesNotRestoreTOUWhenModesAreOff(t *te
 		SimulationMode:         false,
 		EnableRealControl:      true,
 		AutoControl:            true,
-		TariffControl:          &domain.TariffControlContext{CurrentPeriod: "mid", CurrentRateYen: 26.4, LowestRateYen: 16.1, HighestRateYen: 34.1, IsLowPrice: false, IsHighPrice: false},
+		TariffControl: &domain.TariffControlContext{
+			CurrentPeriod:   "home",
+			CurrentRateYen:  26,
+			LowestRateYen:   16.11,
+			HighestRateYen:  34.06,
+			NextHighPriceAt: &nextHigh,
+			NextLowPriceAt:  &nextLow,
+		},
+	}, DefaultSettings())
+
+	if !plan.ShouldEnableTOUMode || plan.ShouldDisableEnergyModes {
+		t.Fatalf("enable/disable modes = %t/%t, want true/false", plan.ShouldEnableTOUMode, plan.ShouldDisableEnergyModes)
+	}
+	if !plan.ShouldLowerBackupReserve {
+		t.Fatal("ShouldLowerBackupReserve = false, want true")
+	}
+	if !plan.WouldWrite {
+		t.Fatal("WouldWrite = false, want true for reserve recovery")
+	}
+	for _, want := range []string{"preserve battery", nextHigh.Format(time.RFC3339), nextLow.Format(time.RFC3339)} {
+		if !strings.Contains(plan.TariffControlReason, want) {
+			t.Fatalf("TariffControlReason = %q, want contains %q", plan.TariffControlReason, want)
+		}
+	}
+}
+
+func TestPlanSurplusChargingEveningMidPriceImportKeepsDischargePriority(t *testing.T) {
+	reserve := 54
+	tou := false
+	selfPowered := false
+	scheduled := false
+	intelligent := false
+	nextLow := time.Date(2026, 5, 19, 23, 0, 0, 0, time.UTC)
+	nextHigh := time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC)
+	plan := PlanSurplusCharging(SurplusPlanInput{
+		GridW:                  1300,
+		BatterySoc:             54,
+		ACChargeLimitW:         minImportRecoveryChargeW,
+		BackupReserveSoc:       &reserve,
+		DefaultReserveSoc:      30,
+		MinDischargeReserveSoc: 10,
+		TOUModeEnabled:         &tou,
+		SelfPoweredEnabled:     &selfPowered,
+		ScheduledEnabled:       &scheduled,
+		IntelligentEnabled:     &intelligent,
+		SimulationMode:         false,
+		EnableRealControl:      true,
+		AutoControl:            true,
+		TariffControl: &domain.TariffControlContext{
+			CurrentPeriod:   "home",
+			CurrentRateYen:  26,
+			LowestRateYen:   16.11,
+			HighestRateYen:  34.06,
+			NextHighPriceAt: &nextHigh,
+			NextLowPriceAt:  &nextLow,
+		},
 	}, DefaultSettings())
 
 	if plan.ShouldEnableTOUMode || plan.ShouldDisableEnergyModes {
@@ -481,8 +539,10 @@ func TestPlanSurplusChargingMidPriceImportDoesNotRestoreTOUWhenModesAreOff(t *te
 	if !plan.WouldWrite {
 		t.Fatal("WouldWrite = false, want true for reserve recovery")
 	}
-	if !strings.Contains(plan.TariffControlReason, "non-low-price period") {
-		t.Fatalf("TariffControlReason = %q, want non-low-price context", plan.TariffControlReason)
+	for _, want := range []string{"prioritize battery discharge", nextHigh.Format(time.RFC3339), nextLow.Format(time.RFC3339)} {
+		if !strings.Contains(plan.TariffControlReason, want) {
+			t.Fatalf("TariffControlReason = %q, want contains %q", plan.TariffControlReason, want)
+		}
 	}
 }
 

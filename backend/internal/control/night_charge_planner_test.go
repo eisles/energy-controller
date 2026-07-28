@@ -802,45 +802,58 @@ func TestPlanNightChargingHighPriceExportDoesNotOwnSurplusCharging(t *testing.T)
 	}
 }
 
-func TestPlanNightChargingMidPriceImportEnablesSelfPoweredDischarge(t *testing.T) {
+func TestPlanNightChargingMorningMidPriceImportPreservesBatteryForUpcomingHighPrice(t *testing.T) {
 	reserve := 55
 	selfPowered := false
+	nextHigh := time.Date(2026, 5, 19, 9, 0, 0, 0, time.UTC)
+	nextLow := time.Date(2026, 5, 19, 23, 0, 0, 0, time.UTC)
 	plan := PlanNightCharging(NightChargePlanInput{
-		Now:                time.Date(2026, 5, 19, 15, 30, 0, 0, time.UTC),
+		Now:                time.Date(2026, 5, 19, 8, 0, 0, 0, time.UTC),
 		GridW:              900,
 		BatterySoc:         55,
 		BackupReserveSoc:   &reserve,
 		SelfPoweredEnabled: &selfPowered,
 		Forecast:           &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 12, SunshineDurationHours: 4, CloudCoverMeanPercent: 70, PrecipitationProbabilityMax: 80, PrecipitationSumMM: 4},
 		SolarSettings:      &domain.WeatherLocation{MinimumReserveSoc: 10, BatteryCapacityKWh: 12.288},
-		TariffControl:      &domain.TariffControlContext{CurrentPeriod: "mid", CurrentRateYen: 26.4, LowestRateYen: 16.1, HighestRateYen: 34.1},
-		SimulationMode:     false,
-		EnableRealControl:  true,
-		AutoControl:        true,
+		TariffControl: &domain.TariffControlContext{
+			CurrentPeriod:   "home",
+			CurrentRateYen:  26,
+			LowestRateYen:   16.11,
+			HighestRateYen:  34.06,
+			NextHighPriceAt: &nextHigh,
+			NextLowPriceAt:  &nextLow,
+		},
+		SimulationMode:    false,
+		EnableRealControl: true,
+		AutoControl:       true,
 	}, DefaultSettings())
 
-	if plan.RecommendedMode != "self-powered-discharge" {
-		t.Fatalf("RecommendedMode = %q, want self-powered-discharge", plan.RecommendedMode)
+	if plan.RecommendedMode != "observe" {
+		t.Fatalf("RecommendedMode = %q, want observe", plan.RecommendedMode)
 	}
-	if plan.RecommendedBackupReserveSoc == nil || *plan.RecommendedBackupReserveSoc != 10 {
-		t.Fatalf("RecommendedBackupReserveSoc = %v, want 10", plan.RecommendedBackupReserveSoc)
+	if plan.RecommendedBackupReserveSoc != nil {
+		t.Fatalf("RecommendedBackupReserveSoc = %v, want nil", plan.RecommendedBackupReserveSoc)
 	}
-	if !plan.ShouldSetBackupReserve || !plan.ShouldEnableSelfPoweredMode || !plan.WouldWrite {
-		t.Fatalf("reserve/self-powered/write = %t/%t/%t, want all true", plan.ShouldSetBackupReserve, plan.ShouldEnableSelfPoweredMode, plan.WouldWrite)
+	if plan.ShouldSetBackupReserve || plan.ShouldEnableSelfPoweredMode || plan.WouldWrite {
+		t.Fatalf("reserve/self-powered/write = %t/%t/%t, want all false", plan.ShouldSetBackupReserve, plan.ShouldEnableSelfPoweredMode, plan.WouldWrite)
 	}
-	if !strings.Contains(plan.TariffControlReason, "mid-price period") {
-		t.Fatalf("TariffControlReason = %q, want mid-price context", plan.TariffControlReason)
+	for _, want := range []string{"preserve battery", nextHigh.Format(time.RFC3339), nextLow.Format(time.RFC3339)} {
+		if !strings.Contains(plan.TariffControlReason, want) {
+			t.Fatalf("TariffControlReason = %q, want contains %q", plan.TariffControlReason, want)
+		}
 	}
-	if !strings.Contains(plan.ActionSummary, "中/高単価買電中はself-powered放電を優先") {
-		t.Fatalf("ActionSummary = %q, want non-low-price discharge action", plan.ActionSummary)
+	if strings.Contains(plan.ActionSummary, "self-powered放電を優先") {
+		t.Fatalf("ActionSummary = %q, want no discharge-priority action", plan.ActionSummary)
 	}
 }
 
-func TestPlanNightChargingMidPriceImportUsesLowerCurrentReserveForSelfPoweredDischarge(t *testing.T) {
+func TestPlanNightChargingEveningMidPriceImportUsesLowerCurrentReserveForSelfPoweredDischarge(t *testing.T) {
 	reserve := 10
 	selfPowered := false
+	nextLow := time.Date(2026, 6, 19, 23, 0, 0, 0, time.UTC)
+	nextHigh := time.Date(2026, 6, 20, 9, 0, 0, 0, time.UTC)
 	plan := PlanNightCharging(NightChargePlanInput{
-		Now:                time.Date(2026, 6, 19, 8, 10, 0, 0, time.UTC),
+		Now:                time.Date(2026, 6, 19, 18, 10, 0, 0, time.UTC),
 		GridW:              616,
 		BatterySoc:         23,
 		BatteryInputW:      823,
@@ -850,10 +863,17 @@ func TestPlanNightChargingMidPriceImportUsesLowerCurrentReserveForSelfPoweredDis
 		SelfPoweredEnabled: &selfPowered,
 		Forecast:           &domain.WeatherForecast{ShortwaveRadiationMJPerM2: 22.5, SunshineDurationHours: 11, CloudCoverMeanPercent: 66},
 		SolarSettings:      &domain.WeatherLocation{MinimumReserveSoc: 30, BatteryCapacityKWh: 12.288},
-		TariffControl:      &domain.TariffControlContext{CurrentPeriod: "home", CurrentRateYen: 26, LowestRateYen: 16.11, HighestRateYen: 34.06},
-		SimulationMode:     false,
-		EnableRealControl:  true,
-		AutoControl:        true,
+		TariffControl: &domain.TariffControlContext{
+			CurrentPeriod:   "home",
+			CurrentRateYen:  26,
+			LowestRateYen:   16.11,
+			HighestRateYen:  34.06,
+			NextHighPriceAt: &nextHigh,
+			NextLowPriceAt:  &nextLow,
+		},
+		SimulationMode:    false,
+		EnableRealControl: true,
+		AutoControl:       true,
 	}, DefaultSettings())
 
 	if plan.RecommendedMode != "self-powered-discharge" {
@@ -875,6 +895,103 @@ func TestPlanNightChargingMidPriceImportUsesLowerCurrentReserveForSelfPoweredDis
 		if !strings.Contains(plan.ActionSummary, want) {
 			t.Fatalf("ActionSummary = %q, want contains %q", plan.ActionSummary, want)
 		}
+	}
+	for _, want := range []string{"prefer battery discharge", nextHigh.Format(time.RFC3339), nextLow.Format(time.RFC3339)} {
+		if !strings.Contains(plan.TariffControlReason, want) {
+			t.Fatalf("TariffControlReason = %q, want contains %q", plan.TariffControlReason, want)
+		}
+	}
+}
+
+func TestTariffPrefersImportDischargeUsesUpcomingPriceOrder(t *testing.T) {
+	nextHigh := time.Date(2026, 5, 19, 9, 0, 0, 0, time.UTC)
+	nextLow := time.Date(2026, 5, 19, 23, 0, 0, 0, time.UTC)
+	nextDayHigh := time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name   string
+		tariff *domain.TariffControlContext
+		want   bool
+	}{
+		{
+			name:   "explicit high price remains discharge priority",
+			tariff: &domain.TariffControlContext{IsHighPrice: true},
+			want:   true,
+		},
+		{
+			name:   "low price never discharges",
+			tariff: &domain.TariffControlContext{IsLowPrice: true},
+			want:   false,
+		},
+		{
+			name: "morning mid price preserves for high before low",
+			tariff: &domain.TariffControlContext{
+				CurrentRateYen:  26,
+				LowestRateYen:   16.11,
+				HighestRateYen:  34.06,
+				NextHighPriceAt: &nextHigh,
+				NextLowPriceAt:  &nextLow,
+			},
+			want: false,
+		},
+		{
+			name: "evening mid price discharges before low",
+			tariff: &domain.TariffControlContext{
+				CurrentRateYen:  26,
+				LowestRateYen:   16.11,
+				HighestRateYen:  34.06,
+				NextHighPriceAt: &nextDayHigh,
+				NextLowPriceAt:  &nextLow,
+			},
+			want: true,
+		},
+		{
+			name: "flat rate stays neutral",
+			tariff: &domain.TariffControlContext{
+				CurrentRateYen: 25,
+				LowestRateYen:  25,
+				HighestRateYen: 25,
+			},
+			want: false,
+		},
+		{
+			name: "missing next high stays conservative",
+			tariff: &domain.TariffControlContext{
+				CurrentRateYen: 26,
+				LowestRateYen:  16.11,
+				HighestRateYen: 34.06,
+				NextLowPriceAt: &nextLow,
+			},
+			want: false,
+		},
+		{
+			name: "missing next low stays conservative",
+			tariff: &domain.TariffControlContext{
+				CurrentRateYen:  26,
+				LowestRateYen:   16.11,
+				HighestRateYen:  34.06,
+				NextHighPriceAt: &nextHigh,
+			},
+			want: false,
+		},
+		{
+			name:   "incomplete price context stays conservative",
+			tariff: &domain.TariffControlContext{CurrentPeriod: "home"},
+			want:   false,
+		},
+		{
+			name:   "nil context stays conservative",
+			tariff: nil,
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tariffPrefersImportDischarge(tt.tariff); got != tt.want {
+				t.Fatalf("tariffPrefersImportDischarge() = %t, want %t", got, tt.want)
+			}
+		})
 	}
 }
 

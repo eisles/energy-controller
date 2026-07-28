@@ -13,6 +13,11 @@ import (
 
 const tariffRateTolerance = 0.001
 
+type tariffRateRange struct {
+	lowest  float64
+	highest float64
+}
+
 func (r *TariffRepository) CurrentTariffControlContext(ctx context.Context, at time.Time) (domain.TariffControlContext, error) {
 	if at.IsZero() {
 		at = time.Now()
@@ -45,19 +50,28 @@ func (r *TariffRepository) CurrentTariffControlContext(ctx context.Context, at t
 		nextLowUTC = &utc
 	}
 	hasPriceSpread := !rateEquals(highest, lowest)
+	var nextHighUTC *time.Time
+	if hasPriceSpread {
+		nextHigh := nextHighPriceStart(localAt, rules)
+		if !nextHigh.IsZero() {
+			utc := nextHigh.UTC()
+			nextHighUTC = &utc
+		}
+	}
 	return domain.TariffControlContext{
-		PlanName:       plan.PlanName,
-		Timezone:       plan.Timezone,
-		DayType:        dayType,
-		CurrentPeriod:  rule.Period,
-		CurrentRateYen: rule.RateYen,
-		LowestRateYen:  lowest,
-		HighestRateYen: highest,
-		IsLowPrice:     hasPriceSpread && rateEquals(rule.RateYen, lowest),
-		IsHighPrice:    hasPriceSpread && rateEquals(rule.RateYen, highest),
-		NextLowPriceAt: nextLowUTC,
-		Source:         source,
-		Reason:         tariffContextReason(rule, source),
+		PlanName:        plan.PlanName,
+		Timezone:        plan.Timezone,
+		DayType:         dayType,
+		CurrentPeriod:   rule.Period,
+		CurrentRateYen:  rule.RateYen,
+		LowestRateYen:   lowest,
+		HighestRateYen:  highest,
+		IsLowPrice:      hasPriceSpread && rateEquals(rule.RateYen, lowest),
+		IsHighPrice:     hasPriceSpread && rateEquals(rule.RateYen, highest),
+		NextLowPriceAt:  nextLowUTC,
+		NextHighPriceAt: nextHighUTC,
+		Source:          source,
+		Reason:          tariffContextReason(rule, source),
 	}, nil
 }
 
@@ -295,27 +309,62 @@ func tariffRateBoundsForDayType(rules []domain.TariffPeriodRule, dayType string)
 }
 
 func nextLowPriceStart(at time.Time, rules []domain.TariffPeriodRule) time.Time {
+	rateBoundsByDayType := tariffRateRangesByDayType(rules)
 	start := at.Truncate(time.Minute).Add(time.Minute)
 	end := at.AddDate(0, 0, 2).Truncate(time.Minute).Add(24 * time.Hour)
 	for candidate := start; !candidate.After(end); candidate = candidate.Add(time.Minute) {
-		if !isLowPriceAt(candidate, rules) {
+		if !isLowPriceAt(candidate, rules, rateBoundsByDayType) {
 			continue
 		}
-		if !isLowPriceAt(candidate.Add(-time.Minute), rules) {
+		if !isLowPriceAt(candidate.Add(-time.Minute), rules, rateBoundsByDayType) {
 			return candidate
 		}
 	}
 	return time.Time{}
 }
 
-func isLowPriceAt(at time.Time, rules []domain.TariffPeriodRule) bool {
+func isLowPriceAt(at time.Time, rules []domain.TariffPeriodRule, rateBoundsByDayType map[string]tariffRateRange) bool {
 	dayType := tariffDayType(at)
-	lowest, highest := tariffRateBoundsForDayType(rules, dayType)
-	if lowest <= 0 || rateEquals(highest, lowest) {
+	rateRange := rateBoundsByDayType[dayType]
+	if rateRange.lowest <= 0 || rateEquals(rateRange.highest, rateRange.lowest) {
 		return false
 	}
 	rule := resolveTariffRule(rules, at)
-	return rule.RateYen > 0 && rateEquals(rule.RateYen, lowest)
+	return rule.RateYen > 0 && rateEquals(rule.RateYen, rateRange.lowest)
+}
+
+func nextHighPriceStart(at time.Time, rules []domain.TariffPeriodRule) time.Time {
+	rateBoundsByDayType := tariffRateRangesByDayType(rules)
+	start := at.Truncate(time.Minute).Add(time.Minute)
+	end := at.AddDate(0, 0, 2).Truncate(time.Minute).Add(24 * time.Hour)
+	for candidate := start; !candidate.After(end); candidate = candidate.Add(time.Minute) {
+		if !isHighPriceAt(candidate, rules, rateBoundsByDayType) {
+			continue
+		}
+		if !isHighPriceAt(candidate.Add(-time.Minute), rules, rateBoundsByDayType) {
+			return candidate
+		}
+	}
+	return time.Time{}
+}
+
+func tariffRateRangesByDayType(rules []domain.TariffPeriodRule) map[string]tariffRateRange {
+	rateBoundsByDayType := make(map[string]tariffRateRange, 2)
+	for _, dayType := range []string{"weekday", "holiday"} {
+		lowest, highest := tariffRateBoundsForDayType(rules, dayType)
+		rateBoundsByDayType[dayType] = tariffRateRange{lowest: lowest, highest: highest}
+	}
+	return rateBoundsByDayType
+}
+
+func isHighPriceAt(at time.Time, rules []domain.TariffPeriodRule, rateBoundsByDayType map[string]tariffRateRange) bool {
+	dayType := tariffDayType(at)
+	rateRange := rateBoundsByDayType[dayType]
+	if rateRange.highest <= 0 || rateEquals(rateRange.highest, rateRange.lowest) {
+		return false
+	}
+	rule := resolveTariffRule(rules, at)
+	return rule.RateYen > 0 && rateEquals(rule.RateYen, rateRange.highest)
 }
 
 func tariffDayType(at time.Time) string {

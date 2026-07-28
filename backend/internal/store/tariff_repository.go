@@ -298,7 +298,7 @@ func (r *TariffRepository) batteryCostComparison(ctx context.Context, plans []do
 		Method:                   "power_logs_no_battery_estimate",
 		Quality:                  "approximate",
 		MaxSampleIntervalSeconds: int(batteryComparisonMaxSampleInterval.Seconds()),
-		Note:                     "power_logs の DELTA Pro 3 入出力から、grid_w - battery_input_w + battery_output_w でポータブルバッテリー無しを近似します。機器別入出力ログが揃うまでは補助バッテリー分は限定的な推定です。",
+		Note:                     "power_logs の DELTA Pro 3 入出力から、grid_w - battery_input_w + battery_output_w でポータブルバッテリー無しを近似します。機器別入出力ログが揃うまでは補助バッテリー分は限定的な推定です。在庫調整は充放電と pass-through の測定検証が完了するまで optimizer 判定に使用できません。",
 	}
 	inventoryCapacityWh, err := r.batteryInventoryCapacityWh(ctx)
 	if err != nil {
@@ -603,35 +603,38 @@ func finalizeBatteryCostDailyBreakdown(dailyBreakdown map[string]*domain.Battery
 }
 
 func finalizeDailyInventory(day *domain.BatteryCostComparisonDailyBreakdown, inventoryCapacityWh int) {
-	if day == nil || inventoryCapacityWh <= 0 || day.InventoryStartSoc == nil || day.InventoryEndSoc == nil || day.InventoryValueRateYen == nil {
+	if day == nil {
+		return
+	}
+	day.InventoryDeltaKWh = nil
+	day.InventoryValueYen = nil
+	day.InventoryValueRateYen = nil
+	day.AdjustedEstimatedSavingsYen = nil
+	if inventoryCapacityWh <= 0 || day.InventoryStartSoc == nil || day.InventoryEndSoc == nil {
 		return
 	}
 	deltaKWh := batteryInventoryDeltaKWh(inventoryCapacityWh, *day.InventoryStartSoc, *day.InventoryEndSoc)
-	valueYen := deltaKWh * *day.InventoryValueRateYen
-	adjustedSavingsYen := day.EstimatedSavingsYen + valueYen
 	day.InventoryDeltaKWh = floatPtr(round4(deltaKWh))
-	day.InventoryValueYen = floatPtr(round2(valueYen))
-	day.InventoryValueRateYen = floatPtr(round2(*day.InventoryValueRateYen))
-	day.AdjustedEstimatedSavingsYen = floatPtr(round2(adjustedSavingsYen))
 }
 
 func finalizeBatteryCostComparisonInventory(comparison *domain.BatteryCostComparison, inventoryCapacityWh int) {
-	if comparison == nil || inventoryCapacityWh <= 0 || comparison.InventoryStartSoc == nil || comparison.InventoryEndSoc == nil {
+	if comparison == nil {
+		return
+	}
+	comparison.InventoryDeltaKWh = nil
+	comparison.InventoryValueYen = nil
+	comparison.InventoryValueRateYen = nil
+	comparison.AdjustedEstimatedSavingsYen = nil
+	for i := range comparison.DailyBreakdown {
+		comparison.DailyBreakdown[i].InventoryValueYen = nil
+		comparison.DailyBreakdown[i].InventoryValueRateYen = nil
+		comparison.DailyBreakdown[i].AdjustedEstimatedSavingsYen = nil
+	}
+	if inventoryCapacityWh <= 0 || comparison.InventoryStartSoc == nil || comparison.InventoryEndSoc == nil {
 		return
 	}
 	deltaKWh := batteryInventoryDeltaKWh(inventoryCapacityWh, *comparison.InventoryStartSoc, *comparison.InventoryEndSoc)
-	var inventoryValueYen float64
-	for _, day := range comparison.DailyBreakdown {
-		if day.InventoryValueYen != nil {
-			inventoryValueYen += *day.InventoryValueYen
-		}
-	}
 	comparison.InventoryDeltaKWh = floatPtr(round4(deltaKWh))
-	comparison.InventoryValueYen = floatPtr(round2(inventoryValueYen))
-	if math.Abs(deltaKWh) > 0.00001 {
-		comparison.InventoryValueRateYen = floatPtr(round2(inventoryValueYen / deltaKWh))
-	}
-	comparison.AdjustedEstimatedSavingsYen = floatPtr(round2(comparison.EstimatedSavingsYen + inventoryValueYen))
 }
 
 func batteryInventoryDeltaKWh(capacityWh int, startSoc int, endSoc int) float64 {

@@ -178,6 +178,12 @@ tail -f data/real-control-continuous.log
 - 翌日の PV で十分充電できる見込みなら深夜充電を抑え、不足見込みなら深夜に必要分だけ充電する方針です。
 - TOU / self-powered / backup reserve の切り替えは実機観測に基づくため、必ずログと EcoFlow app で確認してください。
 
+料金時間帯による放電:
+
+- 中間単価の買電中に、次の低単価開始より先に高単価時間帯が始まる場合は、能動的な self-powered 放電を延期して残量を高単価時間帯へ温存します。
+- 中部電力 Eライフプランの平日は、07:00-09:00 のホームタイムでは残量を温存し、09:00-17:00 のデイタイムで放電を優先します。17:00-23:00 は次の低単価まで高単価時間帯がないため、従来どおり放電候補になります。
+- 休日やカスタム料金ルールも、固定時刻ではなく料金マスタから算出した次回高単価・低単価の順序で判断します。料金境界を取得できない場合は、能動放電を開始しません。
+
 DELTA Pro 3 の SN は充電機器マスタで管理します。`ECOFLOW_ACCESS_KEY` / `ECOFLOW_SECRET_KEY` / `ECOFLOW_BASE_URL` は EcoFlow Cloud 認証情報として使い、通常の読み取り・余剰追従/夜間充電 write 対象は `kind=ecoflow_delta_pro3`、`statusSource=ecoflow_cloud`、`enabled=true`、`deviceSn` 設定済みのマスタ行から解決します。実機 write はさらに `controlEnabled=true` と既存の real-control gate が必要です。`ECOFLOW_DEVICE_SN` は移行期間の読み取りフォールバックと one-shot CLI 検証用に残していますが、自動 write のフォールバックには使いません。
 
 DELTA Pro 3 のサイクル数は、Cloud REST quota に `cycles` 系 key が含まれる場合はその値を使います。Cloud 側に key がない場合だけ、EcoFlow app private 認証から取得した MQTT 証明書で Developer MQTT quota topic (`/open/{certificateAccount}/{sn}/quota`) を read-only subscribe し、`cycles` / `bmsCycles` / `bmsBattCycles` など名前付き key がある場合だけ表示用に補完します。未命名 protobuf field はサイクル数として扱わず、Developer MQTT quota の取得失敗は SOC や充電制御 status には影響させません。

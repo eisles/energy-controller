@@ -411,11 +411,20 @@ input {
 
 .drawer-header {
   margin-bottom: 16px;
+  min-width: 0;
 }
 
 .drawer-header h2 {
   margin: 0;
   font-size: 22px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.drawer-header .ui-button {
+  flex: 0 0 auto;
+  max-width: 100%;
+  white-space: nowrap;
 }
 
 .drawer-actions {
@@ -1239,6 +1248,25 @@ input {
 
   .collapsible-actions,
   .collapsible-toggle {
+    width: 100%;
+  }
+
+  .collapsible-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-drawer {
+    width: 100%;
+    padding: 16px;
+  }
+
+  .drawer-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .drawer-header .ui-button {
     width: 100%;
   }
 

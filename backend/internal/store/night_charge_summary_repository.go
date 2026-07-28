@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/eisles/energy-controller/backend/internal/domain"
@@ -17,6 +18,7 @@ const (
 	nightSummaryFollowUpEndHour    = 16
 	nightSummaryToleranceSoc       = 3
 	nightSummaryOverchargedSoc     = 10
+	minNightSummarySampleCoverage  = 0.95
 	maxNightSummarySampleGap       = 2 * time.Hour
 	nightSummaryBoundaryTolerance  = 30 * time.Minute
 	nightSummaryPending            = "pending"
@@ -250,6 +252,17 @@ func (r *NightChargeSummaryRepository) buildSummary(ctx context.Context, now tim
 		summary.PlannedMode = plan.RecommendedMode
 	}
 
+	execution, err := r.nightCommandExecutionSummary(ctx, session.chargeStart, session.chargeEnd)
+	if err != nil {
+		return summary, err
+	}
+	summary.SuccessfulCommandTargetSoc = execution.successfulTargetSoc
+	summary.SuccessfulCommandAt = execution.successfulAt
+	summary.SuccessfulCommandFingerprint = execution.successfulFingerprint
+	summary.NightCommandSentCount = execution.sentCount
+	summary.NightCommandErrorCount = execution.errorCount
+	summary.NightCommandFingerprintChanged = execution.fingerprintChanged
+
 	nightStartSoc, err := r.closestSoc(ctx, session.chargeStart)
 	if err != nil {
 		return summary, err
@@ -286,6 +299,8 @@ func (r *NightChargeSummaryRepository) buildSummary(ctx context.Context, now tim
 	summary.NightExportKWh = nightEnergy.exportKWh
 	summary.NightBatteryInputKWh = nightEnergy.batteryInputKWh
 	summary.NightBatteryOutputKWh = nightEnergy.batteryOutputKWh
+	summary.NightPowerSampleCoverageRatio = nightEnergy.coverageRatio
+	summary.NightPowerSampleMaxGapSeconds = nightEnergy.maxGap.Seconds()
 	summary.DaytimeBatteryInputKWh = daytimeEnergy.batteryInputKWh
 	summary.DaytimeExportKWh = daytimeEnergy.exportKWh
 
@@ -304,6 +319,7 @@ func (r *NightChargeSummaryRepository) buildSummary(ctx context.Context, now tim
 	}
 
 	applyNightSummaryDerivedFields(&summary)
+	applyNightSummaryTargetLearningEligibility(&summary)
 	applyNightSummaryStatus(&summary, now, session)
 	return summary, nil
 }
@@ -312,6 +328,10 @@ func applyNightSummaryDerivedFields(summary *domain.NightChargeDailySummary) {
 	if summary.PlannedTargetSoc != nil && summary.NightEndSoc != nil {
 		gap := *summary.NightEndSoc - *summary.PlannedTargetSoc
 		summary.MorningTargetSocGap = &gap
+	}
+	if summary.SuccessfulCommandTargetSoc != nil && summary.NightEndSoc != nil {
+		gap := *summary.NightEndSoc - *summary.SuccessfulCommandTargetSoc
+		summary.ExecutionTargetSocGap = &gap
 	}
 	if summary.NightBatteryInputKWh != nil && summary.NightBatteryOutputKWh != nil {
 		net := *summary.NightBatteryInputKWh - *summary.NightBatteryOutputKWh
@@ -322,6 +342,54 @@ func applyNightSummaryDerivedFields(summary *domain.NightChargeDailySummary) {
 		}
 	}
 	summary.DaytimeChargeAndExportKWh = sumOptionalKWh(summary.DaytimeBatteryInputKWh, summary.DaytimeExportKWh)
+}
+
+func applyNightSummaryTargetLearningEligibility(summary *domain.NightChargeDailySummary) {
+	if summary == nil {
+		return
+	}
+	reasons := make([]string, 0, 9)
+	if summary.SuccessfulCommandTargetSoc == nil {
+		reasons = append(reasons, "no fully successful night charge command with a matching reserve target")
+	}
+	if summary.NightCommandErrorCount > 0 {
+		reasons = append(reasons, fmt.Sprintf("%d night charge command error(s) occurred", summary.NightCommandErrorCount))
+	}
+	if summary.NightCommandFingerprintChanged {
+		reasons = append(reasons, "night charge command fingerprint changed")
+	}
+	if summary.NightEndSoc == nil {
+		reasons = append(reasons, "07:00 SOC is missing")
+	}
+	if summary.ExecutionTargetSocGap != nil && *summary.ExecutionTargetSocGap < -nightSummaryToleranceSoc {
+		reasons = append(reasons, fmt.Sprintf(
+			"execution target SOC gap %d is below the allowed tolerance -%d",
+			*summary.ExecutionTargetSocGap,
+			nightSummaryToleranceSoc,
+		))
+	}
+	if summary.NightPowerSampleCoverageRatio < minNightSummarySampleCoverage {
+		reasons = append(reasons, fmt.Sprintf(
+			"night power sample coverage %.3f is below %.2f",
+			summary.NightPowerSampleCoverageRatio,
+			minNightSummarySampleCoverage,
+		))
+	}
+	if summary.NightPowerSampleMaxGapSeconds > maxNightSummarySampleGap.Seconds() {
+		reasons = append(reasons, fmt.Sprintf(
+			"night power sample maximum gap %.0f seconds exceeds %.0f seconds",
+			summary.NightPowerSampleMaxGapSeconds,
+			maxNightSummarySampleGap.Seconds(),
+		))
+	}
+	if !summary.SettingsFingerprintVerified {
+		reasons = append(reasons, "settings fingerprint cannot be verified because it is not recorded")
+	}
+	if !summary.DeviceFingerprintVerified {
+		reasons = append(reasons, "device fingerprint cannot be verified because it is not recorded")
+	}
+	summary.TargetLearningEligible = len(reasons) == 0
+	summary.TargetLearningExclusionReason = strings.Join(reasons, "; ")
 }
 
 func sumOptionalKWh(values ...*float64) *float64 {
@@ -415,6 +483,87 @@ func (r *NightChargeSummaryRepository) latestPlanInWindow(ctx context.Context, s
 	return &logs[0], nil
 }
 
+const nightCommandExecutionSummarySQL = `WITH command_activity AS (
+	SELECT id, measured_at, recommended_night_target_soc, command_fingerprint, command_sent, command_error
+	FROM night_charge_plan_logs
+	WHERE julianday(measured_at) >= julianday(?)
+		AND julianday(measured_at) < julianday(?)
+),
+command_stats AS (
+	SELECT
+		COALESCE(SUM(CASE WHEN command_sent = 1 THEN 1 ELSE 0 END), 0) AS sent_count,
+		COALESCE(SUM(CASE WHEN command_error IS NOT NULL THEN 1 ELSE 0 END), 0) AS error_count,
+		COUNT(DISTINCT CASE
+			WHEN (command_sent = 1 OR command_error IS NOT NULL)
+				AND command_fingerprint != ''
+				AND command_fingerprint != 'none'
+			THEN command_fingerprint
+		END) AS distinct_fingerprint_count
+	FROM command_activity
+),
+latest_successful_command AS (
+	SELECT measured_at, recommended_night_target_soc, command_fingerprint
+	FROM command_activity
+	WHERE command_sent = 1
+		AND command_error IS NULL
+		AND instr(
+			'|' || command_fingerprint || '|',
+			'|reserve=' || CAST(recommended_night_target_soc AS TEXT) || '|'
+		) > 0
+	ORDER BY julianday(measured_at) DESC, id DESC
+	LIMIT 1
+)
+SELECT
+	latest_successful_command.measured_at,
+	latest_successful_command.recommended_night_target_soc,
+	latest_successful_command.command_fingerprint,
+	command_stats.sent_count,
+	command_stats.error_count,
+	command_stats.distinct_fingerprint_count
+FROM command_stats
+LEFT JOIN latest_successful_command ON 1 = 1`
+
+func (r *NightChargeSummaryRepository) nightCommandExecutionSummary(ctx context.Context, start time.Time, end time.Time) (nightCommandExecutionSummary, error) {
+	var measuredAt, fingerprint sql.NullString
+	var targetSoc sql.NullInt64
+	var sentCount, errorCount, distinctFingerprintCount int
+	if err := r.db.QueryRowContext(
+		ctx,
+		nightCommandExecutionSummarySQL,
+		start.Format(time.RFC3339Nano),
+		end.Format(time.RFC3339Nano),
+	).Scan(
+		&measuredAt,
+		&targetSoc,
+		&fingerprint,
+		&sentCount,
+		&errorCount,
+		&distinctFingerprintCount,
+	); err != nil {
+		return nightCommandExecutionSummary{}, err
+	}
+	result := nightCommandExecutionSummary{
+		sentCount:          sentCount,
+		errorCount:         errorCount,
+		fingerprintChanged: distinctFingerprintCount > 1,
+	}
+	if targetSoc.Valid {
+		target := int(targetSoc.Int64)
+		result.successfulTargetSoc = &target
+	}
+	if measuredAt.Valid {
+		parsed, err := parseTime(measuredAt.String)
+		if err != nil {
+			return nightCommandExecutionSummary{}, err
+		}
+		result.successfulAt = &parsed
+	}
+	if fingerprint.Valid {
+		result.successfulFingerprint = fingerprint.String
+	}
+	return result, nil
+}
+
 func (r *NightChargeSummaryRepository) closestSoc(ctx context.Context, target time.Time) (*int, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT battery_soc
 		FROM power_logs
@@ -487,23 +636,49 @@ func (r *NightChargeSummaryRepository) powerEnergy(ctx context.Context, start ti
 	if err := rows.Err(); err != nil {
 		return nightSummaryPowerEnergy{}, err
 	}
-	return integrateNightSummaryPower(samples), nil
+	return integrateNightSummaryPower(samples, start, end), nil
 }
 
-func integrateNightSummaryPower(samples []nightSummaryPowerSample) nightSummaryPowerEnergy {
+func integrateNightSummaryPower(samples []nightSummaryPowerSample, start time.Time, end time.Time) nightSummaryPowerEnergy {
 	var energy nightSummaryPowerEnergy
+	windowDuration := end.Sub(start)
+	if windowDuration <= 0 {
+		return energy
+	}
+	energy.maxGap = windowDuration
+	if len(samples) > 0 {
+		energy.maxGap = samples[0].measuredAt.Sub(start)
+		if energy.maxGap < 0 {
+			energy.maxGap = 0
+		}
+	}
+	var coveredDuration time.Duration
 	for i := 0; i < len(samples)-1; i++ {
 		current := samples[i]
 		next := samples[i+1]
 		duration := next.measuredAt.Sub(current.measuredAt)
+		if duration > energy.maxGap {
+			energy.maxGap = duration
+		}
 		if duration <= 0 || duration > maxNightSummarySampleGap {
 			continue
 		}
+		coveredDuration += duration
 		hours := duration.Hours()
 		energy.addImport(wattsToKWh(current.importW, hours))
 		energy.addExport(wattsToKWh(current.exportW, hours))
 		energy.addBatteryInput(wattsToKWh(current.batteryInputW, hours))
 		energy.addBatteryOutput(wattsToKWh(current.batteryOutputW, hours))
+	}
+	if len(samples) > 0 {
+		trailingGap := end.Sub(samples[len(samples)-1].measuredAt)
+		if trailingGap > energy.maxGap {
+			energy.maxGap = trailingGap
+		}
+	}
+	energy.coverageRatio = coveredDuration.Seconds() / windowDuration.Seconds()
+	if energy.coverageRatio > 1 {
+		energy.coverageRatio = 1
 	}
 	return energy
 }
@@ -563,6 +738,15 @@ type nightSummaryWindow struct {
 	followUpEnd time.Time
 }
 
+type nightCommandExecutionSummary struct {
+	successfulTargetSoc   *int
+	successfulAt          *time.Time
+	successfulFingerprint string
+	sentCount             int
+	errorCount            int
+	fingerprintChanged    bool
+}
+
 type nightSummaryPowerSample struct {
 	measuredAt     time.Time
 	importW        int
@@ -576,6 +760,8 @@ type nightSummaryPowerEnergy struct {
 	exportKWh        *float64
 	batteryInputKWh  *float64
 	batteryOutputKWh *float64
+	coverageRatio    float64
+	maxGap           time.Duration
 }
 
 func (e *nightSummaryPowerEnergy) addImport(value float64) {

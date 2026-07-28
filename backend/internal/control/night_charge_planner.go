@@ -122,8 +122,20 @@ func applyTariffContextToNightPlan(plan *domain.NightChargePlan, tariff *domain.
 		plan.TariffControlReason = "high-price period; suppress night charge and prefer battery discharge"
 		return
 	}
+	if tariffPreservesForUpcomingHighPrice(tariff) {
+		plan.TariffControlReason = fmt.Sprintf(
+			"mid-price period; preserve battery for higher-price period at %s before next low-price period at %s",
+			tariff.NextHighPriceAt.Format(time.RFC3339),
+			tariff.NextLowPriceAt.Format(time.RFC3339),
+		)
+		return
+	}
 	if tariffPrefersImportDischarge(tariff) {
-		plan.TariffControlReason = "mid-price period; prefer battery discharge while importing, otherwise observe unless surplus or forecast target requires action"
+		plan.TariffControlReason = fmt.Sprintf(
+			"mid-price period; next low-price period at %s occurs before or with higher-price period at %s, so prefer battery discharge while importing",
+			tariff.NextLowPriceAt.Format(time.RFC3339),
+			tariff.NextHighPriceAt.Format(time.RFC3339),
+		)
 		return
 	}
 	plan.TariffControlReason = "neutral tariff period; observe unless surplus or forecast target requires action"
@@ -463,7 +475,26 @@ func tariffPrefersImportDischarge(tariff *domain.TariffControlContext) bool {
 	}
 	const tariffRateTolerance = 0.001
 	hasPriceSpread := tariff.HighestRateYen > tariff.LowestRateYen+tariffRateTolerance
-	return hasPriceSpread && tariff.CurrentRateYen > tariff.LowestRateYen+tariffRateTolerance
+	if !hasPriceSpread || tariff.CurrentRateYen <= tariff.LowestRateYen+tariffRateTolerance {
+		return false
+	}
+	if tariff.NextHighPriceAt == nil || tariff.NextLowPriceAt == nil {
+		return false
+	}
+	return !tariff.NextHighPriceAt.Before(*tariff.NextLowPriceAt)
+}
+
+func tariffPreservesForUpcomingHighPrice(tariff *domain.TariffControlContext) bool {
+	if tariff == nil || tariff.IsLowPrice || tariff.IsHighPrice {
+		return false
+	}
+	const tariffRateTolerance = 0.001
+	hasPriceSpread := tariff.HighestRateYen > tariff.LowestRateYen+tariffRateTolerance
+	return hasPriceSpread &&
+		tariff.CurrentRateYen > tariff.LowestRateYen+tariffRateTolerance &&
+		tariff.NextHighPriceAt != nil &&
+		tariff.NextLowPriceAt != nil &&
+		tariff.NextHighPriceAt.Before(*tariff.NextLowPriceAt)
 }
 
 func tariffNightSelfPoweredDischargeRecovery(input NightChargePlanInput, plan domain.NightChargePlan) bool {
