@@ -44,6 +44,7 @@ export function AuxiliaryBatteryControlCommandLogTable({ logs, error, page, page
             <TableHeader>
               <TableRow>
                 <TableHead>Measured</TableHead>
+	                <TableHead>機器ID</TableHead>
                 <TableHead>状態</TableHead>
                 <TableHead>Grid</TableHead>
                 <TableHead>DELTA 3</TableHead>
@@ -55,7 +56,7 @@ export function AuxiliaryBatteryControlCommandLogTable({ logs, error, page, page
             <TableBody>
               {logs.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="empty-cell">
+                  <TableCell colSpan={8} className="empty-cell">
                     DELTA 3 Plus 補助充電ログはまだ記録されていません。
                   </TableCell>
                 </TableRow>
@@ -63,6 +64,7 @@ export function AuxiliaryBatteryControlCommandLogTable({ logs, error, page, page
                 logs.map((log) => (
                   <TableRow key={log.id}>
                     <TableCell>{formatDateTime(log.measuredAt)}</TableCell>
+	                    <TableCell>{log.deviceId ?? "-"}</TableCell>
                     <TableCell>
                       <Badge variant={log.wouldWrite ? "warning" : "secondary"}>{strategyStateLabel(log.strategyState)}</Badge>
                     </TableCell>

@@ -394,7 +394,7 @@ input {
 }
 
 .charging-device-list-drawer {
-  width: min(1180px, calc(100% - 16px));
+  width: min(90vw, calc(100% - 16px));
 }
 
 .charging-device-edit-drawer {

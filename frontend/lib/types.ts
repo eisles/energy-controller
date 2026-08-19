@@ -256,6 +256,7 @@ export type Delta3AuxPlan = {
   shouldDisableBackupReserve: boolean;
   suppressedReason?: string;
   reason: string;
+	devicePlans?: Delta3AuxPlan[];
 };
 
 export type WeatherForecast = {
@@ -603,6 +604,7 @@ export type SurplusControlCommandLogsPage = {
 
 export type Delta3AuxControlCommandLog = {
   id: number;
+	deviceId?: number;
   measuredAt: string;
   strategyState: string;
   commandFingerprint: string;

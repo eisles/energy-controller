@@ -245,6 +245,7 @@ func migrate(db *sql.DB) error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS delta3_aux_control_command_logs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			device_id INTEGER NOT NULL DEFAULT 0,
 			measured_at TEXT NOT NULL,
 			strategy_state TEXT NOT NULL,
 			command_fingerprint TEXT NOT NULL,
@@ -463,6 +464,7 @@ func migrate(db *sql.DB) error {
 		}
 	}
 	for _, column := range []string{
+		"device_id",
 		"previous_backup_reserve_soc",
 		"target_backup_reserve_soc",
 		"should_set_backup_reserve",
@@ -584,6 +586,7 @@ var knownMigrationColumns = map[string]map[string]string{
 		"auto_recover_ac_output":  "INTEGER NOT NULL DEFAULT 0",
 	},
 	"delta3_aux_control_command_logs": {
+		"device_id":                     "INTEGER NOT NULL DEFAULT 0",
 		"previous_backup_reserve_soc":   "INTEGER",
 		"target_backup_reserve_soc":     "INTEGER",
 		"should_set_backup_reserve":     "INTEGER NOT NULL DEFAULT 0",

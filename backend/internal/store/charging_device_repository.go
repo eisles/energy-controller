@@ -173,6 +173,10 @@ func (r *ChargingDeviceRepository) Delta3ReadTargets(ctx context.Context) ([]dom
 	return r.delta3Targets(ctx, false)
 }
 
+func (r *ChargingDeviceRepository) Delta3WriteTargets(ctx context.Context) ([]domain.ChargingDevice, error) {
+	return r.delta3Targets(ctx, true)
+}
+
 func (r *ChargingDeviceRepository) Delta3WriteTarget(ctx context.Context) (domain.ChargingDevice, bool, error) {
 	return r.delta3Target(ctx, true)
 }

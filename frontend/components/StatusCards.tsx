@@ -306,6 +306,7 @@ export function Delta3StatusCard({
             </div>
             <div className="detail-strip planner-secondary" aria-label="auxiliary battery plan">
               <Detail label="対象機器" value={auxiliaryTargetLabel(auxiliaryPlan)} />
+	              <Detail label="機器別計画" value={auxiliaryDevicePlansLabel(auxiliaryPlan)} />
               <Detail label="補助計画" value={strategyStateLabel(auxiliaryPlan?.strategyState || "UNAVAILABLE")} />
               <Detail label="推奨AC上限" value={nullableWatt(auxiliaryPlan?.recommendedAcChargeLimitW)} />
               <Detail label="現在AC上限" value={nullableWatt(auxiliaryPlan?.currentAcChargeLimitW)} />
@@ -355,6 +356,7 @@ export function Delta3StatusCard({
             </div>
             <div className="detail-strip planner-secondary" aria-label="auxiliary battery plan">
               <Detail label="対象機器" value={auxiliaryTargetLabel(auxiliaryPlan)} />
+	              <Detail label="機器別計画" value={auxiliaryDevicePlansLabel(auxiliaryPlan)} />
               <Detail label="補助計画" value={strategyStateLabel(auxiliaryPlan?.strategyState || "UNAVAILABLE")} />
               <Detail label="推奨AC上限" value={nullableWatt(auxiliaryPlan?.recommendedAcChargeLimitW)} />
               <Detail label="現在AC上限" value={nullableWatt(auxiliaryPlan?.currentAcChargeLimitW)} />
@@ -1041,6 +1043,12 @@ function auxiliaryTargetLabel(plan: EnergyStatus["delta3AuxPlan"] | null | undef
     return plan.deviceType;
   }
   return plan.deviceId ? `#${plan.deviceId}` : "-";
+}
+
+function auxiliaryDevicePlansLabel(plan: EnergyStatus["delta3AuxPlan"] | null | undefined) {
+	const plans = plan?.devicePlans;
+	if (!plans?.length) return auxiliaryTargetLabel(plan);
+	return plans.map((item) => `${auxiliaryTargetLabel(item)}: ${strategyStateLabel(item.strategyState)}`).join(" / ");
 }
 
 function nullableWatt(value: number | null | undefined) {

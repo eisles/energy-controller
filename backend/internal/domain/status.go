@@ -152,33 +152,34 @@ type SurplusPlan struct {
 }
 
 type Delta3AuxPlan struct {
-	DeviceID                    int64  `json:"deviceId,omitempty"`
-	DeviceName                  string `json:"deviceName,omitempty"`
-	DeviceType                  string `json:"deviceType,omitempty"`
-	Mode                        string `json:"mode"`
-	StrategyState               string `json:"strategyState"`
-	RecommendedACChargeLimitW   int    `json:"recommendedAcChargeLimitW"`
-	CurrentACChargeLimitW       *int   `json:"currentAcChargeLimitW,omitempty"`
-	RecommendedBackupReserveSoc *int   `json:"recommendedBackupReserveSoc,omitempty"`
-	CurrentBackupReserveSoc     *int   `json:"currentBackupReserveSoc,omitempty"`
-	CurrentBackupReserveEnabled *bool  `json:"currentBackupReserveEnabled,omitempty"`
-	BackupReserveApplyState     string `json:"backupReserveApplyState,omitempty"`
-	BackupReserveApplyReason    string `json:"backupReserveApplyReason,omitempty"`
-	LastBackupReserveCommandAt  string `json:"lastBackupReserveCommandAt,omitempty"`
-	LastBackupReserveTargetSoc  *int   `json:"lastBackupReserveTargetSoc,omitempty"`
-	Delta3Soc                   *int   `json:"delta3Soc,omitempty"`
-	Delta3MaxChargeSoc          *int   `json:"delta3MaxChargeSoc,omitempty"`
-	Delta3ACOutputW             *int   `json:"delta3AcOutputW,omitempty"`
-	Delta3ACOutputEnabled       *bool  `json:"delta3AcOutputEnabled,omitempty"`
-	SafeACChargeLimitW          int    `json:"safeAcChargeLimitW"`
-	ResidualExportW             int    `json:"residualExportW"`
-	SafetyMarginW               int    `json:"safetyMarginW"`
-	WouldWrite                  bool   `json:"wouldWrite"`
-	ShouldAdjustACChargeLimit   bool   `json:"shouldAdjustAcChargeLimit"`
-	ShouldSetBackupReserve      bool   `json:"shouldSetBackupReserve"`
-	ShouldDisableBackupReserve  bool   `json:"shouldDisableBackupReserve"`
-	SuppressedReason            string `json:"suppressedReason,omitempty"`
-	Reason                      string `json:"reason"`
+	DeviceID                    int64           `json:"deviceId,omitempty"`
+	DeviceName                  string          `json:"deviceName,omitempty"`
+	DeviceType                  string          `json:"deviceType,omitempty"`
+	Mode                        string          `json:"mode"`
+	StrategyState               string          `json:"strategyState"`
+	RecommendedACChargeLimitW   int             `json:"recommendedAcChargeLimitW"`
+	CurrentACChargeLimitW       *int            `json:"currentAcChargeLimitW,omitempty"`
+	RecommendedBackupReserveSoc *int            `json:"recommendedBackupReserveSoc,omitempty"`
+	CurrentBackupReserveSoc     *int            `json:"currentBackupReserveSoc,omitempty"`
+	CurrentBackupReserveEnabled *bool           `json:"currentBackupReserveEnabled,omitempty"`
+	BackupReserveApplyState     string          `json:"backupReserveApplyState,omitempty"`
+	BackupReserveApplyReason    string          `json:"backupReserveApplyReason,omitempty"`
+	LastBackupReserveCommandAt  string          `json:"lastBackupReserveCommandAt,omitempty"`
+	LastBackupReserveTargetSoc  *int            `json:"lastBackupReserveTargetSoc,omitempty"`
+	Delta3Soc                   *int            `json:"delta3Soc,omitempty"`
+	Delta3MaxChargeSoc          *int            `json:"delta3MaxChargeSoc,omitempty"`
+	Delta3ACOutputW             *int            `json:"delta3AcOutputW,omitempty"`
+	Delta3ACOutputEnabled       *bool           `json:"delta3AcOutputEnabled,omitempty"`
+	SafeACChargeLimitW          int             `json:"safeAcChargeLimitW"`
+	ResidualExportW             int             `json:"residualExportW"`
+	SafetyMarginW               int             `json:"safetyMarginW"`
+	WouldWrite                  bool            `json:"wouldWrite"`
+	ShouldAdjustACChargeLimit   bool            `json:"shouldAdjustAcChargeLimit"`
+	ShouldSetBackupReserve      bool            `json:"shouldSetBackupReserve"`
+	ShouldDisableBackupReserve  bool            `json:"shouldDisableBackupReserve"`
+	SuppressedReason            string          `json:"suppressedReason,omitempty"`
+	Reason                      string          `json:"reason"`
+	DevicePlans                 []Delta3AuxPlan `json:"devicePlans,omitempty"`
 }
 
 type WeatherForecast struct {
@@ -577,6 +578,7 @@ type SurplusControlCommandLog struct {
 
 type Delta3AuxControlCommandLog struct {
 	ID                         int64     `json:"id"`
+	DeviceID                   int64     `json:"deviceId,omitempty"`
 	MeasuredAt                 time.Time `json:"measuredAt"`
 	StrategyState              string    `json:"strategyState"`
 	CommandFingerprint         string    `json:"commandFingerprint"`

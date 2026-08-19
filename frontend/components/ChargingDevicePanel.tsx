@@ -226,7 +226,7 @@ export function ChargingDevicePanel() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          {maskDeviceSn(device.deviceSn)}
+                          {device.deviceSn || "SN未設定"}
                           <br />
                           <span className="readonly-note">{device.deviceType || "type未設定"}</span>
                         </TableCell>
@@ -292,7 +292,7 @@ export function ChargingDevicePanel() {
                       label="シリアル番号"
                       value={editing.deviceSn}
                       onChange={(value) => setEditing({ ...editing, deviceSn: value })}
-                      description="EcoFlow実機のSNです。一覧では末尾だけ表示します。"
+                      description="EcoFlow実機のSNです。一覧では全文を表示します。"
                     />
                     <TextField
                       id="charging-device-type"
@@ -466,16 +466,6 @@ function defaultDeviceType(kind: string, value: string) {
     return "RIVER_2";
   }
   return "";
-}
-
-function maskDeviceSn(value: string) {
-  if (!value) {
-    return "SN未設定";
-  }
-  if (value.length <= 4) {
-    return `***${value}`;
-  }
-  return `***${value.slice(-4)}`;
 }
 
 function defaultStatusSource(kind: string, value: string) {

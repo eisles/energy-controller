@@ -124,6 +124,11 @@ type delta3AuxControlCommandLogWriter interface {
 	LatestDelta3AuxReserveCommandLog(ctx context.Context) (*domain.Delta3AuxControlCommandLog, error)
 }
 
+type delta3AuxControlCommandLogDeviceReader interface {
+	LatestDelta3AuxControlWriteCandidateLogForDevice(ctx context.Context, deviceID int64) (*domain.Delta3AuxControlCommandLog, error)
+	LatestDelta3AuxReserveCommandLogForDevice(ctx context.Context, deviceID int64) (*domain.Delta3AuxControlCommandLog, error)
+}
+
 type pro3ACOutputEventLogWriter interface {
 	InsertPro3ACOutputEvent(ctx context.Context, event domain.Pro3ACOutputEvent) error
 	LatestPro3ACOutputEvent(ctx context.Context) (*domain.Pro3ACOutputEvent, error)
@@ -171,6 +176,14 @@ type delta3AuxWriteClient interface {
 
 type delta3WriteTargetProvider interface {
 	Delta3WriteTarget(ctx context.Context) (domain.ChargingDevice, bool, error)
+}
+
+type delta3WriteTargetsProvider interface {
+	Delta3WriteTargets(ctx context.Context) ([]domain.ChargingDevice, error)
+}
+
+type delta3AuxDeviceWriteClient interface {
+	ForDevice(device domain.ChargingDevice) delta3AuxWriteClient
 }
 
 type chargingDeviceLister interface {
@@ -372,6 +385,12 @@ func ecoFlowWriteGuards(cfg config.Config) ecoflow.WriteGuards {
 type ecoFlowDelta3AuxWriteClient struct {
 	cfg            config.Config
 	targetProvider delta3WriteTargetProvider
+}
+
+// ForDevice creates a writer whose private-MQTT payload is bound to the
+// device serial number. It deliberately keeps all existing write guards.
+func (w ecoFlowDelta3AuxWriteClient) ForDevice(device domain.ChargingDevice) delta3AuxWriteClient {
+	return ecoFlowDelta3AuxWriteClient{cfg: api.Delta3ConfigForDevice(w.cfg, device)}
 }
 
 func newDelta3AuxWriteClient(cfg config.Config, targetProvider delta3WriteTargetProvider) delta3AuxWriteClient {
@@ -631,6 +650,88 @@ func recordStatus(ctx context.Context, cfg config.Config, provider api.StatusPro
 }
 
 func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domain.Status, delta3Reader delta3StatusReader, delta3Writer delta3AuxWriteClient, delta3TargetProvider delta3WriteTargetProvider, surplusControlCommandRepository surplusControlCommandLogWriter, delta3AuxControlCommandRepository delta3AuxControlCommandLogWriter, ignorePro3Wait bool, logger *slog.Logger) {
+	devices, err := delta3AuxControlDevices(ctx, delta3TargetProvider)
+	if err != nil {
+		logger.Warn("failed to resolve DELTA 3 auxiliary control targets", "error", err)
+		return
+	}
+	if len(devices) == 0 {
+		status.Delta3AuxPlan = &domain.Delta3AuxPlan{Mode: "read-only", StrategyState: "UNAVAILABLE", Reason: "no enabled DELTA 3 auxiliary control targets"}
+		return
+	}
+	residualExportW := status.ExportW
+	plans := make([]domain.Delta3AuxPlan, 0, len(devices))
+	status.Delta3AuxPlan = &domain.Delta3AuxPlan{Mode: "read-only", StrategyState: "UNAVAILABLE", Reason: "DELTA 3 auxiliary device plan was not produced"}
+	for _, device := range devices {
+		deviceStatus := *status
+		deviceStatus.ExportW = residualExportW
+		writer := delta3Writer
+		if bound, ok := delta3Writer.(delta3AuxDeviceWriteClient); ok {
+			writer = bound.ForDevice(device)
+		}
+		applyDelta3AuxControlOne(ctx, cfg, &deviceStatus, delta3Reader, writer, fixedDelta3WriteTargetProvider{device: device}, surplusControlCommandRepository, delta3AuxControlCommandRepository, ignorePro3Wait, logger)
+		if deviceStatus.Delta3AuxPlan == nil {
+			continue
+		}
+		plan := *deviceStatus.Delta3AuxPlan
+		plans = append(plans, plan)
+		if plan.ShouldAdjustACChargeLimit && plan.CurrentACChargeLimitW != nil && plan.RecommendedACChargeLimitW > *plan.CurrentACChargeLimitW {
+			residualExportW -= plan.RecommendedACChargeLimitW - *plan.CurrentACChargeLimitW
+			if residualExportW < 0 {
+				residualExportW = 0
+			}
+		}
+	}
+	if len(plans) == 0 {
+		return
+	}
+	devicePlans := append([]domain.Delta3AuxPlan(nil), plans...)
+	for i := range devicePlans {
+		devicePlans[i].DevicePlans = nil
+	}
+	plans[0].DevicePlans = devicePlans
+	status.Delta3AuxPlan = &plans[0]
+}
+
+type fixedDelta3WriteTargetProvider struct{ device domain.ChargingDevice }
+
+func (p fixedDelta3WriteTargetProvider) Delta3WriteTarget(context.Context) (domain.ChargingDevice, bool, error) {
+	return p.device, true, nil
+}
+
+func delta3AuxControlDevices(ctx context.Context, provider delta3WriteTargetProvider) ([]domain.ChargingDevice, error) {
+	if provider == nil {
+		return []domain.ChargingDevice{{}}, nil
+	}
+	if targets, ok := provider.(delta3WriteTargetsProvider); ok {
+		devices, err := targets.Delta3WriteTargets(ctx)
+		if err != nil || len(devices) < 2 {
+			return devices, err
+		}
+		// Multiple daytime auxiliary devices must be the same model as the
+		// highest-priority target. This preserves the established primary
+		// target selection while keeping unrelated DELTA 3 units (for example
+		// the 1F DELTA 3 Plus) out of the shared daytime plan.
+		primaryType := strings.TrimSpace(devices[0].DeviceType)
+		if primaryType == "" {
+			return devices[:1], nil
+		}
+		filtered := make([]domain.ChargingDevice, 0, len(devices))
+		for _, device := range devices {
+			if strings.EqualFold(strings.TrimSpace(device.DeviceType), primaryType) {
+				filtered = append(filtered, device)
+			}
+		}
+		return filtered, nil
+	}
+	device, ok, err := provider.Delta3WriteTarget(ctx)
+	if err != nil || !ok {
+		return nil, err
+	}
+	return []domain.ChargingDevice{device}, nil
+}
+
+func applyDelta3AuxControlOne(ctx context.Context, cfg config.Config, status *domain.Status, delta3Reader delta3StatusReader, delta3Writer delta3AuxWriteClient, delta3TargetProvider delta3WriteTargetProvider, surplusControlCommandRepository surplusControlCommandLogWriter, delta3AuxControlCommandRepository delta3AuxControlCommandLogWriter, ignorePro3Wait bool, logger *slog.Logger) {
 	if status == nil {
 		return
 	}
@@ -694,12 +795,12 @@ func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domai
 	}
 	status.Delta3AuxPlan = ptrToDelta3AuxPlan(delta3Plan)
 
-	previous, err := delta3AuxControlCommandRepository.LatestDelta3AuxControlWriteCandidateLog(ctx)
+	previous, err := latestDelta3AuxWriteCandidateForDevice(ctx, delta3AuxControlCommandRepository, delta3ControlDevice.ID)
 	if err != nil {
 		logger.Warn("failed to load latest DELTA 3 Plus aux command log", "error", err)
 		return
 	}
-	previousReserve, err := delta3AuxControlCommandRepository.LatestDelta3AuxReserveCommandLog(ctx)
+	previousReserve, err := latestDelta3AuxReserveForDevice(ctx, delta3AuxControlCommandRepository, delta3ControlDevice.ID)
 	if err != nil {
 		logger.Warn("failed to load latest DELTA 3 Plus reserve command log", "error", err)
 		return
@@ -720,6 +821,7 @@ func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domai
 		Previous:               previous,
 		PreviousReserve:        previousReserve,
 	}, delta3Settings)
+	commandLog.DeviceID = delta3ControlDevice.ID
 	commandLog = control.ExecuteDelta3AuxCommand(ctx, commandLog, delta3Writer)
 	if status.Delta3AuxPlan != nil {
 		status.Delta3AuxPlan.WouldWrite = commandLog.WouldWrite
@@ -728,6 +830,20 @@ func applyDelta3AuxControl(ctx context.Context, cfg config.Config, status *domai
 	if err := delta3AuxControlCommandRepository.InsertDelta3AuxControlCommandLog(ctx, commandLog); err != nil {
 		logger.Warn("failed to save DELTA 3 Plus aux command log", "error", err)
 	}
+}
+
+func latestDelta3AuxWriteCandidateForDevice(ctx context.Context, repository delta3AuxControlCommandLogWriter, deviceID int64) (*domain.Delta3AuxControlCommandLog, error) {
+	if byDevice, ok := repository.(delta3AuxControlCommandLogDeviceReader); ok {
+		return byDevice.LatestDelta3AuxControlWriteCandidateLogForDevice(ctx, deviceID)
+	}
+	return repository.LatestDelta3AuxControlWriteCandidateLog(ctx)
+}
+
+func latestDelta3AuxReserveForDevice(ctx context.Context, repository delta3AuxControlCommandLogWriter, deviceID int64) (*domain.Delta3AuxControlCommandLog, error) {
+	if byDevice, ok := repository.(delta3AuxControlCommandLogDeviceReader); ok {
+		return byDevice.LatestDelta3AuxReserveCommandLogForDevice(ctx, deviceID)
+	}
+	return repository.LatestDelta3AuxReserveCommandLog(ctx)
 }
 
 func ptrToDelta3AuxPlan(plan domain.Delta3AuxPlan) *domain.Delta3AuxPlan {

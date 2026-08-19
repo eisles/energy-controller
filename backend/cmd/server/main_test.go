@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +64,79 @@ type fakeDelta3WriteTargetProvider struct {
 	device domain.ChargingDevice
 	ok     bool
 	err    error
+}
+
+type fakeDelta3WriteTargetsProvider struct{ devices []domain.ChargingDevice }
+
+func (p fakeDelta3WriteTargetsProvider) Delta3WriteTarget(context.Context) (domain.ChargingDevice, bool, error) {
+	if len(p.devices) == 0 {
+		return domain.ChargingDevice{}, false, nil
+	}
+	return p.devices[0], true, nil
+}
+func (p fakeDelta3WriteTargetsProvider) Delta3WriteTargets(context.Context) ([]domain.ChargingDevice, error) {
+	return p.devices, nil
+}
+
+type configDelta3StatusReader struct {
+	statuses map[string]api.Delta3StatusResponse
+}
+
+func (r configDelta3StatusReader) CurrentStatus(context.Context) api.Delta3StatusResponse {
+	return api.Delta3StatusResponse{}
+}
+func (r configDelta3StatusReader) CurrentStatusForConfig(_ context.Context, cfg config.Config) api.Delta3StatusResponse {
+	return r.statuses[cfg.Delta3DeviceSN]
+}
+
+type deviceBoundRecordingWriter struct{ writes []string }
+type boundRecordingWriter struct {
+	parent *deviceBoundRecordingWriter
+	sn     string
+}
+
+func (w *deviceBoundRecordingWriter) ForDevice(device domain.ChargingDevice) delta3AuxWriteClient {
+	return &boundRecordingWriter{parent: w, sn: device.DeviceSN}
+}
+func (w *deviceBoundRecordingWriter) SetACChargePower(context.Context, int) error { return nil }
+func (w *deviceBoundRecordingWriter) SetEnergyBackupEnabled(context.Context, bool, int) error {
+	return nil
+}
+func (w *boundRecordingWriter) SetACChargePower(_ context.Context, watts int) error {
+	w.parent.writes = append(w.parent.writes, w.sn+":ac="+strconv.Itoa(watts))
+	return nil
+}
+func (w *boundRecordingWriter) SetEnergyBackupEnabled(_ context.Context, _ bool, soc int) error {
+	w.parent.writes = append(w.parent.writes, w.sn+":reserve="+strconv.Itoa(soc))
+	return nil
+}
+
+type deviceCommandRepository struct {
+	logs     []domain.Delta3AuxControlCommandLog
+	previous map[int64]*domain.Delta3AuxControlCommandLog
+}
+
+func (r *deviceCommandRepository) InsertDelta3AuxControlCommandLog(_ context.Context, log domain.Delta3AuxControlCommandLog) error {
+	r.logs = append(r.logs, log)
+	return nil
+}
+func (r *deviceCommandRepository) LatestDelta3AuxControlCommandLog(context.Context) (*domain.Delta3AuxControlCommandLog, error) {
+	return nil, nil
+}
+func (r *deviceCommandRepository) LatestDelta3AuxControlWriteCandidateLog(context.Context) (*domain.Delta3AuxControlCommandLog, error) {
+	return nil, nil
+}
+func (r *deviceCommandRepository) LatestDelta3AuxReserveCommandLog(context.Context) (*domain.Delta3AuxControlCommandLog, error) {
+	return nil, nil
+}
+func (r *deviceCommandRepository) LatestDelta3AuxControlWriteCandidateLogForDevice(_ context.Context, id int64) (*domain.Delta3AuxControlCommandLog, error) {
+	if v := r.previous[id]; v != nil {
+		return v, nil
+	}
+	return r.previous[0], nil
+}
+func (r *deviceCommandRepository) LatestDelta3AuxReserveCommandLogForDevice(context.Context, int64) (*domain.Delta3AuxControlCommandLog, error) {
+	return nil, nil
 }
 
 func (p fakeDelta3WriteTargetProvider) Delta3WriteTarget(context.Context) (domain.ChargingDevice, bool, error) {
@@ -684,6 +758,105 @@ func TestRecordStatusPersistsDelta3AuxSuppressionOnStatus(t *testing.T) {
 	if !strings.Contains(got.Delta3AuxPlan.SuppressedReason, "mock mode") {
 		t.Fatalf("SuppressedReason = %q, want mock mode guard", got.Delta3AuxPlan.SuppressedReason)
 	}
+}
+
+func TestApplyDelta3AuxControlBindsWritesAndAllocatesResidualAcrossDevices(t *testing.T) {
+	now := time.Now().UTC()
+	devices := []domain.ChargingDevice{
+		{ID: 11, Name: "2F South", DeviceSN: "SOUTH", DeviceType: "DELTA_3_MAX_PLUS", Enabled: true, ControlEnabled: true, MinChargeW: 100, MaxChargeW: 500, SupportsACChargeLimit: true},
+		{ID: 12, Name: "2F North", DeviceSN: "NORTH", DeviceType: "DELTA_3_MAX_PLUS", Enabled: true, ControlEnabled: true, MinChargeW: 100, MaxChargeW: 500, SupportsACChargeLimit: true},
+	}
+	soc, limit, maxSoc := 50, 100, 100
+	reader := configDelta3StatusReader{statuses: map[string]api.Delta3StatusResponse{
+		"SOUTH": {Available: true, SOC: &soc, ACChargeLimitW: &limit, MaxChargeSoc: &maxSoc},
+		"NORTH": {Available: true, SOC: &soc, ACChargeLimitW: &limit, MaxChargeSoc: &maxSoc},
+	}}
+	writer := &deviceBoundRecordingWriter{}
+	repo := &deviceCommandRepository{previous: map[int64]*domain.Delta3AuxControlCommandLog{}}
+	status := domain.Status{ExportW: 800, GridW: -800, UpdatedAt: now, SurplusPlan: &domain.SurplusPlan{StrategyState: "HOLD"}}
+	applyDelta3AuxControl(context.Background(), realAuxTestConfig(now), &status, reader, writer, fakeDelta3WriteTargetsProvider{devices: devices}, nil, repo, true, slog.Default())
+	if got, want := strings.Join(writer.writes, ","), "SOUTH:ac=400,NORTH:ac=400"; got != want {
+		t.Fatalf("device-bound writes = %q, want %q", got, want)
+	}
+	if status.Delta3AuxPlan == nil || len(status.Delta3AuxPlan.DevicePlans) != 2 {
+		t.Fatalf("device plans = %#v, want two", status.Delta3AuxPlan)
+	}
+	allocated := 0
+	for _, plan := range status.Delta3AuxPlan.DevicePlans {
+		allocated += plan.RecommendedACChargeLimitW - *plan.CurrentACChargeLimitW
+	}
+	if allocated > status.ExportW {
+		t.Fatalf("allocated increment = %dW exceeds export %dW", allocated, status.ExportW)
+	}
+	if len(repo.logs) != 2 || repo.logs[0].DeviceID != 11 || repo.logs[1].DeviceID != 12 {
+		t.Fatalf("device command logs = %#v", repo.logs)
+	}
+}
+
+func TestApplyDelta3AuxControlSuppressesLegacyButNotOtherDeviceLog(t *testing.T) {
+	now := time.Now().UTC()
+	device := domain.ChargingDevice{ID: 11, DeviceSN: "SOUTH", DeviceType: "DELTA_3_MAX_PLUS", Enabled: true, ControlEnabled: true, MinChargeW: 100, MaxChargeW: 500, SupportsACChargeLimit: true}
+	soc, limit, maxSoc := 50, 100, 100
+	reader := configDelta3StatusReader{statuses: map[string]api.Delta3StatusResponse{"SOUTH": {Available: true, SOC: &soc, ACChargeLimitW: &limit, MaxChargeSoc: &maxSoc}}}
+	legacy := &domain.Delta3AuxControlCommandLog{DeviceID: 0, MeasuredAt: now, CommandFingerprint: "different", WouldWrite: true}
+	writer := &deviceBoundRecordingWriter{}
+	repo := &deviceCommandRepository{previous: map[int64]*domain.Delta3AuxControlCommandLog{0: legacy}}
+	status := domain.Status{ExportW: 800, GridW: -800, UpdatedAt: now, SurplusPlan: &domain.SurplusPlan{StrategyState: "HOLD"}}
+	applyDelta3AuxControl(context.Background(), realAuxTestConfig(now), &status, reader, writer, fakeDelta3WriteTargetsProvider{devices: []domain.ChargingDevice{device}}, nil, repo, true, slog.Default())
+	if len(writer.writes) != 0 {
+		t.Fatalf("legacy recent log allowed writes: %#v", writer.writes)
+	}
+	if repo.logs[0].SuppressedReason != "command suppressed by minimum interval" {
+		t.Fatalf("legacy suppressed reason = %q", repo.logs[0].SuppressedReason)
+	}
+	repo = &deviceCommandRepository{previous: map[int64]*domain.Delta3AuxControlCommandLog{11: legacy}}
+	writer = &deviceBoundRecordingWriter{}
+	status = domain.Status{ExportW: 800, GridW: -800, UpdatedAt: now, SurplusPlan: &domain.SurplusPlan{StrategyState: "HOLD"}}
+	applyDelta3AuxControl(context.Background(), realAuxTestConfig(now), &status, reader, writer, fakeDelta3WriteTargetsProvider{devices: []domain.ChargingDevice{device}}, nil, repo, true, slog.Default())
+	if len(writer.writes) != 0 {
+		t.Fatalf("same device recent log allowed writes: %#v", writer.writes)
+	}
+	repo = &deviceCommandRepository{previous: map[int64]*domain.Delta3AuxControlCommandLog{999: legacy}}
+	writer = &deviceBoundRecordingWriter{}
+	status = domain.Status{ExportW: 800, GridW: -800, UpdatedAt: now, SurplusPlan: &domain.SurplusPlan{StrategyState: "HOLD"}}
+	applyDelta3AuxControl(context.Background(), realAuxTestConfig(now), &status, reader, writer, fakeDelta3WriteTargetsProvider{devices: []domain.ChargingDevice{device}}, nil, repo, true, slog.Default())
+	if len(writer.writes) == 0 {
+		t.Fatal("other device log suppressed this device write")
+	}
+}
+
+func TestApplyDelta3AuxControlDoesNotWriteUnavailableDevice(t *testing.T) {
+	now := time.Now().UTC()
+	device := domain.ChargingDevice{ID: 11, DeviceSN: "SOUTH", DeviceType: "DELTA_3_MAX_PLUS", Enabled: true, ControlEnabled: true, MinChargeW: 100, MaxChargeW: 500, SupportsACChargeLimit: true}
+	writer := &deviceBoundRecordingWriter{}
+	repo := &deviceCommandRepository{previous: map[int64]*domain.Delta3AuxControlCommandLog{}}
+	status := domain.Status{ExportW: 800, GridW: -800, UpdatedAt: now, SurplusPlan: &domain.SurplusPlan{StrategyState: "HOLD"}}
+	applyDelta3AuxControl(context.Background(), realAuxTestConfig(now), &status, configDelta3StatusReader{statuses: map[string]api.Delta3StatusResponse{"SOUTH": {Available: false, LastError: "timeout"}}}, writer, fakeDelta3WriteTargetsProvider{devices: []domain.ChargingDevice{device}}, nil, repo, true, slog.Default())
+	if len(writer.writes) != 0 {
+		t.Fatalf("unavailable device allowed writes: %#v", writer.writes)
+	}
+	if status.Delta3AuxPlan == nil || status.Delta3AuxPlan.StrategyState != "UNAVAILABLE" {
+		t.Fatalf("plan = %#v, want unavailable", status.Delta3AuxPlan)
+	}
+}
+
+func TestDelta3AuxControlDevicesKeepsOnlyPrimaryDeviceType(t *testing.T) {
+	devices := []domain.ChargingDevice{
+		{ID: 11, Name: "2F South", DeviceType: "DELTA_3_MAX_PLUS"},
+		{ID: 12, Name: "2F North", DeviceType: "DELTA_3_MAX_PLUS"},
+		{ID: 13, Name: "1F", DeviceType: "DELTA_3_PLUS"},
+	}
+	got, err := delta3AuxControlDevices(context.Background(), fakeDelta3WriteTargetsProvider{devices: devices})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != 11 || got[1].ID != 12 {
+		t.Fatalf("daytime aux targets = %#v, want only Max Plus north/south", got)
+	}
+}
+
+func realAuxTestConfig(now time.Time) config.Config {
+	return config.Config{MockMode: false, SimulationMode: false, EnableRealControl: true, AutoControlEnabled: true, ConfirmEcoFlowWrite: "I_UNDERSTAND", RealControlTrialUntil: now.Add(time.Hour), Delta3ReadEnabled: true, Delta3AllowAutoWrite: true, Delta3ExecuteWrite: true, Delta3AllowPrivateWrite: true, Delta3Aux: config.Delta3AuxConfig{Enabled: true, MinChargeW: 100, MaxChargeW: 500, SafetyMarginW: 50, MinCommandDiffW: 100, MaxIncreaseStepW: 300, MaxDecreaseStepW: 500, MinCommandInterval: 2 * time.Minute, StopImportThresholdW: 50, TargetMaxSocBufferPercent: 2}}
 }
 
 func TestNightChargeDeviceInputsMarksDelta3MaxPlusWriteTarget(t *testing.T) {

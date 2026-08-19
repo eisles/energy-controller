@@ -23,11 +23,12 @@ func NewDelta3AuxControlCommandRepository(db *sql.DB) *Delta3AuxControlCommandRe
 
 func (r *Delta3AuxControlCommandRepository) InsertDelta3AuxControlCommandLog(ctx context.Context, log domain.Delta3AuxControlCommandLog) error {
 	_, err := r.db.ExecContext(ctx, `INSERT INTO delta3_aux_control_command_logs (
-		measured_at, strategy_state, command_fingerprint, grid_w, import_w, export_w, residual_export_w,
+		device_id, measured_at, strategy_state, command_fingerprint, grid_w, import_w, export_w, residual_export_w,
 		delta3_soc, previous_ac_charge_limit_w, target_ac_charge_limit_w, previous_backup_reserve_soc,
 		target_backup_reserve_soc, command_sent, dry_run, would_write, should_adjust_ac_charge_limit,
 		should_set_backup_reserve, should_disable_backup_reserve, suppressed_reason, decision_reason, error_message, created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		log.DeviceID,
 		log.MeasuredAt.Format(time.RFC3339Nano),
 		log.StrategyState,
 		log.CommandFingerprint,
@@ -66,9 +67,24 @@ func (r *Delta3AuxControlCommandRepository) LatestDelta3AuxReserveCommandLog(ctx
 	return r.latestDelta3AuxControlCommandLog(ctx, "WHERE command_sent = 1 AND target_backup_reserve_soc IS NOT NULL AND (error_message IS NULL OR error_message = '')")
 }
 
+func (r *Delta3AuxControlCommandRepository) LatestDelta3AuxControlWriteCandidateLogForDevice(ctx context.Context, deviceID int64) (*domain.Delta3AuxControlCommandLog, error) {
+	// device_id=0 is the pre-migration history. Treat it as a conservative
+	// fallback for every device until a device-bound command is recorded, so a
+	// deployment cannot immediately repeat a recent legacy write.
+	return r.latestDelta3AuxControlCommandLogForDevice(ctx, "WHERE (device_id = ? OR device_id = 0) AND (would_write = 1 OR command_sent = 1 OR (error_message IS NOT NULL AND error_message <> ''))", deviceID)
+}
+
+func (r *Delta3AuxControlCommandRepository) LatestDelta3AuxReserveCommandLogForDevice(ctx context.Context, deviceID int64) (*domain.Delta3AuxControlCommandLog, error) {
+	return r.latestDelta3AuxControlCommandLogForDevice(ctx, "WHERE (device_id = ? OR device_id = 0) AND command_sent = 1 AND target_backup_reserve_soc IS NOT NULL AND (error_message IS NULL OR error_message = '')", deviceID)
+}
+
 func (r *Delta3AuxControlCommandRepository) latestDelta3AuxControlCommandLog(ctx context.Context, whereClause string) (*domain.Delta3AuxControlCommandLog, error) {
+	return r.latestDelta3AuxControlCommandLogForDevice(ctx, whereClause)
+}
+
+func (r *Delta3AuxControlCommandRepository) latestDelta3AuxControlCommandLogForDevice(ctx context.Context, whereClause string, args ...any) (*domain.Delta3AuxControlCommandLog, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT
-		id, measured_at, strategy_state, command_fingerprint, grid_w, import_w, export_w, residual_export_w,
+		id, device_id, measured_at, strategy_state, command_fingerprint, grid_w, import_w, export_w, residual_export_w,
 		delta3_soc, previous_ac_charge_limit_w, target_ac_charge_limit_w, previous_backup_reserve_soc,
 		target_backup_reserve_soc, command_sent, dry_run, would_write, should_adjust_ac_charge_limit,
 		should_set_backup_reserve, should_disable_backup_reserve,
@@ -76,7 +92,7 @@ func (r *Delta3AuxControlCommandRepository) latestDelta3AuxControlCommandLog(ctx
 		FROM delta3_aux_control_command_logs
 		`+whereClause+`
 		ORDER BY measured_at DESC, id DESC
-		LIMIT 1`)
+		LIMIT 1`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +113,7 @@ func (r *Delta3AuxControlCommandRepository) ListDelta3AuxControlCommandLogsPage(
 	whereClause, queryArgs := delta3AuxControlCommandLogWhere(filter)
 	args := append(queryArgs, limit, offset)
 	rows, err := r.db.QueryContext(ctx, `SELECT
-		id, measured_at, strategy_state, command_fingerprint, grid_w, import_w, export_w, residual_export_w,
+		id, device_id, measured_at, strategy_state, command_fingerprint, grid_w, import_w, export_w, residual_export_w,
 		delta3_soc, previous_ac_charge_limit_w, target_ac_charge_limit_w, previous_backup_reserve_soc,
 		target_backup_reserve_soc, command_sent, dry_run, would_write, should_adjust_ac_charge_limit,
 		should_set_backup_reserve, should_disable_backup_reserve,
@@ -131,6 +147,7 @@ func scanDelta3AuxControlCommandLogs(rows *sql.Rows, capacity int) ([]domain.Del
 		var errorMessage sql.NullString
 		if err := rows.Scan(
 			&log.ID,
+			&log.DeviceID,
 			&measuredAt,
 			&log.StrategyState,
 			&log.CommandFingerprint,

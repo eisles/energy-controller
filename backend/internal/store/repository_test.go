@@ -199,6 +199,25 @@ func TestDelta3AuxControlCommandRepositoryInsertsAndPages(t *testing.T) {
 	}
 }
 
+func TestDelta3AuxControlCommandRepositoryDeviceLatestUsesLegacyFallback(t *testing.T) {
+	db := openTestDB(t)
+	repo := NewDelta3AuxControlCommandRepository(db)
+	now := time.Date(2026, 5, 24, 10, 0, 0, 0, time.UTC)
+	for _, deviceID := range []int64{0, 22} {
+		if err := repo.InsertDelta3AuxControlCommandLog(context.Background(), domain.Delta3AuxControlCommandLog{DeviceID: deviceID, MeasuredAt: now.Add(time.Duration(deviceID) * time.Second), StrategyState: "READY", CommandFingerprint: "candidate", WouldWrite: true, DecisionReason: "test", CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	other, err := repo.LatestDelta3AuxControlWriteCandidateLogForDevice(context.Background(), 11)
+	if err != nil || other == nil || other.DeviceID != 0 {
+		t.Fatalf("legacy fallback = %#v, %v", other, err)
+	}
+	bound, err := repo.LatestDelta3AuxControlWriteCandidateLogForDevice(context.Background(), 22)
+	if err != nil || bound == nil || bound.DeviceID != 22 {
+		t.Fatalf("device latest = %#v, %v", bound, err)
+	}
+}
+
 func TestChargingDeviceRepositorySeedsAndUpsertsDevices(t *testing.T) {
 	db := openTestDB(t)
 	repo := NewChargingDeviceRepository(db)
